@@ -73,3 +73,29 @@ backend/
     lib/identity.js      # slug / uid / dni-desde-cuil
   Dockerfile
 ```
+
+---
+
+## Deploy en DigitalOcean
+
+Dos caminos habituales:
+
+### A) App Platform (gestionado, recomendado para empezar)
+1. Crear una base **Managed PostgreSQL** en DigitalOcean. Copiar su `DATABASE_URL`.
+2. App Platform → *Create App* → conectar este repo de GitHub.
+3. DO detecta el `Dockerfile`. Setear variables de entorno:
+   - `DATABASE_URL` = (la de la Managed DB, con `?sslmode=require`)
+   - `JWT_SECRET` = (un secreto largo y aleatorio)
+   - `CORS_ORIGIN` = (URL pública del frontend)
+   - `BCRYPT_ROUNDS` = `10`
+4. La primera vez, correr migraciones/seed: `npm run migrate` y (opcional) `npm run seed`
+   como *Job* de App Platform, o vía consola.
+
+### B) Droplet + Docker (control total)
+1. Droplet con Docker + Docker Compose.
+2. `git clone` del repo, crear `.env`, y `docker compose up -d --build`
+   (levanta Postgres + API). Para producción, usar una DB gestionada en vez del
+   contenedor `db`, y un reverse proxy (Caddy/Nginx) con HTTPS delante de la API.
+
+> Seguridad: nunca commitear `.env`. `JWT_SECRET` fuerte. Postgres no expuesto a
+> internet (solo accesible por la API).

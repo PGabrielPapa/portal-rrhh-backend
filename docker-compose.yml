@@ -1,0 +1,32 @@
+# Backend Portal RR.HH. — stack local: Postgres + API.
+# Uso:  docker compose up --build   (desde la raíz de ESTE repo)
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: prh_db
+    environment:
+      POSTGRES_USER: portal
+      POSTGRES_PASSWORD: portal
+      POSTGRES_DB: portal_rrhh
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U portal -d portal_rrhh"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  api:
+    build: .
+    container_name: prh_api
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgres://portal:portal@db:5432/portal_rrhh
+      JWT_SECRET: cambiar-en-produccion
+      CORS_ORIGIN: http://localhost:5173
+      BCRYPT_ROUNDS: 10
+    ports: ["4000:4000"]
+    depends_on:
+      db: { condition: service_healthy }
+    command: sh -c "node src/db/migrate.js && node src/db/seed.js && node src/server.js"
+volumes:
+  pgdata:
