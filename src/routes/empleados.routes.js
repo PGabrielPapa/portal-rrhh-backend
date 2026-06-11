@@ -54,6 +54,16 @@ router.get('/', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// GET /api/empleados/mi-perfil — datos del propio usuario autenticado.
+// (Debe ir ANTES de /:id para que "mi-perfil" no caiga en el parámetro :id.)
+router.get('/mi-perfil', async (req, res, next) => {
+  try {
+    const { rows } = await query(`${SELECT} WHERE e.id = $1`, [req.user.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Empleado no encontrado' });
+    res.json(mapRow(rows[0]));
+  } catch (e) { next(e); }
+});
+
 // GET /api/empleados/:id
 router.get('/:id', async (req, res, next) => {
   try {
