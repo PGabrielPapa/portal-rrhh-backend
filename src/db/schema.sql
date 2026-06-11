@@ -51,3 +51,14 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_empleados_updated ON empleados;
 CREATE TRIGGER trg_empleados_updated BEFORE UPDATE ON empleados
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ── Mensajes (RR.HH. → empleado, o broadcast) ──
+CREATE TABLE IF NOT EXISTS mensajes (
+  id          SERIAL PRIMARY KEY,
+  empleado_id INTEGER REFERENCES empleados(id) ON DELETE CASCADE,  -- NULL = para todos
+  titulo      TEXT NOT NULL,
+  cuerpo      TEXT NOT NULL,
+  autor       TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_mensajes_empleado ON mensajes(empleado_id);

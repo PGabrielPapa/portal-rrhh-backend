@@ -1,0 +1,8 @@
+# Modo desarrollo (se aplica automáticamente con "docker compose up").
+# Monta el código fuente y reinicia la API ante cambios → no hace falta --build
+# para cambios de código (sí para cambios de dependencias en package.json).
+services:
+  api:
+    volumes:
+      - ./src:/app/src
+    command: sh -c "node src/db/migrate.js && node src/db/seed.js && node --watch src/server.js"

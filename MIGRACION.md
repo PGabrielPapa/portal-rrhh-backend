@@ -11,7 +11,7 @@ página en el frontend que reemplaza su placeholder 🚧.
 ### Fase 1 — Panel del empleado
 - [x] Mis datos (perfil propio)
 - [ ] Mis recibos (listar / ver / descargar)
-- [ ] Mensajes
+- [x] Mensajes
 - [ ] Mis CBUs
 - [ ] Adelantos (solicitud + vista)
 - [ ] Mis licencias

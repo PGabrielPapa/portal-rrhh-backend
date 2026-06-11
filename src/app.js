@@ -6,6 +6,7 @@ import { config } from './config.js';
 import { notFound, errorHandler } from './middleware/error.js';
 import authRoutes from './routes/auth.routes.js';
 import empleadosRoutes from './routes/empleados.routes.js';
+import mensajesRoutes from './routes/mensajes.routes.js';
 
 export function createApp() {
   const app = express();
@@ -17,6 +18,7 @@ export function createApp() {
   app.get('/api/health', (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
   app.use('/api/auth', authRoutes);
   app.use('/api/empleados', empleadosRoutes);
+  app.use('/api/mensajes', mensajesRoutes);
 
   app.use(notFound);
   app.use(errorHandler);
