@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { query } from '../db.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -14,6 +14,29 @@ router.get('/', async (req, res, next) => {
     const { rows } = await query(
       `SELECT id, anio, mes, tipo, neto, created_at FROM recibos WHERE empleado_id = $1 ORDER BY anio DESC, mes DESC`,
       [empleadoId]
+    );
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+
+// GET /api/recibos/gestion — todos los recibos (rrhh/admin/manager), con filtros
+router.get('/gestion', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
+  try {
+    const { anio, mes, empresa, q } = req.query;
+    const cond = [], params = [];
+    if (anio) { params.push(Number(anio)); cond.push(`r.anio = $${params.length}`); }
+    if (mes) { params.push(Number(mes)); cond.push(`r.mes = $${params.length}`); }
+    if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
+    if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
+    const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
+    const { rows } = await query(
+      `SELECT r.id, r.anio, r.mes, r.tipo, r.neto, r.created_at, r.created_by,
+              e.nom, e.leg_num, em.nombre AS empresa
+         FROM recibos r JOIN empleados e ON e.id = r.empleado_id
+         JOIN empresas em ON em.id = e.empresa_id
+         ${where}
+        ORDER BY r.anio DESC, r.mes DESC, e.nom`,
+      params
     );
     res.json(rows);
   } catch (e) { next(e); }
