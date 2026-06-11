@@ -18,7 +18,7 @@ página en el frontend que reemplaza su placeholder 🚧.
 
 ### Fase 2 — Núcleo de liquidación (RR.HH.)
 - [x] Parámetros de liquidación
-- [ ] Conceptos
+- [x] Conceptos
 - [ ] Escalas / convenios
 - [ ] Motor de liquidación (port de calcularItemLiquidacion)
 - [ ] Generación de recibos

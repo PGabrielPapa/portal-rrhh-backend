@@ -69,6 +69,29 @@ async function main() {
     );
     console.log('[seed] parámetros de liquidación: ok');
 
+    // Catálogo de conceptos estándar (idempotente)
+    const conceptos = [
+      ['001', 'Sueldo básico', 'remunerativo', 'Art. 103 LCT'],
+      ['002', 'Antigüedad', 'remunerativo', 'CCT'],
+      ['003', 'Presentismo', 'remunerativo', 'CCT'],
+      ['010', 'SAC', 'remunerativo', 'Ley 23.041'],
+      ['020', 'Asignación no remunerativa', 'no_remunerativo', 'Art. 103 bis LCT'],
+      ['100', 'Jubilación', 'aporte', 'Ley 24.241'],
+      ['101', 'Obra Social', 'aporte', 'Ley 23.660'],
+      ['102', 'INSSJP (PAMI)', 'aporte', 'Ley 19.032'],
+      ['103', 'Cuota sindical', 'aporte', 'Ley 23.551'],
+      ['200', 'Anticipo de sueldo', 'descuento', 'Art. 130 LCT'],
+      ['300', 'Impuesto a las Ganancias 4ta', 'descuento', 'RG 4003/2017'],
+    ];
+    for (const [codigo, descripcion, tipo, base_legal] of conceptos) {
+      await client.query(
+        `INSERT INTO conceptos (codigo, descripcion, tipo, base_legal) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (codigo) DO NOTHING`,
+        [codigo, descripcion, tipo, base_legal]
+      );
+    }
+    console.log('[seed] conceptos: ok');
+
     await client.query('COMMIT');
     console.log(`[seed] empleados cargados: ${ok} · omitidos: ${skip}`);
     console.log('[seed] contraseña inicial = DNI (cambio forzado en primer login).');

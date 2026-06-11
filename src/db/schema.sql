@@ -99,3 +99,21 @@ CREATE TABLE IF NOT EXISTS parametros_liq (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT parametros_singleton CHECK (id = 1)
 );
+
+-- ── Catálogo de conceptos de liquidación ──
+CREATE TABLE IF NOT EXISTS conceptos (
+  id          SERIAL PRIMARY KEY,
+  codigo      TEXT NOT NULL UNIQUE,
+  descripcion TEXT NOT NULL,
+  tipo        TEXT NOT NULL DEFAULT 'remunerativo',  -- remunerativo|no_remunerativo|descuento|aporte|contribucion
+  formula     TEXT,
+  base_legal  TEXT,
+  activo      BOOLEAN NOT NULL DEFAULT true,
+  data        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_conceptos_tipo ON conceptos(tipo);
+DROP TRIGGER IF EXISTS trg_conceptos_updated ON conceptos;
+CREATE TRIGGER trg_conceptos_updated BEFORE UPDATE ON conceptos
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
