@@ -20,7 +20,7 @@ página en el frontend que reemplaza su placeholder 🚧.
 - [x] Parámetros de liquidación
 - [x] Conceptos
 - [ ] Escalas / convenios
-- [x] Motor de liquidación — versión base (falta SAC/ganancias/embargos)
+- [x] Motor de liquidación — SAC, contribuciones patronales + SCVO, Ganancias 4ª con tope 35% (falta embargos/SIRADIG)
 - [x] Generación de recibos (guardar)
 - [ ] Ganancias / F.1357 (+ tope 35% RG4003, SCVO)
 

@@ -1,0 +1,62 @@
+{
+  "mniAnual": 20607210,
+  "dedEspAnual": 98914608.12,
+  "dedEsp2Anual": 9960151.51,
+  "escala": [
+    {
+      "desde": 0,
+      "hasta": 4495920,
+      "fijo": 0,
+      "alicuota": 5
+    },
+    {
+      "desde": 4495920,
+      "hasta": 8991840,
+      "fijo": 224796,
+      "alicuota": 9
+    },
+    {
+      "desde": 8991840,
+      "hasta": 17983680,
+      "fijo": 629428.8,
+      "alicuota": 12
+    },
+    {
+      "desde": 17983680,
+      "hasta": 29972800,
+      "fijo": 1708449.6,
+      "alicuota": 15
+    },
+    {
+      "desde": 29972800,
+      "hasta": 59945600,
+      "fijo": 3506817.6,
+      "alicuota": 19
+    },
+    {
+      "desde": 59945600,
+      "hasta": 119891200,
+      "fijo": 9201649.6,
+      "alicuota": 23
+    },
+    {
+      "desde": 119891200,
+      "hasta": 179836800,
+      "fijo": 22989137.6,
+      "alicuota": 27
+    },
+    {
+      "desde": 179836800,
+      "hasta": 269755200,
+      "fijo": 39174449.6,
+      "alicuota": 31
+    },
+    {
+      "desde": 269755200,
+      "hasta": null,
+      "fijo": 67049153.6,
+      "alicuota": 35
+    }
+  ],
+  "periodo": "2026-S1"
+}
