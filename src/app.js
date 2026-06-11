@@ -9,6 +9,7 @@ import empleadosRoutes from './routes/empleados.routes.js';
 import mensajesRoutes from './routes/mensajes.routes.js';
 import cbusRoutes from './routes/cbus.routes.js';
 import anticiposRoutes from './routes/anticipos.routes.js';
+import parametrosRoutes from './routes/parametros.routes.js';
 
 export function createApp() {
   const app = express();
@@ -23,6 +24,7 @@ export function createApp() {
   app.use('/api/mensajes', mensajesRoutes);
   app.use('/api/cbus', cbusRoutes);
   app.use('/api/anticipos', anticiposRoutes);
+  app.use('/api/parametros', parametrosRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

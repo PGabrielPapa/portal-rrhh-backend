@@ -61,6 +61,14 @@ async function main() {
       );
       if (r.rowCount) ok++; else skip++;
     }
+    // Parámetros de liquidación (fila única id=1)
+    const params = JSON.parse(fs.readFileSync(path.join(dataDir, 'params.seed.json'), 'utf8'));
+    await client.query(
+      `INSERT INTO parametros_liq (id, data) VALUES (1, $1) ON CONFLICT (id) DO NOTHING`,
+      [JSON.stringify(params)]
+    );
+    console.log('[seed] parámetros de liquidación: ok');
+
     await client.query('COMMIT');
     console.log(`[seed] empleados cargados: ${ok} · omitidos: ${skip}`);
     console.log('[seed] contraseña inicial = DNI (cambio forzado en primer login).');

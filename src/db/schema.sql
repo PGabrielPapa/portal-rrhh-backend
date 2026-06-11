@@ -90,3 +90,12 @@ CREATE TABLE IF NOT EXISTS anticipos (
 );
 CREATE INDEX IF NOT EXISTS idx_anticipos_empleado ON anticipos(empleado_id);
 CREATE INDEX IF NOT EXISTS idx_anticipos_estado ON anticipos(estado);
+
+-- ── Parámetros de liquidación (fila única id=1) ──
+CREATE TABLE IF NOT EXISTS parametros_liq (
+  id         INTEGER PRIMARY KEY DEFAULT 1,
+  data       JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_by TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT parametros_singleton CHECK (id = 1)
+);

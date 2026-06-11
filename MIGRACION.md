@@ -17,7 +17,7 @@ página en el frontend que reemplaza su placeholder 🚧.
 - [ ] Mis licencias
 
 ### Fase 2 — Núcleo de liquidación (RR.HH.)
-- [ ] Parámetros de liquidación
+- [x] Parámetros de liquidación
 - [ ] Conceptos
 - [ ] Escalas / convenios
 - [ ] Motor de liquidación (port de calcularItemLiquidacion)
