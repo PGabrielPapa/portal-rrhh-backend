@@ -20,7 +20,7 @@ página en el frontend que reemplaza su placeholder 🚧.
 - [x] Parámetros de liquidación
 - [x] Conceptos
 - [ ] Escalas / convenios
-- [ ] Motor de liquidación (port de calcularItemLiquidacion)
+- [x] Motor de liquidación — versión base (falta SAC/ganancias/embargos)
 - [ ] Generación de recibos
 - [ ] Ganancias / F.1357 (+ tope 35% RG4003, SCVO)
 

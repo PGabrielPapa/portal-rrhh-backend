@@ -11,6 +11,7 @@ import cbusRoutes from './routes/cbus.routes.js';
 import anticiposRoutes from './routes/anticipos.routes.js';
 import parametrosRoutes from './routes/parametros.routes.js';
 import conceptosRoutes from './routes/conceptos.routes.js';
+import liquidacionRoutes from './routes/liquidacion.routes.js';
 
 export function createApp() {
   const app = express();
@@ -27,6 +28,7 @@ export function createApp() {
   app.use('/api/anticipos', anticiposRoutes);
   app.use('/api/parametros', parametrosRoutes);
   app.use('/api/conceptos', conceptosRoutes);
+  app.use('/api/liquidacion', liquidacionRoutes);
 
   app.use(notFound);
   app.use(errorHandler);
