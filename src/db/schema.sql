@@ -117,3 +117,18 @@ CREATE INDEX IF NOT EXISTS idx_conceptos_tipo ON conceptos(tipo);
 DROP TRIGGER IF EXISTS trg_conceptos_updated ON conceptos;
 CREATE TRIGGER trg_conceptos_updated BEFORE UPDATE ON conceptos
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ── Recibos liquidados (guardados) ──
+CREATE TABLE IF NOT EXISTS recibos (
+  id          SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  anio        INTEGER NOT NULL,
+  mes         INTEGER NOT NULL,
+  tipo        TEXT NOT NULL DEFAULT 'mensual',
+  neto        NUMERIC(14,2) NOT NULL DEFAULT 0,
+  data        JSONB NOT NULL,
+  created_by  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_recibo UNIQUE (empleado_id, anio, mes, tipo)
+);
+CREATE INDEX IF NOT EXISTS idx_recibos_empleado ON recibos(empleado_id);

@@ -10,7 +10,7 @@ página en el frontend que reemplaza su placeholder 🚧.
 
 ### Fase 1 — Panel del empleado
 - [x] Mis datos (perfil propio)
-- [ ] Mis recibos (listar / ver / descargar)
+- [x] Mis recibos (listar / ver)
 - [x] Mensajes
 - [x] Mis CBUs
 - [x] Adelantos (solicitud + aprobación)
@@ -21,7 +21,7 @@ página en el frontend que reemplaza su placeholder 🚧.
 - [x] Conceptos
 - [ ] Escalas / convenios
 - [x] Motor de liquidación — versión base (falta SAC/ganancias/embargos)
-- [ ] Generación de recibos
+- [x] Generación de recibos (guardar)
 - [ ] Ganancias / F.1357 (+ tope 35% RG4003, SCVO)
 
 ### Fase 3 — Flujos RR.HH. / Gerencia
