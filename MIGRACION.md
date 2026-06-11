@@ -12,8 +12,8 @@ página en el frontend que reemplaza su placeholder 🚧.
 - [x] Mis datos (perfil propio)
 - [ ] Mis recibos (listar / ver / descargar)
 - [x] Mensajes
-- [ ] Mis CBUs
-- [ ] Adelantos (solicitud + vista)
+- [x] Mis CBUs
+- [x] Adelantos (solicitud + aprobación)
 - [ ] Mis licencias
 
 ### Fase 2 — Núcleo de liquidación (RR.HH.)

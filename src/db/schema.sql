@@ -62,3 +62,31 @@ CREATE TABLE IF NOT EXISTS mensajes (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_mensajes_empleado ON mensajes(empleado_id);
+
+-- ── CBUs del empleado ──
+CREATE TABLE IF NOT EXISTS cbus (
+  id          SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  cbu         TEXT NOT NULL,
+  banco       TEXT,
+  alias       TEXT,
+  titular     TEXT,
+  activo      BOOLEAN NOT NULL DEFAULT true,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_cbus_empleado ON cbus(empleado_id);
+
+-- ── Adelantos / anticipos ──
+CREATE TABLE IF NOT EXISTS anticipos (
+  id           SERIAL PRIMARY KEY,
+  empleado_id  INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  monto        NUMERIC(14,2) NOT NULL,
+  motivo       TEXT,
+  cuotas       INTEGER NOT NULL DEFAULT 1,
+  estado       TEXT NOT NULL DEFAULT 'pendiente',   -- pendiente | aprobado | rechazado
+  resuelto_por TEXT,
+  resuelto_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_anticipos_empleado ON anticipos(empleado_id);
+CREATE INDEX IF NOT EXISTS idx_anticipos_estado ON anticipos(estado);
