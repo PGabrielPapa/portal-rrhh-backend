@@ -275,3 +275,5 @@ CREATE TABLE IF NOT EXISTS familiares (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_familiares_empleado ON familiares(empleado_id);
+ALTER TABLE familiares ADD COLUMN IF NOT EXISTS apellido TEXT;
+ALTER TABLE familiares ADD COLUMN IF NOT EXISTS genero TEXT;

@@ -25,8 +25,9 @@ router.post('/', async (req, res, next) => {
     const b = req.body || {};
     if (!b.tipo || !b.nombre) return res.status(400).json({ error: 'Vínculo y nombre son obligatorios' });
     const r = await query(
-      'INSERT INTO familiares (empleado_id,tipo,nombre,dni,cuil,fecha_nac,fecha_vinculo,discapacidad) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
-      [req.user.id, b.tipo, b.nombre, b.dni || null, b.cuil || null, b.fecha_nac || null, b.fecha_vinculo || null, !!b.discapacidad]);
+      `INSERT INTO familiares (empleado_id,tipo,apellido,nombre,genero,dni,cuil,fecha_nac,fecha_vinculo,discapacidad,vigencia_desde)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11,CURRENT_DATE)) RETURNING *`,
+      [req.user.id, b.tipo, b.apellido || null, b.nombre, b.genero || null, b.dni || null, b.cuil || null, b.fecha_nac || null, b.fecha_vinculo || null, !!b.discapacidad, b.vigencia_desde || null]);
     res.status(201).json(r.rows[0]);
   } catch (e) { next(e); }
 });
@@ -35,9 +36,9 @@ router.put('/:id', async (req, res, next) => {
   try {
     const b = req.body || {};
     const r = await query(
-      `UPDATE familiares SET tipo=$1,nombre=$2,dni=$3,cuil=$4,fecha_nac=$5,fecha_vinculo=$6,discapacidad=$7
-        WHERE id=$8 AND empleado_id=$9 RETURNING *`,
-      [b.tipo, b.nombre, b.dni || null, b.cuil || null, b.fecha_nac || null, b.fecha_vinculo || null, !!b.discapacidad, req.params.id, req.user.id]);
+      `UPDATE familiares SET tipo=$1,apellido=$2,nombre=$3,genero=$4,dni=$5,cuil=$6,fecha_nac=$7,fecha_vinculo=$8,discapacidad=$9
+        WHERE id=$10 AND empleado_id=$11 RETURNING *`,
+      [b.tipo, b.apellido || null, b.nombre, b.genero || null, b.dni || null, b.cuil || null, b.fecha_nac || null, b.fecha_vinculo || null, !!b.discapacidad, req.params.id, req.user.id]);
     if (!r.rowCount) return res.status(404).json({ error: 'Familiar no encontrado' });
     res.json(r.rows[0]);
   } catch (e) { next(e); }
