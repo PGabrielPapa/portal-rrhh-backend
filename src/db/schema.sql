@@ -81,6 +81,9 @@ CREATE TABLE IF NOT EXISTS cbus (
 );
 -- Porcentaje del neto que se acredita en cada cuenta (la suma de las activas debe dar 100%)
 ALTER TABLE cbus ADD COLUMN IF NOT EXISTS porcentaje NUMERIC(5,2) NOT NULL DEFAULT 100;
+-- Historial de vigencia: vigencia_hasta NULL = cuenta activa.
+ALTER TABLE cbus ADD COLUMN IF NOT EXISTS vigencia_desde TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE cbus ADD COLUMN IF NOT EXISTS vigencia_hasta TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_cbus_empleado ON cbus(empleado_id);
 
 -- ── Adelantos / anticipos ──
