@@ -55,4 +55,23 @@ router.patch('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// POST /api/sanciones/:id/notificar — registra fecha de notificación y
+// COMUNICA electrónicamente al empleado (crea un mensaje en su bandeja).
+router.post('/:id/notificar', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const fecha = (req.body || {}).fecha || new Date().toISOString().slice(0, 10);
+    const sr = await query('SELECT * FROM sanciones WHERE id = $1', [req.params.id]);
+    const s = sr.rows[0];
+    if (!s) return res.status(404).json({ error: 'Sanción no encontrada' });
+    await query('UPDATE sanciones SET fecha_notificacion = $1 WHERE id = $2', [fecha, req.params.id]);
+    const cuerpo = `Se le notifica la aplicación de una sanción disciplinaria.\n` +
+      `Tipo: ${s.tipo}\nFalta: ${s.falta || '—'}\nFecha del hecho: ${s.fecha}\n` +
+      (s.dias ? `Días: ${s.dias}\n` : '') + (s.descripcion ? `Detalle: ${s.descripcion}\n` : '') +
+      `Fecha de notificación: ${fecha}`;
+    await query('INSERT INTO mensajes (empleado_id, titulo, cuerpo, autor) VALUES ($1,$2,$3,$4)',
+      [s.empleado_id, 'Notificación de sanción', cuerpo, req.user.dni]);
+    res.json({ ok: true, fecha });
+  } catch (e) { next(e); }
+});
+
 export default router;

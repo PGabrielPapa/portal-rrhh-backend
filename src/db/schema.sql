@@ -180,3 +180,5 @@ CREATE INDEX IF NOT EXISTS idx_evaluaciones_empleado ON evaluaciones(empleado_id
 ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS falta TEXT;
 ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS estado TEXT NOT NULL DEFAULT 'aplicada';
 ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS resuelto_por TEXT;
+
+ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS fecha_notificacion DATE;
