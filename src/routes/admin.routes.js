@@ -70,4 +70,28 @@ router.get('/auditoria', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// GET /api/admin/empresas — listado de empresas (con logo y datos)
+router.get('/empresas', async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT id, nombre, slug, cuit, logo, data FROM empresas ORDER BY nombre');
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+
+// PATCH /api/admin/empresas/:id  { cuit?, data?, logo? }
+router.patch('/empresas/:id', async (req, res, next) => {
+  try {
+    const { cuit, data, logo } = req.body || {};
+    const sets = [], params = [];
+    if (cuit !== undefined) { params.push(cuit); sets.push(`cuit = $${params.length}`); }
+    if (data !== undefined) { params.push(JSON.stringify(data)); sets.push(`data = $${params.length}`); }
+    if (logo !== undefined) { params.push(logo || null); sets.push(`logo = $${params.length}`); }
+    if (!sets.length) return res.status(400).json({ error: 'Nada para actualizar' });
+    params.push(req.params.id);
+    await query(`UPDATE empresas SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
+    await audit(req.user.dni, 'empresa_editada', cuit ? `CUIT: ${cuit}` : (logo !== undefined ? 'logo actualizado' : 'datos'), String(req.params.id));
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 export default router;

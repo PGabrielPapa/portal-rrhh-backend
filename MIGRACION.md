@@ -43,7 +43,7 @@ página en el frontend que reemplaza su placeholder 🚧.
 - [x] Usuarios
 - [ ] Niveles de usuario
 - [x] Auditoría
-- [ ] Empresas (ABM)
+- [x] Empresas (ABM)
 
 ## Convenciones
 - **Identidad:** empresa+legajo (ver esquema). DNI = login.
