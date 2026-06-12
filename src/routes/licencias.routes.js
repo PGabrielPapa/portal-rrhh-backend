@@ -65,20 +65,14 @@ router.get('/', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// Licencias programables que requieren adjuntar comprobante al solicitarlas.
-const REQUIERE_COMPROBANTE = ['examen', 'matrimonio', 'matrimonio de hijo', 'mudanza', 'donación de sangre', 'donacion de sangre'];
-
 router.post('/', async (req, res, next) => {
   try {
-    const { tipo, desde, hasta, motivo, comprobanteNombre, comprobanteMime, comprobanteData } = req.body || {};
+    const { tipo, desde, hasta, motivo } = req.body || {};
     if (!tipo || !desde || !hasta) return res.status(400).json({ error: 'Tipo, desde y hasta son obligatorios' });
     if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
     // Imprevisibles: no se solicitan con anticipación (RR.HH. las registra).
     if (['enfermedad', 'fallecimiento familiar', 'nacimiento'].includes(String(tipo).toLowerCase())) {
       return res.status(400).json({ error: `${tipo} es una licencia imprevisible y no puede solicitarse con anticipación; debe registrarla RR.HH.` });
-    }
-    if (REQUIERE_COMPROBANTE.includes(String(tipo).toLowerCase()) && !comprobanteData) {
-      return res.status(400).json({ error: `${tipo} requiere adjuntar comprobante.` });
     }
     const dias = diasEntre(desde, hasta);
     if (esVacaciones(tipo)) {
@@ -88,13 +82,9 @@ router.post('/', async (req, res, next) => {
       }
     }
     const ins = await query(
-      `INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo, comprobante_nombre, comprobante_mime, comprobante_data)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      `INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo) VALUES ($1,$2,$3,$4,$5,$6)
        RETURNING id, empleado_id, tipo, desde, hasta, dias, motivo, estado, created_at, justificacion, comprobante_nombre, comprobante_mime, (comprobante_data IS NOT NULL) AS tiene_comprobante`,
-      [req.user.id, tipo, desde, hasta, dias, motivo || null,
-       comprobanteData ? (comprobanteNombre || 'comprobante') : null,
-       comprobanteData ? (comprobanteMime || 'application/octet-stream') : null,
-       comprobanteData || null]);
+      [req.user.id, tipo, desde, hasta, dias, motivo || null]);
     res.status(201).json(ins.rows[0]);
   } catch (e) { next(e); }
 });
@@ -124,20 +114,18 @@ router.patch('/:id', requireRole('manager', 'rrhh', 'admin'), async (req, res, n
   } catch (e) { next(e); }
 });
 
-// POST /api/licencias/justificar — el empleado justifica una licencia (típicamente imprevisible) adjuntando comprobante
-router.post('/justificar', async (req, res, next) => {
+// POST /api/licencias/:id/comprobante — el empleado justifica una licencia YA solicitada adjuntando el comprobante (paso posterior)
+router.post('/:id/comprobante', async (req, res, next) => {
   try {
-    const { tipo, desde, hasta, motivo, comprobanteNombre, comprobanteMime, comprobanteData } = req.body || {};
-    if (!tipo || !desde || !hasta) return res.status(400).json({ error: 'Tipo, desde y hasta son obligatorios' });
-    if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
-    if (!comprobanteData) return res.status(400).json({ error: 'Debés adjuntar el comprobante que justifica la licencia' });
-    const dias = diasEntre(desde, hasta);
-    const ins = await query(
-      `INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo, estado, justificacion, comprobante_nombre, comprobante_mime, comprobante_data)
-       VALUES ($1,$2,$3,$4,$5,$6,'pendiente',true,$7,$8,$9)
-       RETURNING id, tipo, desde, hasta, dias, motivo, estado, justificacion, comprobante_nombre, comprobante_mime, true AS tiene_comprobante`,
-      [req.user.id, tipo, desde, hasta, dias, motivo || null, comprobanteNombre || 'comprobante', comprobanteMime || 'application/octet-stream', comprobanteData]);
-    res.status(201).json(ins.rows[0]);
+    const { comprobanteNombre, comprobanteMime, comprobanteData } = req.body || {};
+    if (!comprobanteData) return res.status(400).json({ error: 'Debés adjuntar el comprobante.' });
+    const r = await query(
+      `UPDATE licencias SET comprobante_nombre=$1, comprobante_mime=$2, comprobante_data=$3, justificacion=true
+         WHERE id=$4 AND empleado_id=$5
+       RETURNING id, empleado_id, tipo, desde, hasta, dias, motivo, estado, created_at, justificacion, comprobante_nombre, comprobante_mime, true AS tiene_comprobante`,
+      [comprobanteNombre || 'comprobante', comprobanteMime || 'application/octet-stream', comprobanteData, req.params.id, req.user.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Licencia no encontrada' });
+    res.json(r.rows[0]);
   } catch (e) { next(e); }
 });
 
