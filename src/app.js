@@ -21,6 +21,7 @@ import adminRoutes from './routes/admin.routes.js';
 import elementosRoutes from './routes/elementos.routes.js';
 import beneficiosRoutes from './routes/beneficios.routes.js';
 import domicilioRoutes from './routes/domicilio.routes.js';
+import familiaresRoutes from './routes/familiares.routes.js';
 
 export function createApp() {
   const app = express();
@@ -47,6 +48,7 @@ export function createApp() {
   app.use('/api/elementos', elementosRoutes);
   app.use('/api/beneficios', beneficiosRoutes);
   app.use('/api/cambios-domicilio', domicilioRoutes);
+  app.use('/api/familiares', familiaresRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

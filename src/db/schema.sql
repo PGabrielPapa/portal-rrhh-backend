@@ -257,3 +257,21 @@ CREATE TABLE IF NOT EXISTS cambios_domicilio (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_camdom_empleado ON cambios_domicilio(empleado_id);
+
+-- ── Grupo familiar declarado por el empleado ──
+CREATE TABLE IF NOT EXISTS familiares (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL,
+  nombre TEXT NOT NULL,
+  dni TEXT,
+  cuil TEXT,
+  fecha_nac DATE,
+  fecha_vinculo DATE,
+  discapacidad BOOLEAN NOT NULL DEFAULT false,
+  vigencia_desde DATE NOT NULL DEFAULT CURRENT_DATE,
+  vigencia_hasta DATE,
+  motivo_cierre TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_familiares_empleado ON familiares(empleado_id);
