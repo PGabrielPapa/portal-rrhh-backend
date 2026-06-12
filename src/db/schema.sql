@@ -197,3 +197,5 @@ CREATE TABLE IF NOT EXISTS certificados (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_certificados_empleado ON certificados(empleado_id);
+
+ALTER TABLE empresas ADD COLUMN IF NOT EXISTS logo TEXT;

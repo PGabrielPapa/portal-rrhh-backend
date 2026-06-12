@@ -39,6 +39,15 @@ async function main() {
       empresaId[nombre] = r.rows[0].id;
     }
     console.log(`[seed] empresas: ${empresas.length}`);
+    // Logos por empresa (data:image base64)
+    try {
+      const logos = JSON.parse(fs.readFileSync(path.join(dataDir, 'logos.seed.json'), 'utf8'));
+      for (const [nombre, logo] of Object.entries(logos)) {
+        if (empresaId[nombre]) await client.query('UPDATE empresas SET logo = $1 WHERE id = $2', [logo, empresaId[nombre]]);
+      }
+      console.log('[seed] logos de empresas: ok');
+    } catch (e) { console.warn('[seed] logos:', e.message); }
+
 
     // Contraseña inicial = DNI (hasheada). must_change_pwd = true.
     let ok = 0, skip = 0;
