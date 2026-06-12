@@ -13,6 +13,7 @@ import parametrosRoutes from './routes/parametros.routes.js';
 import conceptosRoutes from './routes/conceptos.routes.js';
 import liquidacionRoutes from './routes/liquidacion.routes.js';
 import recibosRoutes from './routes/recibos.routes.js';
+import licenciasRoutes from './routes/licencias.routes.js';
 
 export function createApp() {
   const app = express();
@@ -31,6 +32,7 @@ export function createApp() {
   app.use('/api/conceptos', conceptosRoutes);
   app.use('/api/liquidacion', liquidacionRoutes);
   app.use('/api/recibos', recibosRoutes);
+  app.use('/api/licencias', licenciasRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

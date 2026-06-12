@@ -14,7 +14,7 @@ página en el frontend que reemplaza su placeholder 🚧.
 - [x] Mensajes
 - [x] Mis CBUs
 - [x] Adelantos (solicitud + aprobación)
-- [ ] Mis licencias
+- [x] Mis licencias
 
 ### Fase 2 — Núcleo de liquidación (RR.HH.)
 - [x] Parámetros de liquidación
@@ -26,7 +26,7 @@ página en el frontend que reemplaza su placeholder 🚧.
 
 ### Fase 3 — Flujos RR.HH. / Gerencia
 - [ ] Adelantos + Aprobaciones
-- [ ] Licencias (solicitud / aprobación / reglamento)
+- [x] Licencias (solicitud + aprobación; falta reglamento)
 - [ ] Sanciones
 - [ ] Evaluaciones de desempeño
 - [ ] Organigrama / equipo

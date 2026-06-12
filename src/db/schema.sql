@@ -132,3 +132,20 @@ CREATE TABLE IF NOT EXISTS recibos (
   CONSTRAINT uq_recibo UNIQUE (empleado_id, anio, mes, tipo)
 );
 CREATE INDEX IF NOT EXISTS idx_recibos_empleado ON recibos(empleado_id);
+
+-- ── Licencias (solicitud + aprobación) ──
+CREATE TABLE IF NOT EXISTS licencias (
+  id           SERIAL PRIMARY KEY,
+  empleado_id  INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  tipo         TEXT NOT NULL,
+  desde        DATE NOT NULL,
+  hasta        DATE NOT NULL,
+  dias         INTEGER NOT NULL DEFAULT 1,
+  motivo       TEXT,
+  estado       TEXT NOT NULL DEFAULT 'pendiente',  -- pendiente | aprobada | rechazada
+  resuelto_por TEXT,
+  resuelto_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_licencias_empleado ON licencias(empleado_id);
+CREATE INDEX IF NOT EXISTS idx_licencias_estado ON licencias(estado);
