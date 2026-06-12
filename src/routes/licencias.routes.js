@@ -28,6 +28,14 @@ router.get('/', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// GET /api/licencias/mias — SIEMPRE las propias (cualquier rol)
+router.get('/mias', async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT * FROM licencias WHERE empleado_id = $1 ORDER BY created_at DESC', [req.user.id]);
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+
 // POST /api/licencias — solicitar (propia)
 router.post('/', async (req, res, next) => {
   try {
