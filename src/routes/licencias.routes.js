@@ -65,14 +65,20 @@ router.get('/', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Licencias programables que requieren adjuntar comprobante al solicitarlas.
+const REQUIERE_COMPROBANTE = ['examen', 'matrimonio', 'matrimonio de hijo', 'mudanza', 'donación de sangre', 'donacion de sangre'];
+
 router.post('/', async (req, res, next) => {
   try {
-    const { tipo, desde, hasta, motivo } = req.body || {};
+    const { tipo, desde, hasta, motivo, comprobanteNombre, comprobanteMime, comprobanteData } = req.body || {};
     if (!tipo || !desde || !hasta) return res.status(400).json({ error: 'Tipo, desde y hasta son obligatorios' });
     if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
     // Imprevisibles: no se solicitan con anticipación (RR.HH. las registra).
     if (['enfermedad', 'fallecimiento familiar', 'nacimiento'].includes(String(tipo).toLowerCase())) {
       return res.status(400).json({ error: `${tipo} es una licencia imprevisible y no puede solicitarse con anticipación; debe registrarla RR.HH.` });
+    }
+    if (REQUIERE_COMPROBANTE.includes(String(tipo).toLowerCase()) && !comprobanteData) {
+      return res.status(400).json({ error: `${tipo} requiere adjuntar comprobante.` });
     }
     const dias = diasEntre(desde, hasta);
     if (esVacaciones(tipo)) {
@@ -81,8 +87,14 @@ router.post('/', async (req, res, next) => {
         return res.status(400).json({ error: `Excede tu saldo de vacaciones: pedís ${dias} día(s) y tenés ${info.disponible} disponible(s) (saldo del año ${info.saldoEsteAnio} + saldo anterior ${info.saldoAnteriores}).` });
       }
     }
-    const ins = await query('INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
-      [req.user.id, tipo, desde, hasta, dias, motivo || null]);
+    const ins = await query(
+      `INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo, comprobante_nombre, comprobante_mime, comprobante_data)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING id, empleado_id, tipo, desde, hasta, dias, motivo, estado, created_at, justificacion, comprobante_nombre, comprobante_mime, (comprobante_data IS NOT NULL) AS tiene_comprobante`,
+      [req.user.id, tipo, desde, hasta, dias, motivo || null,
+       comprobanteData ? (comprobanteNombre || 'comprobante') : null,
+       comprobanteData ? (comprobanteMime || 'application/octet-stream') : null,
+       comprobanteData || null]);
     res.status(201).json(ins.rows[0]);
   } catch (e) { next(e); }
 });
