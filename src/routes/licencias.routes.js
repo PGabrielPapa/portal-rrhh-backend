@@ -70,6 +70,10 @@ router.post('/', async (req, res, next) => {
     const { tipo, desde, hasta, motivo } = req.body || {};
     if (!tipo || !desde || !hasta) return res.status(400).json({ error: 'Tipo, desde y hasta son obligatorios' });
     if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
+    // Imprevisibles: no se solicitan con anticipación (RR.HH. las registra).
+    if (['enfermedad', 'fallecimiento familiar', 'nacimiento'].includes(String(tipo).toLowerCase())) {
+      return res.status(400).json({ error: `${tipo} es una licencia imprevisible y no puede solicitarse con anticipación; debe registrarla RR.HH.` });
+    }
     const dias = diasEntre(desde, hasta);
     if (esVacaciones(tipo)) {
       const info = await getVacInfo(req.user.id);
@@ -89,6 +93,10 @@ router.post('/registrar', requireRole('rrhh', 'admin'), async (req, res, next) =
     const { empleadoId, tipo, desde, hasta, motivo } = req.body || {};
     if (!empleadoId || !tipo || !desde || !hasta) return res.status(400).json({ error: 'empleadoId, tipo, desde y hasta son obligatorios' });
     if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
+    // Imprevisibles: no se solicitan con anticipación (RR.HH. las registra).
+    if (['enfermedad', 'fallecimiento familiar', 'nacimiento'].includes(String(tipo).toLowerCase())) {
+      return res.status(400).json({ error: `${tipo} es una licencia imprevisible y no puede solicitarse con anticipación; debe registrarla RR.HH.` });
+    }
     const dias = diasEntre(desde, hasta);
     const ins = await query(
       `INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo, estado, resuelto_por, resuelto_at)
