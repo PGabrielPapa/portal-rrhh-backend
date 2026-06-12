@@ -245,3 +245,15 @@ CREATE TABLE IF NOT EXISTS beneficios (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_benef_empleado ON beneficios(empleado_id);
+
+-- ── Cambios de domicilio (informados por el empleado → aprueba RR.HH.) ──
+CREATE TABLE IF NOT EXISTS cambios_domicilio (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  calle TEXT, nro TEXT, piso TEXT, depto TEXT, loc TEXT, prov TEXT, cp TEXT,
+  dom_anterior TEXT, dom_nuevo TEXT,
+  estado TEXT NOT NULL DEFAULT 'pendiente',
+  resuelto_por TEXT, resuelto_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_camdom_empleado ON cambios_domicilio(empleado_id);
