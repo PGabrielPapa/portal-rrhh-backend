@@ -199,3 +199,14 @@ CREATE TABLE IF NOT EXISTS certificados (
 CREATE INDEX IF NOT EXISTS idx_certificados_empleado ON certificados(empleado_id);
 
 ALTER TABLE empresas ADD COLUMN IF NOT EXISTS logo TEXT;
+
+-- ── Auditoría (acciones administrativas) ──
+CREATE TABLE IF NOT EXISTS audit_log (
+  id         SERIAL PRIMARY KEY,
+  actor_dni  TEXT,
+  accion     TEXT NOT NULL,
+  detalle    TEXT,
+  target     TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);

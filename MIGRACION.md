@@ -40,9 +40,9 @@ página en el frontend que reemplaza su placeholder 🚧.
 - [ ] Generador de reportes
 
 ### Fase 5 — Administración
-- [ ] Usuarios
+- [x] Usuarios
 - [ ] Niveles de usuario
-- [ ] Auditoría
+- [x] Auditoría
 - [ ] Empresas (ABM)
 
 ## Convenciones
