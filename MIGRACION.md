@@ -27,8 +27,8 @@ página en el frontend que reemplaza su placeholder 🚧.
 ### Fase 3 — Flujos RR.HH. / Gerencia
 - [ ] Adelantos + Aprobaciones
 - [x] Licencias (solicitud + aprobación; falta reglamento)
-- [ ] Sanciones
-- [ ] Evaluaciones de desempeño
+- [x] Sanciones
+- [x] Evaluaciones de desempeño
 - [ ] Organigrama / equipo
 
 ### Fase 4 — Salidas / reportes

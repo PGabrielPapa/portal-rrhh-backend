@@ -149,3 +149,29 @@ CREATE TABLE IF NOT EXISTS licencias (
 );
 CREATE INDEX IF NOT EXISTS idx_licencias_empleado ON licencias(empleado_id);
 CREATE INDEX IF NOT EXISTS idx_licencias_estado ON licencias(estado);
+
+-- ── Sanciones disciplinarias ──
+CREATE TABLE IF NOT EXISTS sanciones (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL,
+  fecha DATE NOT NULL,
+  dias INTEGER NOT NULL DEFAULT 0,
+  descripcion TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sanciones_empleado ON sanciones(empleado_id);
+
+-- ── Evaluaciones de desempeño ──
+CREATE TABLE IF NOT EXISTS evaluaciones (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  periodo TEXT NOT NULL,
+  tipo TEXT,
+  calificacion TEXT,
+  comentarios TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_evaluaciones_empleado ON evaluaciones(empleado_id);
