@@ -33,6 +33,78 @@ function impuestoEscala(base, escala) {
   return last.fijo + (base - last.desde) * last.alicuota / 100;
 }
 
+// ── F.1357: Liquidación del Impuesto a las Ganancias (estimación anualizada) ──
+// Reproduce las secciones del formulario AFIP F.1357 con el desglose que el
+// motor puede computar (sin SIRADIG/embargos). Las cargas de familia salen de
+// la tabla `familiares`. Devuelve una estructura por secciones lista para render.
+export function calcularF1357(emp, params, familiares, { anio, mes }) {
+  const p = params || {};
+  const d = emp.data || {};
+  const esFC = !d.cod_sindicato || String(d.cod_sindicato).toUpperCase() === 'FC';
+
+  const basico = num(d.basico) || num(d.sueldo) || num(emp.bruto);
+  const anios = aniosAntiguedad(emp.ingreso, anio, mes);
+  const antiguedad = esFC ? 0 : basico * anios * num(p.pctAntiguedadPorAnio) / 100;
+  const presentismo = esFC ? 0 : (basico + antiguedad) * num(p.pctPresentismo) / 100;
+  const complemento = num(d.complemento);
+  const regularRemun = basico + antiguedad + presentismo + complemento;
+
+  // Acumulado del año: remuneración regular × meses transcurridos + SAC proporcional.
+  const meses = Math.min(12, Math.max(1, num(mes)));
+  const remGravAcum = regularRemun * meses;
+  const sacAcum = regularRemun * 0.5 * (meses >= 6 ? (meses >= 12 ? 2 : 1) : 0); // SAC jun/dic
+  const remBrutaNoHab = remGravAcum;
+  const totalRemGravada = remGravAcum + sacAcum;
+
+  // Deducciones generales (aportes del trabajador, acumulados).
+  const pctJub = num(p.pctJubilacion), pctOS = num(p.pctObraSocial) + num(p.pctAnssal) + num(p.pctPamiEmp), pctSind = esFC ? 0 : num(p.pctSindicatoEmp);
+  const jubAcum = remGravAcum * pctJub / 100;
+  const osAcum = remGravAcum * pctOS / 100;
+  const sindAcum = remGravAcum * pctSind / 100;
+  const totDedGen = jubAcum + osAcum + sindAcum;
+
+  // Deducciones personales proporcionales a los meses transcurridos.
+  const propMes = meses / 12;
+  const mni = num(GAN.mniAnual) * propMes;
+  const dedEsp = num(GAN.dedEspAnual) * propMes;
+  const dedEsp2 = num(GAN.dedEsp2Anual) * propMes;
+
+  // Cargas de familia desde la tabla `familiares` (vigentes).
+  const fams = (familiares || []).filter((x) => !x.vigencia_hasta);
+  const esConyuge = (t) => ['conyuge', 'cónyuge', 'concubino', 'concubina'].includes(String(t || '').toLowerCase());
+  const esHijo = (t) => ['hijo', 'hija', 'hijastro', 'hijastra'].includes(String(t || '').toLowerCase());
+  const tieneConyuge = fams.some((x) => esConyuge(x.tipo));
+  const hijos = fams.filter((x) => esHijo(x.tipo) && !x.discapacidad).length;
+  const hijosInc = fams.filter((x) => esHijo(x.tipo) && x.discapacidad).length;
+  const cargaConyuge = (tieneConyuge ? num(GAN.cargaConyugeAnual) : 0) * propMes;
+  const cargaHijos = hijos * num(GAN.cargaHijoAnual) * propMes;
+  const cargaHijosInc = hijosInc * num(GAN.cargaHijoIncAnual) * propMes;
+  const totalCargasFam = cargaConyuge + cargaHijos + cargaHijosInc;
+  const totDedPers = mni + totalCargasFam + dedEsp + dedEsp2;
+
+  const totDed = totDedGen + totDedPers;
+  const remSujeta = Math.max(0, totalRemGravada - totDed);
+  const impDeterminado = impuestoEscala(remSujeta, GAN.escala);
+  // Alícuota marginal del tramo.
+  let alicuota = 0;
+  for (const t of (GAN.escala || [])) { const hasta = t.hasta == null ? Infinity : t.hasta; if (remSujeta > t.desde && remSujeta <= hasta) { alicuota = t.alicuota; break; } }
+  if (remSujeta > 0 && !alicuota && GAN.escala?.length) alicuota = GAN.escala[GAN.escala.length - 1].alicuota;
+
+  return {
+    empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, cuil: emp.cuil, cat: emp.cat },
+    periodo: { anio, mes, periodoLabel: `${String(mes).padStart(2, '0')}/${anio}`, tablas: GAN.periodo || '' },
+    gravadas: { remBrutaNoHab: round2(remBrutaNoHab), sac: round2(sacAcum), totalGravada: round2(totalRemGravada) },
+    dedGenerales: { jubilacion: round2(jubAcum), obraSocial: round2(osAcum), cuotaSindical: round2(sindAcum), total: round2(totDedGen) },
+    dedPersonales: {
+      mni: round2(mni),
+      cargasFamilia: { conyuge: round2(cargaConyuge), hijos: round2(cargaHijos), hijosIncapacitados: round2(cargaHijosInc), total: round2(totalCargasFam), nHijos: hijos, nHijosInc: hijosInc, tieneConyuge },
+      dedEspecial: round2(dedEsp), dedEspecial2: round2(dedEsp2), total: round2(totDedPers),
+    },
+    determinacion: { remSujeta: round2(remSujeta), alicuota, impuestoDeterminado: round2(impDeterminado) },
+    nota: 'Estimación anualizada (sin SIRADIG, otros empleos ni embargos). En migración.',
+  };
+}
+
 export function calcularRecibo(emp, params, { anio, mes }) {
   const p = params || {};
   const d = emp.data || {};

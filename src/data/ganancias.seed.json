@@ -58,5 +58,8 @@
       "alicuota": 35
     }
   ],
-  "periodo": "2026-S1"
+  "periodo": "2026-S1",
+  "cargaConyugeAnual": 19196335.4,
+  "cargaHijoAnual": 9681111.2,
+  "cargaHijoIncAnual": 19362222.4
 }
