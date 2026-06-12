@@ -175,3 +175,8 @@ CREATE TABLE IF NOT EXISTS evaluaciones (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_evaluaciones_empleado ON evaluaciones(empleado_id);
+
+-- Sanciones: campos agregados (falta cometida + estado del flujo)
+ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS falta TEXT;
+ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS estado TEXT NOT NULL DEFAULT 'aplicada';
+ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS resuelto_por TEXT;
