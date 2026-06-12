@@ -183,3 +183,17 @@ ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS resuelto_por TEXT;
 
 ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS fecha_notificacion DATE;
 ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS fecha_cumplimiento DATE;
+
+-- ── Certificados de trabajo (solicitud → generación RR.HH.) ──
+CREATE TABLE IF NOT EXISTS certificados (
+  id           SERIAL PRIMARY KEY,
+  empleado_id  INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  destinatario TEXT,
+  campos       JSONB NOT NULL DEFAULT '{}'::jsonb,
+  estado       TEXT NOT NULL DEFAULT 'pendiente',  -- pendiente | generado | rechazado
+  motivo       TEXT,
+  generado_por TEXT,
+  generado_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_certificados_empleado ON certificados(empleado_id);

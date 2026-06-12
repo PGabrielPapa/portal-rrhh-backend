@@ -16,6 +16,7 @@ import recibosRoutes from './routes/recibos.routes.js';
 import licenciasRoutes from './routes/licencias.routes.js';
 import sancionesRoutes from './routes/sanciones.routes.js';
 import evaluacionesRoutes from './routes/evaluaciones.routes.js';
+import certificadosRoutes from './routes/certificados.routes.js';
 
 export function createApp() {
   const app = express();
@@ -37,6 +38,7 @@ export function createApp() {
   app.use('/api/licencias', licenciasRoutes);
   app.use('/api/sanciones', sancionesRoutes);
   app.use('/api/evaluaciones', evaluacionesRoutes);
+  app.use('/api/certificados', certificadosRoutes);
 
   app.use(notFound);
   app.use(errorHandler);
