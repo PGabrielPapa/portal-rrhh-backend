@@ -18,6 +18,8 @@ import sancionesRoutes from './routes/sanciones.routes.js';
 import evaluacionesRoutes from './routes/evaluaciones.routes.js';
 import certificadosRoutes from './routes/certificados.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import elementosRoutes from './routes/elementos.routes.js';
+import beneficiosRoutes from './routes/beneficios.routes.js';
 
 export function createApp() {
   const app = express();
@@ -41,6 +43,8 @@ export function createApp() {
   app.use('/api/evaluaciones', evaluacionesRoutes);
   app.use('/api/certificados', certificadosRoutes);
   app.use('/api/admin', adminRoutes);
+  app.use('/api/elementos', elementosRoutes);
+  app.use('/api/beneficios', beneficiosRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

@@ -212,3 +212,36 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
 ALTER TABLE empresas ADD COLUMN IF NOT EXISTS data JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE empresas ADD COLUMN IF NOT EXISTS firma TEXT;
+
+-- ── Elementos de trabajo (activos entregados) ──
+CREATE TABLE IF NOT EXISTS elementos_trabajo (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL,
+  descripcion TEXT,
+  identificador TEXT,
+  estado TEXT NOT NULL DEFAULT 'entregado',
+  fecha_entrega DATE,
+  fecha_devolucion DATE,
+  observaciones TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_elem_empleado ON elementos_trabajo(empleado_id);
+
+-- ── Beneficios por empleado ──
+CREATE TABLE IF NOT EXISTS beneficios (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL,
+  modalidad TEXT,
+  monto NUMERIC(14,2) DEFAULT 0,
+  proveedor TEXT,
+  vigencia_desde DATE,
+  vigencia_hasta DATE,
+  detalle TEXT,
+  activo BOOLEAN NOT NULL DEFAULT true,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_benef_empleado ON beneficios(empleado_id);
