@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { query } from '../db.js';
 import { config } from '../config.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { empSlug } from '../lib/identity.js';
 
 const router = Router();
 router.use(requireAuth, requireRole('admin'));
@@ -73,7 +74,7 @@ router.get('/auditoria', async (req, res, next) => {
 // GET /api/admin/empresas — listado de empresas (con logo y datos)
 router.get('/empresas', async (req, res, next) => {
   try {
-    const { rows } = await query('SELECT id, nombre, slug, cuit, logo, data FROM empresas ORDER BY nombre');
+    const { rows } = await query('SELECT id, nombre, slug, cuit, logo, firma, data FROM empresas ORDER BY nombre');
     res.json(rows);
   } catch (e) { next(e); }
 });
@@ -86,10 +87,36 @@ router.patch('/empresas/:id', async (req, res, next) => {
     if (cuit !== undefined) { params.push(cuit); sets.push(`cuit = $${params.length}`); }
     if (data !== undefined) { params.push(JSON.stringify(data)); sets.push(`data = $${params.length}`); }
     if (logo !== undefined) { params.push(logo || null); sets.push(`logo = $${params.length}`); }
+    if (req.body.firma !== undefined) { params.push(req.body.firma || null); sets.push(`firma = $${params.length}`); }
     if (!sets.length) return res.status(400).json({ error: 'Nada para actualizar' });
     params.push(req.params.id);
     await query(`UPDATE empresas SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
     await audit(req.user.dni, 'empresa_editada', cuit ? `CUIT: ${cuit}` : (logo !== undefined ? 'logo actualizado' : 'datos'), String(req.params.id));
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// POST /api/admin/empresas — alta de empresa
+router.post('/empresas', async (req, res, next) => {
+  try {
+    const { nombre, cuit, data, logo, firma } = req.body || {};
+    if (!nombre || !String(nombre).trim()) return res.status(400).json({ error: 'El nombre es obligatorio' });
+    const r = await query(
+      'INSERT INTO empresas (nombre, slug, cuit, data, logo, firma) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
+      [String(nombre).trim(), empSlug(nombre), cuit || null, JSON.stringify(data || {}), logo || null, firma || null]);
+    await audit(req.user.dni, 'empresa_alta', String(nombre), String(r.rows[0].id));
+    res.status(201).json({ ok: true, id: r.rows[0].id });
+  } catch (e) { if (e.code === '23505') return res.status(409).json({ error: 'Ya existe una empresa con ese nombre' }); next(e); }
+});
+
+// DELETE /api/admin/empresas/:id — eliminar (solo si no tiene empleados)
+router.delete('/empresas/:id', async (req, res, next) => {
+  try {
+    const c = await query('SELECT count(*)::int AS n FROM empleados WHERE empresa_id = $1', [req.params.id]);
+    if (c.rows[0].n > 0) return res.status(409).json({ error: `No se puede eliminar: la empresa tiene ${c.rows[0].n} empleado(s). Reasignalos o dalos de baja primero.` });
+    const r = await query('DELETE FROM empresas WHERE id = $1 RETURNING nombre', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Empresa no encontrada' });
+    await audit(req.user.dni, 'empresa_baja', r.rows[0].nombre, String(req.params.id));
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
