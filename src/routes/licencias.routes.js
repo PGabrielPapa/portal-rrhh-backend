@@ -21,20 +21,21 @@ async function getVacInfo(empleadoId) {
   const ingAnio = ingreso ? new Date(ingreso).getFullYear() : anio;
   const antiguedad = Math.max(0, anio - ingAnio);
   const corresponden = diasPorAntiguedad(antiguedad);
-  // Vacaciones por año y estado (aprobadas + pendientes consumen saldo)
+  // El saldo se consume con las vacaciones GOZADAS (aprobadas), no con las pendientes.
   const tr = await query(
     `SELECT EXTRACT(YEAR FROM desde)::int AS y, COALESCE(SUM(dias),0)::int AS dias
-       FROM licencias WHERE empleado_id=$1 AND lower(tipo)='vacaciones' AND estado IN ('aprobada','pendiente')
+       FROM licencias WHERE empleado_id=$1 AND lower(tipo)='vacaciones' AND estado='aprobada'
        GROUP BY 1`, [empleadoId]);
   const porAnio = Object.fromEntries(tr.rows.map((r) => [r.y, r.dias]));
-  const usadosEsteAnio = porAnio[anio] || 0;
+  const tomadosEsteAnio = porAnio[anio] || 0;
+  const saldoEsteAnio = corresponden - tomadosEsteAnio;
   let saldoAnteriores = 0;
   for (let y = anio - 2; y < anio; y++) {
     if (ingAnio > y) continue;
     saldoAnteriores += Math.max(0, diasPorAntiguedad(Math.max(0, y - ingAnio)) - (porAnio[y] || 0));
   }
-  const disponible = corresponden + saldoAnteriores - usadosEsteAnio;
-  return { antiguedad, corresponden, usadosEsteAnio, saldoAnteriores, disponible, anio };
+  const disponible = saldoEsteAnio + saldoAnteriores;
+  return { antiguedad, corresponden, tomadosEsteAnio, saldoEsteAnio, saldoAnteriores, disponible, anio };
 }
 
 router.get('/vacaciones-info', async (req, res, next) => {
@@ -73,7 +74,7 @@ router.post('/', async (req, res, next) => {
     if (esVacaciones(tipo)) {
       const info = await getVacInfo(req.user.id);
       if (dias > info.disponible) {
-        return res.status(400).json({ error: `Excede tu saldo de vacaciones: pedís ${dias} día(s) y tenés ${info.disponible} disponible(s) (corresponden ${info.corresponden} + saldo anterior ${info.saldoAnteriores} − ya solicitados ${info.usadosEsteAnio}).` });
+        return res.status(400).json({ error: `Excede tu saldo de vacaciones: pedís ${dias} día(s) y tenés ${info.disponible} disponible(s) (saldo del año ${info.saldoEsteAnio} + saldo anterior ${info.saldoAnteriores}).` });
       }
     }
     const ins = await query('INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
