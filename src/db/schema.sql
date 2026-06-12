@@ -61,6 +61,11 @@ CREATE TABLE IF NOT EXISTS mensajes (
   autor       TEXT,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Mensajería bidireccional: empleado -> RR.HH. (a_rrhh) y RR.HH. -> empleado/broadcast (a_empleado)
+ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS direccion      TEXT NOT NULL DEFAULT 'a_empleado';
+ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS remitente_id   INTEGER REFERENCES empleados(id) ON DELETE SET NULL;
+ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS estado         TEXT NOT NULL DEFAULT 'nuevo';
+ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS borrar_al_leer BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS idx_mensajes_empleado ON mensajes(empleado_id);
 
 -- ── CBUs del empleado ──
@@ -74,6 +79,8 @@ CREATE TABLE IF NOT EXISTS cbus (
   activo      BOOLEAN NOT NULL DEFAULT true,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Porcentaje del neto que se acredita en cada cuenta (la suma de las activas debe dar 100%)
+ALTER TABLE cbus ADD COLUMN IF NOT EXISTS porcentaje NUMERIC(5,2) NOT NULL DEFAULT 100;
 CREATE INDEX IF NOT EXISTS idx_cbus_empleado ON cbus(empleado_id);
 
 -- ── Adelantos / anticipos ──
