@@ -17,6 +17,8 @@ router.get('/', async (req, res, next) => {
     if (gestiona(req.user.role)) {
       const { estado, empresa, q } = req.query;
       const cond = [], params = [];
+      // El gerente ve solo su empresa (proxy de "equipo" hasta tener organigrama).
+      if (req.user.role === 'manager') { params.push(req.user.empresa_id); cond.push(`e.empresa_id = $${params.length}`); }
       if (estado) { params.push(estado); cond.push(`l.estado = $${params.length}`); }
       if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
       if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
@@ -56,6 +58,23 @@ router.post('/', async (req, res, next) => {
       [req.user.id, tipo, desde, hasta, dias, motivo || null]
     );
     res.status(201).json(ins.rows[0]);
+  } catch (e) { next(e); }
+});
+
+// POST /api/licencias/registrar — RR.HH. carga una licencia para un empleado
+// (queda APROBADA directamente). { empleadoId, tipo, desde, hasta, motivo }
+router.post('/registrar', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { empleadoId, tipo, desde, hasta, motivo } = req.body || {};
+    if (!empleadoId || !tipo || !desde || !hasta) return res.status(400).json({ error: 'empleadoId, tipo, desde y hasta son obligatorios' });
+    if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
+    const dias = diasEntre(desde, hasta);
+    const ins = await query(
+      `INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo, estado, resuelto_por, resuelto_at)
+       VALUES ($1,$2,$3,$4,$5,$6,'aprobada',$7,now()) RETURNING id`,
+      [empleadoId, tipo, desde, hasta, dias, motivo || null, req.user.dni]
+    );
+    res.status(201).json({ ok: true, id: ins.rows[0].id });
   } catch (e) { next(e); }
 });
 
