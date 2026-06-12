@@ -15,11 +15,19 @@ function diasEntre(desde, hasta) {
 router.get('/', async (req, res, next) => {
   try {
     if (gestiona(req.user.role)) {
+      const { estado, empresa, q } = req.query;
+      const cond = [], params = [];
+      if (estado) { params.push(estado); cond.push(`l.estado = $${params.length}`); }
+      if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
+      if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
+      const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
       const { rows } = await query(
         `SELECT l.*, e.nom, e.leg_num, em.nombre AS empresa
            FROM licencias l JOIN empleados e ON e.id = l.empleado_id
            JOIN empresas em ON em.id = e.empresa_id
-          ORDER BY (l.estado='pendiente') DESC, l.created_at DESC`
+          ${where}
+          ORDER BY (l.estado='pendiente') DESC, l.created_at DESC`,
+        params
       );
       return res.json(rows);
     }
