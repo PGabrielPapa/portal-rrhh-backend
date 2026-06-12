@@ -38,6 +38,41 @@ router.get('/', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Días de vacaciones por antigüedad (Art. 150 LCT) + saldo
+function diasPorAntiguedad(anios) {
+  if (anios < 5) return 14; if (anios < 10) return 21; if (anios < 20) return 28; return 35;
+}
+// GET /api/licencias/vacaciones-info — del propio empleado
+router.get('/vacaciones-info', async (req, res, next) => {
+  try {
+    const er = await query('SELECT ingreso FROM empleados WHERE id=$1', [req.user.id]);
+    const ingreso = er.rows[0]?.ingreso;
+    const anio = new Date().getFullYear();
+    let antiguedad = 0;
+    if (ingreso) { const i = new Date(ingreso); antiguedad = Math.max(0, anio - i.getFullYear()); } // antigüedad al 31/12
+    const corresponden = diasPorAntiguedad(antiguedad);
+    // Días de vacaciones aprobadas por año (extract del desde)
+    const tr = await query(
+      `SELECT EXTRACT(YEAR FROM desde)::int AS anio, COALESCE(SUM(dias),0)::int AS dias
+         FROM licencias WHERE empleado_id=$1 AND lower(tipo)='vacaciones' AND estado='aprobada'
+         GROUP BY 1`, [req.user.id]);
+    const tomadosPorAnio = Object.fromEntries(tr.rows.map((r) => [r.anio, r.dias]));
+    const tomadosEsteAnio = tomadosPorAnio[anio] || 0;
+    const saldoEsteAnio = corresponden - tomadosEsteAnio;
+    // Saldo de años anteriores (no usados), simple: suma de (corresponden(año) - tomados(año)) > 0
+    let saldoAnteriores = 0;
+    for (let y = anio - 2; y < anio; y++) {
+      if (!ingreso) break;
+      const antY = Math.max(0, y - new Date(ingreso).getFullYear());
+      if (antY < 0) continue;
+      const corrY = diasPorAntiguedad(antY);
+      const tomY = tomadosPorAnio[y] || 0;
+      if (new Date(ingreso).getFullYear() <= y) saldoAnteriores += Math.max(0, corrY - tomY);
+    }
+    res.json({ antiguedad, corresponden, tomadosEsteAnio, saldoEsteAnio, saldoAnteriores, anio });
+  } catch (e) { next(e); }
+});
+
 // GET /api/licencias/mias — SIEMPRE las propias (cualquier rol)
 router.get('/mias', async (req, res, next) => {
   try {

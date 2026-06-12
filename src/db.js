@@ -1,4 +1,6 @@
 import pg from 'pg';
+// Devolver columnas DATE como 'YYYY-MM-DD' (sin timezone) para el front.
+pg.types.setTypeParser(1082, (v) => v);
 import { config } from './config.js';
 
 // Pool de conexiones a Postgres. Reutilizado en toda la app.
