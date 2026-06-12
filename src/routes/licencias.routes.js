@@ -43,7 +43,7 @@ router.get('/vacaciones-info', async (req, res, next) => {
 });
 
 router.get('/mias', async (req, res, next) => {
-  try { const { rows } = await query('SELECT * FROM licencias WHERE empleado_id = $1 ORDER BY created_at DESC', [req.user.id]); res.json(rows); }
+  try { const { rows } = await query('SELECT id, empleado_id, tipo, desde, hasta, dias, motivo, estado, resuelto_por, resuelto_at, created_at, justificacion, comprobante_nombre, comprobante_mime, (comprobante_data IS NOT NULL) AS tiene_comprobante FROM licencias WHERE empleado_id = $1 ORDER BY created_at DESC', [req.user.id]); res.json(rows); }
   catch (e) { next(e); }
 });
 
@@ -57,10 +57,10 @@ router.get('/', async (req, res, next) => {
       if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
       const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
       const { rows } = await query(
-        `SELECT l.*, e.nom, e.leg_num, em.nombre AS empresa FROM licencias l JOIN empleados e ON e.id=l.empleado_id JOIN empresas em ON em.id=e.empresa_id ${where} ORDER BY (l.estado='pendiente') DESC, l.created_at DESC`, params);
+        `SELECT l.id, l.empleado_id, l.tipo, l.desde, l.hasta, l.dias, l.motivo, l.estado, l.resuelto_por, l.resuelto_at, l.created_at, l.justificacion, l.comprobante_nombre, l.comprobante_mime, (l.comprobante_data IS NOT NULL) AS tiene_comprobante, e.nom, e.leg_num, em.nombre AS empresa FROM licencias l JOIN empleados e ON e.id=l.empleado_id JOIN empresas em ON em.id=e.empresa_id ${where} ORDER BY (l.estado='pendiente') DESC, l.created_at DESC`, params);
       return res.json(rows);
     }
-    const { rows } = await query('SELECT * FROM licencias WHERE empleado_id=$1 ORDER BY created_at DESC', [req.user.id]);
+    const { rows } = await query('SELECT id, empleado_id, tipo, desde, hasta, dias, motivo, estado, resuelto_por, resuelto_at, created_at, justificacion, comprobante_nombre, comprobante_mime, (comprobante_data IS NOT NULL) AS tiene_comprobante FROM licencias WHERE empleado_id=$1 ORDER BY created_at DESC', [req.user.id]);
     res.json(rows);
   } catch (e) { next(e); }
 });
@@ -93,10 +93,6 @@ router.post('/registrar', requireRole('rrhh', 'admin'), async (req, res, next) =
     const { empleadoId, tipo, desde, hasta, motivo } = req.body || {};
     if (!empleadoId || !tipo || !desde || !hasta) return res.status(400).json({ error: 'empleadoId, tipo, desde y hasta son obligatorios' });
     if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
-    // Imprevisibles: no se solicitan con anticipación (RR.HH. las registra).
-    if (['enfermedad', 'fallecimiento familiar', 'nacimiento'].includes(String(tipo).toLowerCase())) {
-      return res.status(400).json({ error: `${tipo} es una licencia imprevisible y no puede solicitarse con anticipación; debe registrarla RR.HH.` });
-    }
     const dias = diasEntre(desde, hasta);
     const ins = await query(
       `INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo, estado, resuelto_por, resuelto_at)
@@ -113,6 +109,39 @@ router.patch('/:id', requireRole('manager', 'rrhh', 'admin'), async (req, res, n
     const r = await query(`UPDATE licencias SET estado=$1, resuelto_por=$2, resuelto_at=now() WHERE id=$3 AND estado='pendiente' RETURNING id`, [estado, req.user.dni, req.params.id]);
     if (!r.rowCount) return res.status(409).json({ error: 'La licencia no existe o ya fue resuelta' });
     res.json({ ok: true, estado });
+  } catch (e) { next(e); }
+});
+
+// POST /api/licencias/justificar — el empleado justifica una licencia (típicamente imprevisible) adjuntando comprobante
+router.post('/justificar', async (req, res, next) => {
+  try {
+    const { tipo, desde, hasta, motivo, comprobanteNombre, comprobanteMime, comprobanteData } = req.body || {};
+    if (!tipo || !desde || !hasta) return res.status(400).json({ error: 'Tipo, desde y hasta son obligatorios' });
+    if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
+    if (!comprobanteData) return res.status(400).json({ error: 'Debés adjuntar el comprobante que justifica la licencia' });
+    const dias = diasEntre(desde, hasta);
+    const ins = await query(
+      `INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo, estado, justificacion, comprobante_nombre, comprobante_mime, comprobante_data)
+       VALUES ($1,$2,$3,$4,$5,$6,'pendiente',true,$7,$8,$9)
+       RETURNING id, tipo, desde, hasta, dias, motivo, estado, justificacion, comprobante_nombre, comprobante_mime, true AS tiene_comprobante`,
+      [req.user.id, tipo, desde, hasta, dias, motivo || null, comprobanteNombre || 'comprobante', comprobanteMime || 'application/octet-stream', comprobanteData]);
+    res.status(201).json(ins.rows[0]);
+  } catch (e) { next(e); }
+});
+
+// GET /api/licencias/:id/comprobante — descarga del comprobante (dueño o gestor)
+router.get('/:id/comprobante', async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      'SELECT empleado_id, comprobante_nombre, comprobante_mime, comprobante_data FROM licencias WHERE id=$1', [req.params.id]);
+    const lic = rows[0];
+    if (!lic || !lic.comprobante_data) return res.status(404).json({ error: 'No hay comprobante para esta licencia' });
+    const esGestor = gestiona(req.user.role);
+    if (!esGestor && lic.empleado_id !== req.user.id) return res.status(403).json({ error: 'No autorizado' });
+    const buf = Buffer.from(lic.comprobante_data, 'base64');
+    res.setHeader('Content-Type', lic.comprobante_mime || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${(lic.comprobante_nombre || 'comprobante').replace(/[^\w.\- ]/g, '_')}"`);
+    res.send(buf);
   } catch (e) { next(e); }
 });
 

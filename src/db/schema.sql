@@ -147,6 +147,11 @@ CREATE TABLE IF NOT EXISTS licencias (
   resuelto_at  TIMESTAMPTZ,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Comprobante adjunto para justificar licencias (imprevisibles, etc.)
+ALTER TABLE licencias ADD COLUMN IF NOT EXISTS comprobante_nombre TEXT;
+ALTER TABLE licencias ADD COLUMN IF NOT EXISTS comprobante_mime   TEXT;
+ALTER TABLE licencias ADD COLUMN IF NOT EXISTS comprobante_data   TEXT;
+ALTER TABLE licencias ADD COLUMN IF NOT EXISTS justificacion      BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS idx_licencias_empleado ON licencias(empleado_id);
 CREATE INDEX IF NOT EXISTS idx_licencias_estado ON licencias(estado);
 
