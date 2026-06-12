@@ -182,3 +182,4 @@ ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS estado TEXT NOT NULL DEFAULT 'apl
 ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS resuelto_por TEXT;
 
 ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS fecha_notificacion DATE;
+ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS fecha_cumplimiento DATE;

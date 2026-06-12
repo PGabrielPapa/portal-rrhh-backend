@@ -34,12 +34,17 @@ router.get('/', async (req, res, next) => {
 // POST — gerente SOLICITA (estado=solicitada); rrhh/admin APLICA directamente
 router.post('/', requireRole('manager', 'rrhh', 'admin'), async (req, res, next) => {
   try {
-    const { empleadoId, tipo, falta, fecha, dias, descripcion } = req.body || {};
+    const { empleadoId, tipo, falta, fecha, dias, descripcion, fechaNotificacion, fechaCumplimiento } = req.body || {};
     if (!empleadoId || !tipo || !fecha) return res.status(400).json({ error: 'empleado, tipo y fecha son obligatorios' });
-    const estado = req.user.role === 'manager' ? 'solicitada' : 'aplicada';
+    const esManager = req.user.role === 'manager';
+    const estado = esManager ? 'solicitada' : 'aplicada';
+    // RR.HH./admin aplican directo y cargan notificación/cumplimiento; el gerente solo solicita.
+    const fNotif = esManager ? null : (fechaNotificacion || null);
+    const fCumpl = esManager ? null : (fechaCumplimiento || null);
+    if (!esManager && !fNotif) return res.status(400).json({ error: 'La fecha de notificación es obligatoria' });
     const r = await query(
-      'INSERT INTO sanciones (empleado_id, tipo, falta, fecha, dias, descripcion, estado, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
-      [empleadoId, tipo, falta || null, fecha, parseInt(dias, 10) || 0, descripcion || null, estado, req.user.dni]);
+      'INSERT INTO sanciones (empleado_id, tipo, falta, fecha, dias, descripcion, estado, fecha_notificacion, fecha_cumplimiento, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
+      [empleadoId, tipo, falta || null, fecha, parseInt(dias, 10) || 0, descripcion || null, estado, fNotif, fCumpl, req.user.dni]);
     res.status(201).json({ ok: true, id: r.rows[0].id, estado });
   } catch (e) { next(e); }
 });
@@ -49,7 +54,9 @@ router.patch('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const estado = (req.body || {}).estado;
     if (!['aplicada', 'rechazada'].includes(estado)) return res.status(400).json({ error: 'Estado inválido' });
-    const r = await query(`UPDATE sanciones SET estado=$1, resuelto_por=$2 WHERE id=$3 AND estado='solicitada' RETURNING id`, [estado, req.user.dni, req.params.id]);
+    const fNotif = (req.body || {}).fechaNotificacion || null;
+    const fCumpl = (req.body || {}).fechaCumplimiento || null;
+    const r = await query(`UPDATE sanciones SET estado=$1, resuelto_por=$2, fecha_notificacion=COALESCE($4,fecha_notificacion), fecha_cumplimiento=COALESCE($5,fecha_cumplimiento) WHERE id=$3 AND estado='solicitada' RETURNING id`, [estado, req.user.dni, req.params.id, fNotif, fCumpl]);
     if (!r.rowCount) return res.status(409).json({ error: 'La sanción no existe o no está pendiente' });
     res.json({ ok: true, estado });
   } catch (e) { next(e); }
