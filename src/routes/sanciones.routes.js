@@ -13,6 +13,7 @@ router.get('/', async (req, res, next) => {
       return res.json(rows);
     }
     const { empresa, q } = req.query; const cond = [], params = [];
+    if (req.user.role === 'manager') { params.push(req.user.empresa_id); cond.push(`e.empresa_id = $${params.length}`); }
     if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
     if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
@@ -22,6 +23,12 @@ router.get('/', async (req, res, next) => {
          ${where} ORDER BY s.fecha DESC`, params);
     res.json(rows);
   } catch (e) { next(e); }
+});
+
+// GET /api/sanciones/mias — SIEMPRE las propias (cualquier rol)
+router.get('/mias', async (req, res, next) => {
+  try { const { rows } = await query('SELECT * FROM sanciones WHERE empleado_id = $1 ORDER BY fecha DESC', [req.user.id]); res.json(rows); }
+  catch (e) { next(e); }
 });
 
 router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
