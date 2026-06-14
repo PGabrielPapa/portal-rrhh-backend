@@ -303,24 +303,41 @@ export function calcularRecibo(emp, params, opts) {
   const totalAportes = descuentos.reduce((s, x) => s + x.monto, 0);
   const netoAntesGan = totalHaberes - totalAportes;
 
-  // Ganancias 4ª (estimación) — solo en liquidaciones de haberes regulares
-  if (tipo === 'mensual' || esQuincenal) {
-    const baseAnual = regularRemun * 13;
-    const aportesAnual = (regularRemun * (num(p.pctJubilacion) + num(p.pctObraSocial) + num(p.pctAnssal) + num(p.pctPamiEmp) + (esFC ? 0 : num(p.pctSindicatoEmp))) / 100) * 13;
-    // Cargas de familia (Ganancias): override por novedades o cero.
-    const cargasFam = (opts?.tieneConyuge ? num(G.cargaConyugeAnual) : 0)
+  // ── Impuesto a las Ganancias 4ª — modelo ACUMULADO (RG 4003/17) ──
+  // Impuesto sobre el acumulado del año menos lo ya retenido = retención del mes.
+  // Mensual/quincenal/SAC/vacaciones: deducciones personales proporcionales a los meses
+  // transcurridos. Final/anual: anualizadas (proporción completa).
+  const aplicaGan = ['mensual', 'quincenal_1', 'quincenal_2', 'sac1', 'sac2', 'vacaciones', 'final', 'anual'].includes(tipo);
+  let ganDetalle = null;
+  if (aplicaGan && opts?.calcularGanancias !== false) {
+    const ac = opts?.acumGanancias || { remGravAcum: 0, aportesAcum: 0, retenidoAcum: 0 };
+    const anualizada = esFinal || tipo === 'anual' || !!opts?.gananciasAnualizada;
+    const meses = anualizada ? 12 : Number(mes);
+    const prop = anualizada ? 1 : Math.min(1, Math.max(0, meses / 12));
+    const remAcum = num(ac.remGravAcum) + totalRemun;
+    const aportesAcum = num(ac.aportesAcum) + totalAportes;
+    const cargasFamAnual = (opts?.tieneConyuge ? num(G.cargaConyugeAnual) : 0)
       + num(opts?.nroHijosMenores) * num(G.cargaHijoAnual)
       + num(opts?.nroHijosIncapacitados) * num(G.cargaHijoIncAnual);
-    // Deducciones voluntarias SIRADIG (anuales): seguros, alquileres, médicos, etc.
-    const dedVol = num(opts?.dedVoluntariasAnual);
-    const ganSujeta = Math.max(0, baseAnual - aportesAnual - num(G.mniAnual) - num(G.dedEspAnual) - num(G.dedEsp2Anual) - cargasFam - dedVol);
-    const impAnual = impuestoEscala(ganSujeta, G.escala);
-    let ganRet = (impAnual / 12) * (esQuincenal ? 0.5 : 1);
-    const topePct = (p.gan_topeRetencionPct != null ? num(p.gan_topeRetencionPct) : 35);
-    const tope = netoAntesGan * topePct / 100;
+    const mniProp = num(G.mniAnual) * prop;
+    const dedEspProp = num(G.dedEspAnual) * prop;
+    const dedEsp2Prop = num(G.dedEsp2Anual) * prop;
+    const cargasProp = cargasFamAnual * prop;
+    const dedVolProp = num(opts?.dedVoluntariasAnual) * prop;
+    const remSujeta = Math.max(0, remAcum - aportesAcum - mniProp - dedEspProp - dedEsp2Prop - cargasProp - dedVolProp);
+    const impDetAcum = impuestoEscala(remSujeta, G.escala);
+    let ganRet = round2(impDetAcum - num(ac.retenidoAcum)); // retención del período (negativo = devolución)
     let ganTopeada = false;
-    if (ganRet > tope) { ganRet = tope; ganTopeada = true; }
-    if (ganRet > 0) descuentos.push({ concepto: 'Impuesto a las Ganancias 4ª (estimación)' + (ganTopeada ? ` — tope ${topePct}%` : ''), monto: round2(ganRet) });
+    if (ganRet > 0 && !anualizada) {
+      const topePct = (p.gan_topeRetencionPct != null ? num(p.gan_topeRetencionPct) : 35);
+      const tope = netoAntesGan * topePct / 100;
+      if (ganRet > tope) { ganRet = round2(tope); ganTopeada = true; }
+    }
+    if (ganRet > 0) descuentos.push({ concepto: 'Impuesto a las Ganancias 4ª' + (ganTopeada ? ` — tope ${(p.gan_topeRetencionPct != null ? num(p.gan_topeRetencionPct) : 35)}%` : ''), monto: ganRet });
+    else if (ganRet < 0) descuentos.push({ concepto: 'Devolución Impuesto a las Ganancias', monto: ganRet });
+    ganDetalle = { remGravAcum: round2(remAcum), aportesAcum: round2(aportesAcum), mesesTranscurridos: meses, anualizada,
+      mni: round2(mniProp), dedEspecial: round2(dedEspProp), dedEspecial2: round2(dedEsp2Prop), cargasFamilia: round2(cargasProp), dedVoluntarias: round2(dedVolProp),
+      remSujeta: round2(remSujeta), impuestoDeterminado: round2(impDetAcum), retenidoAnterior: round2(num(ac.retenidoAcum)), retencionPeriodo: ganRet, periodo: G.periodo || null };
   }
 
   // Descuento del anticipo de ajuste de sueldo abonado durante el mes (regularización).
@@ -382,7 +399,7 @@ export function calcularRecibo(emp, params, opts) {
   return {
     empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, cuil: emp.cuil, cat: emp.cat },
     periodo: { anio, mes, tipo, tipoLabel, fechaPago, ganPeriodo: G.periodo || null },
-    haberes, descuentos, detalle,
+    haberes, descuentos, detalle, ganancias: ganDetalle,
     totales: {
       totalRemun: round2(totalRemun), totalNoRem: round2(totalNoRem), totalExento: round2(totalExento),
       totalHaberes: round2(totalHaberes), totalDescuentos: round2(totalDescuentos), neto: round2(neto),

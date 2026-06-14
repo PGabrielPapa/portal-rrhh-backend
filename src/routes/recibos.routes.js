@@ -55,7 +55,22 @@ router.get('/:id', async (req, res, next) => {
     const gestor = puedeVerTodos(req.user.role);
     if (rec.empleado_id !== req.user.id && !gestor) return res.status(403).json({ error: 'Sin permiso' });
     if (rec.empleado_id === req.user.id && !gestor && !rec.publicado) return res.status(404).json({ error: 'Recibo no disponible' });
+    // Log de visualización cuando el empleado consulta su propio recibo.
+    if (rec.empleado_id === req.user.id) {
+      query('INSERT INTO recibo_vistas (recibo_id, empleado_id) VALUES ($1,$2)', [rec.id, req.user.id]).catch(() => {});
+    }
     res.json(rec.data);
+  } catch (e) { next(e); }
+});
+
+// GET /api/recibos/:id/vistas — log de visualizaciones (rrhh/admin/manager)
+router.get('/:id/vistas', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT v.created_at, e.nom, e.leg_num FROM recibo_vistas v JOIN empleados e ON e.id=v.empleado_id WHERE v.recibo_id=$1 ORDER BY v.created_at DESC`,
+      [req.params.id]
+    );
+    res.json(rows);
   } catch (e) { next(e); }
 });
 

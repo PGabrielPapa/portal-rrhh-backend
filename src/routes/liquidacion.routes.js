@@ -18,6 +18,27 @@ async function registrarCuotas(cuotas, anio, mes, reciboId, corridaId) {
   }
 }
 
+// Acumulado de Ganancias enero→mes-1: remunerativo, aportes y retención ya practicada.
+async function acumGananciasDe(empleadoId, anio, mes) {
+  const rows = (await query(
+    `SELECT data FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes < $3
+       AND tipo IN ('mensual','quincenal_1','quincenal_2','sac1','sac2','vacaciones')`,
+    [empleadoId, Number(anio), Number(mes)])).rows;
+  let remGravAcum = 0, aportesAcum = 0, retenidoAcum = 0;
+  for (const { data } of rows) {
+    const t = data?.totales || {};
+    remGravAcum += Number(t.totalRemun || 0);
+    // aportes = descuentos que no son Ganancias ni embargos/anticipos (aproximación: usar ganancias.aportesAcum del detalle si está)
+    const g = data?.ganancias;
+    if (g) { aportesAcum += 0; } // el acumulado de aportes se reconstruye abajo
+    for (const d of (data?.descuentos || [])) {
+      if (/Ganancias/i.test(d.concepto)) retenidoAcum += Number(d.monto || 0);
+      else if (/Jubilación|Obra Social|ANSSAL|INSSJP|Cuota sindical/i.test(d.concepto)) aportesAcum += Number(d.monto || 0);
+    }
+  }
+  return { remGravAcum: r2(remGravAcum), aportesAcum: r2(aportesAcum), retenidoAcum: r2(retenidoAcum) };
+}
+
 async function getEmp(id) {
   const er = await query(`SELECT e.*, em.nombre AS empresa_nombre FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE e.id=$1`, [id]);
   if (!er.rows[0]) return null;
@@ -56,7 +77,8 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
     const t = tipo || 'mensual';
     const cuotas = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
-    res.json(calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, ...extra }));
+    const acumGan = await acumGananciasDe(empleadoId, anio, mes);
+    res.json(calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -68,7 +90,8 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const emp = await getEmp(empleadoId);
     if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
     const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
-    const recibo = calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, ...extra });
+    const acumGan = await acumGananciasDe(empleadoId, anio, mes);
+    const recibo = calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ...extra });
     const ins = await query(
       `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, publicado)
        VALUES ($1,$2,$3,$4,$5,$6,$7,true)
@@ -105,7 +128,8 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     for (const { id } of emps) {
       const emp = await getEmp(id);
       const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
-      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas });
+      const acumGan = await acumGananciasDe(id, anio, mes);
+      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan });
       totalNeto += recibo.totales.neto; cant++;
       const rr = await query(
         `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)

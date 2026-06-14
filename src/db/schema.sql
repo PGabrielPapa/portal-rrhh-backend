@@ -387,3 +387,11 @@ CREATE TABLE IF NOT EXISTS anticipo_cuotas (
   CONSTRAINT uq_anticipo_cuota UNIQUE (anticipo_id, anio, mes)
 );
 CREATE INDEX IF NOT EXISTS idx_anticipo_cuotas_ant ON anticipo_cuotas(anticipo_id);
+-- ── Logs de visualización de recibos por el empleado ──
+CREATE TABLE IF NOT EXISTS recibo_vistas (
+  id          SERIAL PRIMARY KEY,
+  recibo_id   INTEGER NOT NULL REFERENCES recibos(id) ON DELETE CASCADE,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_recibo_vistas ON recibo_vistas(recibo_id);
