@@ -47,17 +47,31 @@ router.post('/', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// PATCH /api/anticipos/:id — aprobar/rechazar (manager/rrhh/admin)
+// Próximo período YYYY-MM (mes siguiente a hoy) para la primera cuota.
+function proxPeriodo() {
+  const d = new Date(); d.setMonth(d.getMonth() + 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// PATCH /api/anticipos/:id — aprobar/rechazar; al aprobar RR.HH. define cuotas y período (manager/rrhh/admin)
 router.patch('/:id', requireRole('manager', 'rrhh', 'admin'), async (req, res, next) => {
   try {
-    const estado = (req.body || {}).estado;
+    const { estado, cuotas, cuotaDesde } = req.body || {};
     if (!['aprobado', 'rechazado'].includes(estado)) return res.status(400).json({ error: 'Estado inválido' });
+    if (estado === 'rechazado') {
+      const r = await query(`UPDATE anticipos SET estado='rechazado', resuelto_por=$1, resuelto_at=now() WHERE id=$2 AND estado='pendiente' RETURNING id`, [req.user.dni, req.params.id]);
+      if (!r.rowCount) return res.status(409).json({ error: 'El adelanto no existe o ya fue resuelto' });
+      return res.json({ ok: true, estado });
+    }
+    const nCuotas = Math.max(1, parseInt(cuotas, 10) || 1);
+    const desde = (cuotaDesde && /^\d{4}-\d{2}$/.test(cuotaDesde)) ? cuotaDesde : proxPeriodo();
     const r = await query(
-      `UPDATE anticipos SET estado=$1, resuelto_por=$2, resuelto_at=now() WHERE id=$3 AND estado='pendiente' RETURNING id`,
-      [estado, req.user.dni, req.params.id]
+      `UPDATE anticipos SET estado='aprobado', cuotas=$1, cuota_desde=$2, resuelto_por=$3, resuelto_at=now()
+         WHERE id=$4 AND estado='pendiente' RETURNING *`,
+      [nCuotas, desde, req.user.dni, req.params.id]
     );
     if (!r.rowCount) return res.status(409).json({ error: 'El adelanto no existe o ya fue resuelto' });
-    res.json({ ok: true, estado });
+    res.json({ ok: true, estado, cuotas: nCuotas, cuotaDesde: desde });
   } catch (e) { next(e); }
 });
 

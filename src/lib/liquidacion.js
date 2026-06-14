@@ -278,6 +278,15 @@ export function calcularRecibo(emp, params, opts) {
   const antAjDesc = (tipo === 'mensual' || esQuincenal) ? num(opts?.anticipoAjusteDesc) : 0;
   if (antAjDesc > 0) descuentos.push({ concepto: 'Descuento anticipo ajuste de sueldo', monto: round2(antAjDesc) });
 
+  // Cuotas de anticipos de sueldo aprobados (módulo Adelantos).
+  if ((tipo === 'mensual' || esQuincenal) && Array.isArray(opts?.cuotasAnticipos)) {
+    for (const c of opts.cuotasAnticipos) {
+      if (num(c.monto) > 0) descuentos.push({ concepto: `Cuota anticipo de sueldo (${c.nro}/${c.cuotas})${c.motivo ? ' — ' + c.motivo : ''}`, monto: round2(c.monto) });
+    }
+  } else if ((tipo === 'mensual' || esQuincenal) && num(opts?.anticipoCuotaDesc) > 0) {
+    descuentos.push({ concepto: 'Cuotas de anticipos de sueldo', monto: round2(num(opts.anticipoCuotaDesc)) });
+  }
+
   const totalDescuentos = descuentos.reduce((s, x) => s + x.monto, 0);
   const neto = totalHaberes - totalDescuentos;
 

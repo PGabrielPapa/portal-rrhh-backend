@@ -14,6 +14,27 @@ async function getEmp(id) {
 }
 async function getParams() { const pr = await query('SELECT data FROM parametros_liq WHERE id = 1'); return pr.rows[0]?.data || {}; }
 
+// Cuotas de anticipos aprobados a descontar en (anio, mes). Determinístico por período.
+function r2(n) { return Math.round((Number(n) + Number.EPSILON) * 100) / 100; }
+async function cuotasAnticiposDe(empleadoId, anio, mes) {
+  const rows = (await query(
+    `SELECT id, monto, cuotas, cuota_desde, motivo, resuelto_at FROM anticipos
+      WHERE empleado_id=$1 AND estado='aprobado' AND cuotas > 0`, [empleadoId])).rows;
+  const out = [];
+  for (const a of rows) {
+    let desde = a.cuota_desde;
+    if (!desde) { const d = a.resuelto_at ? new Date(a.resuelto_at) : new Date(); d.setMonth(d.getMonth() + 1); desde = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
+    const [y0, m0] = desde.split('-').map(Number);
+    const idx = (Number(anio) - y0) * 12 + (Number(mes) - m0);
+    if (idx >= 0 && idx < a.cuotas) {
+      const base = r2(Number(a.monto) / a.cuotas);
+      const monto = (idx === a.cuotas - 1) ? r2(Number(a.monto) - base * (a.cuotas - 1)) : base;
+      out.push({ anticipoId: a.id, nro: idx + 1, cuotas: a.cuotas, monto, motivo: a.motivo || '' });
+    }
+  }
+  return out;
+}
+
 // ── Individual: calcular (no persiste) ──
 router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
@@ -21,7 +42,9 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     if (!empleadoId || !anio || !mes) return res.status(400).json({ error: 'empleadoId, anio y mes son obligatorios' });
     const emp = await getEmp(empleadoId);
     if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
-    res.json(calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo: tipo || 'mensual', ...extra }));
+    const t = tipo || 'mensual';
+    const cuotas = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
+    res.json(calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -32,7 +55,8 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     if (!empleadoId || !anio || !mes) return res.status(400).json({ error: 'empleadoId, anio y mes son obligatorios' });
     const emp = await getEmp(empleadoId);
     if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
-    const recibo = calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo, ...extra });
+    const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
+    const recibo = calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, ...extra });
     const ins = await query(
       `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, publicado)
        VALUES ($1,$2,$3,$4,$5,$6,$7,true)
@@ -67,7 +91,8 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     let totalNeto = 0, cant = 0;
     for (const { id } of emps) {
       const emp = await getEmp(id);
-      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo });
+      const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
+      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas });
       totalNeto += recibo.totales.neto; cant++;
       await query(
         `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)

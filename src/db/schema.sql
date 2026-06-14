@@ -98,6 +98,8 @@ CREATE TABLE IF NOT EXISTS anticipos (
   resuelto_at  TIMESTAMPTZ,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Período (YYYY-MM) de la primera cuota de descuento del anticipo.
+ALTER TABLE anticipos ADD COLUMN IF NOT EXISTS cuota_desde TEXT;
 CREATE INDEX IF NOT EXISTS idx_anticipos_empleado ON anticipos(empleado_id);
 CREATE INDEX IF NOT EXISTS idx_anticipos_estado ON anticipos(estado);
 
