@@ -164,12 +164,15 @@ export function calcularRecibo(emp, params, opts) {
   const tipoLabel = {
     mensual: 'Mensual', quincenal_1: 'Quincena 1ª (1–15)', quincenal_2: 'Quincena 2ª (16–fin)',
     sac1: 'SAC 1° semestre', sac2: 'SAC 2° semestre', vacaciones: 'Vacaciones', final: 'Liquidación final',
+    anticipo: 'Anticipo de haberes', complementaria: 'Complementaria / ajuste de sueldo',
   }[tipo] || tipo;
 
   const esQuincenal = tipo === 'quincenal_1' || tipo === 'quincenal_2';
   const esSAConly = tipo === 'sac1' || tipo === 'sac2';
   const esVacaciones = tipo === 'vacaciones';
   const esFinal = tipo === 'final';
+  const esAnticipo = tipo === 'anticipo';
+  const esComplementaria = tipo === 'complementaria';
   const detalle = {};
 
   if (esSAConly) {
@@ -206,6 +209,18 @@ export function calcularRecibo(emp, params, opts) {
       haberes.push({ concepto: `Indemnización por antigüedad — Art. 245 (${ind.anios} años${ind.topeAplicado ? ', con tope CCT' : ''})`, tipo: 'exento', monto: round2(ind.monto) });
       detalle.indemnizacion = { preaviso: round2(pre.monto), sacPreaviso: round2(sacPre), integracion: round2(integ.monto), art245: round2(ind.monto), anios: ind.anios };
     }
+  } else if (esAnticipo) {
+    // Anticipo de haberes: pago a cuenta de la remuneración futura. No tributa aportes/Ganancias ahora;
+    // se descuenta en la liquidación regular posterior (módulo Adelantos).
+    const monto = num(opts?.montoAnticipo);
+    haberes.push({ concepto: 'Anticipo de haberes', tipo: 'anticipo', monto: round2(monto) });
+    detalle.anticipo = { monto: round2(monto) };
+  } else if (esComplementaria) {
+    // Liquidación complementaria / ajuste de sueldo: paga un ajuste remunerativo (retroactivos, diferencias).
+    const monto = num(opts?.montoAjuste);
+    const concepto = (opts?.conceptoAjuste && String(opts.conceptoAjuste).trim()) || 'Ajuste de sueldo';
+    haberes.push({ concepto, tipo: 'rem', monto: round2(monto) });
+    detalle.ajuste = { concepto, monto: round2(monto) };
   } else {
     // mensual / quincenal
     const f = esQuincenal ? 0.5 : 1;
@@ -220,7 +235,8 @@ export function calcularRecibo(emp, params, opts) {
   const totalRemun = haberes.filter((h) => h.tipo === 'rem').reduce((s, h) => s + h.monto, 0);
   const totalNoRem = haberes.filter((h) => h.tipo === 'norem').reduce((s, h) => s + h.monto, 0);
   const totalExento = haberes.filter((h) => h.tipo === 'exento').reduce((s, h) => s + h.monto, 0);
-  const totalHaberes = totalRemun + totalNoRem + totalExento;
+  const totalAnticipo = haberes.filter((h) => h.tipo === 'anticipo').reduce((s, h) => s + h.monto, 0);
+  const totalHaberes = totalRemun + totalNoRem + totalExento + totalAnticipo;
 
   // Aportes del trabajador (solo sobre remunerativos)
   const descuentos = [];
