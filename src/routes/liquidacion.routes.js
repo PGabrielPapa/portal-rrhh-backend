@@ -319,4 +319,40 @@ router.post('/simular', requireRole('rrhh', 'admin'), async (req, res, next) => 
   } catch (e) { next(e); }
 });
 
+// POST /api/liquidacion/simular-gratificacion { empresa?, concepto, tipo:'rem'|'norem', modo:'fijo'|'pctBruto', valor }
+router.post('/simular-gratificacion', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { empresa, concepto = 'Gratificación', tipo = 'rem', modo = 'fijo', valor } = req.body || {};
+    const v = Number(valor) || 0;
+    if (v <= 0) return res.status(400).json({ error: 'El valor debe ser mayor a 0' });
+    const cond = ['e.activo = true'], pr = [];
+    if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
+    const emps = (await query(
+      `SELECT e.leg_num, e.nom, e.bruto, e.cuil, em.nombre AS empresa, e.data FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')} ORDER BY em.nombre, e.leg_num`, pr)).rows;
+    const p = await getParams();
+    const n = (x) => Number(x) || 0;
+    const pctAportes = n(p.pctJubilacion) + n(p.pctObraSocial) + n(p.pctAnssal) + n(p.pctPamiEmp);
+    const pctContrib = n(p.pctJubPatronal) + n(p.pctOsPatronal) + n(p.pctPamiPatronal) + n(p.pctDesempleo) + n(p.pctArt);
+    const esRem = tipo === 'rem';
+    const r2n = (x) => Math.round((x + Number.EPSILON) * 100) / 100;
+    const items = []; const tot = { importe: 0, aportes: 0, neto: 0, contrib: 0, incidSac: 0, costo: 0 };
+    for (const e of emps) {
+      const bruto = Number(e.bruto) || 0;
+      const importe = modo === 'pctBruto' ? bruto * v / 100 : v;
+      if (importe <= 0) continue;
+      const aportes = esRem ? importe * pctAportes / 100 : 0;
+      const contrib = esRem ? importe * pctContrib / 100 : 0;
+      const neto = importe - aportes;
+      const incidSac = esRem ? importe / 12 : 0;
+      const costo = importe + contrib;
+      items.push({ legNum: e.leg_num, nom: e.nom, empresa: e.empresa, bruto, importe: r2n(importe), aportes: r2n(aportes), neto: r2n(neto), contrib: r2n(contrib), incidSac: r2n(incidSac), costo: r2n(costo) });
+      tot.importe += importe; tot.aportes += aportes; tot.neto += neto; tot.contrib += contrib; tot.incidSac += incidSac; tot.costo += costo;
+    }
+    res.json({
+      concepto, tipo, modo, valor: v, cant: items.length, items,
+      totales: { importe: r2n(tot.importe), aportes: r2n(tot.aportes), neto: r2n(tot.neto), contrib: r2n(tot.contrib), incidSac: r2n(tot.incidSac), costo: r2n(tot.costo) },
+    });
+  } catch (e) { next(e); }
+});
+
 export default router;
