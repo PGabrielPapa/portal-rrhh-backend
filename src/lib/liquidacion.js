@@ -164,7 +164,7 @@ export function calcularRecibo(emp, params, opts) {
   const tipoLabel = {
     mensual: 'Mensual', quincenal_1: 'Quincena 1ª (1–15)', quincenal_2: 'Quincena 2ª (16–fin)',
     sac1: 'SAC 1° semestre', sac2: 'SAC 2° semestre', vacaciones: 'Vacaciones', final: 'Liquidación final',
-    anticipo: 'Anticipo de haberes', complementaria: 'Complementaria / ajuste de sueldo',
+    anticipo: 'Anticipo de haberes', complementaria: 'Ajuste de sueldo (remunerativo)', anticipo_ajuste: 'Anticipo ajuste de sueldo (no rem.)',
   }[tipo] || tipo;
 
   const esQuincenal = tipo === 'quincenal_1' || tipo === 'quincenal_2';
@@ -173,6 +173,7 @@ export function calcularRecibo(emp, params, opts) {
   const esFinal = tipo === 'final';
   const esAnticipo = tipo === 'anticipo';
   const esComplementaria = tipo === 'complementaria';
+  const esAnticipoAjuste = tipo === 'anticipo_ajuste';
   const detalle = {};
 
   if (esSAConly) {
@@ -216,11 +217,18 @@ export function calcularRecibo(emp, params, opts) {
     haberes.push({ concepto: 'Anticipo de haberes', tipo: 'anticipo', monto: round2(monto) });
     detalle.anticipo = { monto: round2(monto) };
   } else if (esComplementaria) {
-    // Liquidación complementaria / ajuste de sueldo: paga un ajuste remunerativo (retroactivos, diferencias).
+    // Ajuste de sueldo REMUNERATIVO: paga un ajuste con aportes (retroactivos, diferencias).
     const monto = num(opts?.montoAjuste);
     const concepto = (opts?.conceptoAjuste && String(opts.conceptoAjuste).trim()) || 'Ajuste de sueldo';
     haberes.push({ concepto, tipo: 'rem', monto: round2(monto) });
     detalle.ajuste = { concepto, monto: round2(monto) };
+  } else if (esAnticipoAjuste) {
+    // Anticipo ajuste de sueldo: suma NO REMUNERATIVA a cuenta. Luego se regulariza en la mensual
+    // (código "ajuste de sueldo" remunerativo) y se descuenta este anticipo.
+    const monto = num(opts?.montoAnticipoAjuste != null ? opts.montoAnticipoAjuste : opts?.montoAjuste);
+    const concepto = (opts?.conceptoAjuste && String(opts.conceptoAjuste).trim()) || 'Anticipo ajuste de sueldo';
+    haberes.push({ concepto, tipo: 'norem', monto: round2(monto) });
+    detalle.anticipoAjuste = { concepto, monto: round2(monto) };
   } else {
     // mensual / quincenal
     const f = esQuincenal ? 0.5 : 1;
@@ -230,6 +238,8 @@ export function calcularRecibo(emp, params, opts) {
     if (presentismo > 0) haberes.push({ concepto: 'Presentismo' + suf, tipo: 'rem', monto: round2(presentismo * f) });
     if (complemento > 0) haberes.push({ concepto: 'Complemento variable' + suf, tipo: 'rem', monto: round2(complemento * f) });
     if (noRem > 0) haberes.push({ concepto: 'Asignación no remunerativa' + suf, tipo: 'norem', monto: round2(noRem * f) });
+    const ajB = num(opts?.ajusteSueldoBruto);
+    if (ajB > 0) haberes.push({ concepto: 'Ajuste de sueldo', tipo: 'rem', monto: round2(ajB) });
   }
 
   const totalRemun = haberes.filter((h) => h.tipo === 'rem').reduce((s, h) => s + h.monto, 0);
@@ -263,6 +273,10 @@ export function calcularRecibo(emp, params, opts) {
     if (ganRet > tope) { ganRet = tope; ganTopeada = true; }
     if (ganRet > 0) descuentos.push({ concepto: 'Impuesto a las Ganancias 4ª (estimación)' + (ganTopeada ? ` — tope ${topePct}%` : ''), monto: round2(ganRet) });
   }
+
+  // Descuento del anticipo de ajuste de sueldo abonado durante el mes (regularización).
+  const antAjDesc = (tipo === 'mensual' || esQuincenal) ? num(opts?.anticipoAjusteDesc) : 0;
+  if (antAjDesc > 0) descuentos.push({ concepto: 'Descuento anticipo ajuste de sueldo', monto: round2(antAjDesc) });
 
   const totalDescuentos = descuentos.reduce((s, x) => s + x.monto, 0);
   const neto = totalHaberes - totalDescuentos;
