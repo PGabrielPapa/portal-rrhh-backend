@@ -355,4 +355,31 @@ router.post('/simular-gratificacion', requireRole('rrhh', 'admin'), async (req, 
   } catch (e) { next(e); }
 });
 
+const SUPUESTOS_BAJA = [
+  { v: 'renuncia', lbl: 'Renuncia (Art. 240)' },
+  { v: 'sin_causa', lbl: 'Despido sin causa (Art. 245)' },
+  { v: 'con_causa', lbl: 'Despido con justa causa (Art. 242)' },
+  { v: 'mutuo', lbl: 'Mutuo acuerdo (Art. 241)' },
+  { v: 'jubilacion', lbl: 'Jubilación / Retiro (Art. 252)' },
+  { v: 'fallecimiento', lbl: 'Fallecimiento (Art. 248)' },
+  { v: 'prueba', lbl: 'Período de prueba (Art. 92 bis)' },
+];
+
+// POST /api/liquidacion/simular-final { empleadoId, fechaEgreso, diasVacNoGozadas?, supuesto? }
+router.post('/simular-final', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { empleadoId, fechaEgreso, diasVacNoGozadas } = req.body || {};
+    if (!empleadoId || !fechaEgreso) return res.status(400).json({ error: 'empleadoId y fechaEgreso son obligatorios' });
+    const emp = await getEmp(empleadoId);
+    if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
+    const params = await getParams();
+    const fe = new Date(fechaEgreso + 'T12:00:00');
+    const escenarios = SUPUESTOS_BAJA.map((sup) => {
+      const rec = calcularRecibo(emp, params, { anio: fe.getFullYear(), mes: fe.getMonth() + 1, tipo: 'final', fechaEgreso, motivoBaja: sup.v, diasVacNoGozadas: Number(diasVacNoGozadas) || 0 });
+      return { supuesto: sup.v, label: sup.lbl, neto: rec.totales.neto, totalHaberes: rec.totales.totalHaberes, haberes: rec.haberes, detalle: rec.detalle };
+    });
+    res.json({ empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, ingreso: emp.ingreso }, escenarios });
+  } catch (e) { next(e); }
+});
+
 export default router;

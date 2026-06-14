@@ -220,17 +220,35 @@ export function calcularRecibo(emp, params, opts) {
     const diasVNG = num(opts?.diasVacNoGozadas);
     if (diasVNG > 0) { const vd = mejorRem / 25; haberes.push({ concepto: `Vacaciones no gozadas (${diasVNG} días)`, tipo: 'norem', monto: round2(diasVNG * vd) }); }
     detalle.sacProporcional = { monto: round2(sacP.monto), dias: sacP.dias };
-    // Indemnizaciones (solo despido sin causa)
-    if (opts?.motivoBaja === 'sin_causa') {
-      const pre = calcPreaviso(emp.ingreso, fEg, mejorRem);
-      const integ = calcIntegracionMes(fEg, mejorRem);
+    // Indemnizaciones según el supuesto legal de la baja.
+    const motivo = opts?.motivoBaja || 'renuncia';
+    const conIndemPlena = motivo === 'sin_causa';
+    const conMediaIndem = motivo === 'mutuo' || motivo === 'fallecimiento'; // Art. 241 / 248: 50%
+    const conPreaviso = motivo === 'sin_causa';
+    const conPreavisoPrueba = motivo === 'prueba'; // Art. 92 bis: 15 días
+    if (conIndemPlena || conMediaIndem || conPreaviso || conPreavisoPrueba) {
       const ind = calcIndemAntiguedad(emp.ingreso, fEg, mejorRem, opts?.topeCCT);
-      const sacPre = pre.monto / 12;
-      haberes.push({ concepto: `Preaviso (${pre.meses ? pre.meses + ' mes(es)' : pre.dias + ' días'})`, tipo: 'rem', monto: round2(pre.monto) });
-      if (sacPre > 0) haberes.push({ concepto: 'SAC sobre preaviso', tipo: 'rem', monto: round2(sacPre) });
-      if (integ.monto > 0) haberes.push({ concepto: `Integración mes de despido (${integ.dias} días)`, tipo: 'norem', monto: round2(integ.monto) });
-      haberes.push({ concepto: `Indemnización por antigüedad — Art. 245 (${ind.anios} años${ind.topeAplicado ? ', con tope CCT' : ''})`, tipo: 'exento', monto: round2(ind.monto) });
-      detalle.indemnizacion = { preaviso: round2(pre.monto), sacPreaviso: round2(sacPre), integracion: round2(integ.monto), art245: round2(ind.monto), anios: ind.anios };
+      if (conPreaviso) {
+        const pre = calcPreaviso(emp.ingreso, fEg, mejorRem);
+        const integ = calcIntegracionMes(fEg, mejorRem);
+        const sacPre = pre.monto / 12;
+        haberes.push({ concepto: `Preaviso (${pre.meses ? pre.meses + ' mes(es)' : pre.dias + ' días'})`, tipo: 'rem', monto: round2(pre.monto) });
+        if (sacPre > 0) haberes.push({ concepto: 'SAC sobre preaviso', tipo: 'rem', monto: round2(sacPre) });
+        if (integ.monto > 0) haberes.push({ concepto: `Integración mes de despido (${integ.dias} días)`, tipo: 'norem', monto: round2(integ.monto) });
+        detalle.indemnizacion = { preaviso: round2(pre.monto), sacPreaviso: round2(sacPre), integracion: round2(integ.monto) };
+      }
+      if (conPreavisoPrueba) {
+        const montoPre = round2((mejorRem / 30) * 15);
+        haberes.push({ concepto: 'Preaviso período de prueba (15 días — Art. 92 bis)', tipo: 'rem', monto: montoPre });
+      }
+      if (conIndemPlena) {
+        haberes.push({ concepto: `Indemnización por antigüedad — Art. 245 (${ind.anios} años${ind.topeAplicado ? ', con tope CCT' : ''})`, tipo: 'exento', monto: round2(ind.monto) });
+        detalle.indemnizacion = { ...(detalle.indemnizacion || {}), art245: round2(ind.monto), anios: ind.anios };
+      } else if (conMediaIndem) {
+        const m = round2(ind.monto * 0.5);
+        haberes.push({ concepto: `Indemnización ${motivo === 'mutuo' ? 'Art. 241 (mutuo acuerdo)' : 'Art. 248 (fallecimiento)'} — 50% del Art. 245`, tipo: 'exento', monto: m });
+        detalle.indemnizacion = { ...(detalle.indemnizacion || {}), art245Media: m, anios: ind.anios };
+      }
     }
   } else if (esAnticipo) {
     // Anticipo de haberes: pago a cuenta de la remuneración futura. No tributa aportes/Ganancias ahora;
