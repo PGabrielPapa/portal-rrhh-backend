@@ -6,6 +6,18 @@ import { calcularRecibo } from '../lib/liquidacion.js';
 const router = Router();
 router.use(requireAuth);
 
+async function registrarCuotas(cuotas, anio, mes, reciboId, corridaId) {
+  for (const c of (cuotas || [])) {
+    await query(
+      `INSERT INTO anticipo_cuotas (anticipo_id, recibo_id, corrida_id, anio, mes, nro, monto)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (anticipo_id, anio, mes)
+       DO UPDATE SET recibo_id=EXCLUDED.recibo_id, corrida_id=EXCLUDED.corrida_id, nro=EXCLUDED.nro, monto=EXCLUDED.monto`,
+      [c.anticipoId, reciboId || null, corridaId || null, Number(anio), Number(mes), c.nro || null, c.monto]
+    );
+  }
+}
+
 async function getEmp(id) {
   const er = await query(`SELECT e.*, em.nombre AS empresa_nombre FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE e.id=$1`, [id]);
   if (!er.rows[0]) return null;
@@ -65,6 +77,7 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
        RETURNING id`,
       [empleadoId, Number(anio), Number(mes), tipo, recibo.totales.neto, JSON.stringify(recibo), req.user.dni]
     );
+    await registrarCuotas(cuotas, anio, mes, ins.rows[0].id, null);
     res.json({ ok: true, id: ins.rows[0].id, recibo });
   } catch (e) { next(e); }
 });
@@ -94,13 +107,15 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
       const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas });
       totalNeto += recibo.totales.neto; cant++;
-      await query(
+      const rr = await query(
         `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false)
          ON CONFLICT (empleado_id, anio, mes, tipo)
-         DO UPDATE SET neto=EXCLUDED.neto, data=EXCLUDED.data, created_by=EXCLUDED.created_by, corrida_id=EXCLUDED.corrida_id, publicado=false, created_at=now()`,
+         DO UPDATE SET neto=EXCLUDED.neto, data=EXCLUDED.data, created_by=EXCLUDED.created_by, corrida_id=EXCLUDED.corrida_id, publicado=false, created_at=now()
+         RETURNING id`,
         [id, Number(anio), Number(mes), tipo, recibo.totales.neto, JSON.stringify(recibo), req.user.dni, corridaId]
       );
+      await registrarCuotas(cuotas, anio, mes, rr.rows[0].id, corridaId);
     }
     await query('UPDATE corridas SET total_neto=$1, cant=$2 WHERE id=$3', [totalNeto, cant, corridaId]);
     res.status(201).json({ ok: true, id: corridaId, cant, totalNeto });
@@ -164,6 +179,7 @@ router.delete('/corrida/:id', requireRole('rrhh', 'admin'), async (req, res, nex
     const c = (await query('SELECT estado FROM corridas WHERE id=$1', [req.params.id])).rows[0];
     if (!c) return res.status(404).json({ error: 'Corrida no encontrada' });
     if (c.estado === 'publicada') return res.status(409).json({ error: 'No se puede borrar una corrida publicada' });
+    await query('DELETE FROM anticipo_cuotas WHERE corrida_id=$1', [req.params.id]);
     await query('DELETE FROM recibos WHERE corrida_id=$1', [req.params.id]);
     await query('DELETE FROM corridas WHERE id=$1', [req.params.id]);
     res.json({ ok: true });

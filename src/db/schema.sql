@@ -372,3 +372,18 @@ CREATE TABLE IF NOT EXISTS art_contratos (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_art_empresa ON art_contratos(empresa_id);
+
+-- ── Cuotas de anticipos efectivamente aplicadas en cada liquidación (auditoría) ──
+CREATE TABLE IF NOT EXISTS anticipo_cuotas (
+  id          SERIAL PRIMARY KEY,
+  anticipo_id INTEGER NOT NULL REFERENCES anticipos(id) ON DELETE CASCADE,
+  recibo_id   INTEGER,
+  corrida_id  INTEGER,
+  anio        INTEGER NOT NULL,
+  mes         INTEGER NOT NULL,
+  nro         INTEGER,
+  monto       NUMERIC(14,2) NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_anticipo_cuota UNIQUE (anticipo_id, anio, mes)
+);
+CREATE INDEX IF NOT EXISTS idx_anticipo_cuotas_ant ON anticipo_cuotas(anticipo_id);

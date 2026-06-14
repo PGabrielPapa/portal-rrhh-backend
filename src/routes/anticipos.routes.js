@@ -12,14 +12,17 @@ router.get('/', async (req, res, next) => {
   try {
     if (puedeAprobar(req.user.role)) {
       const { rows } = await query(
-        `SELECT a.*, e.nom, e.leg_num, em.nombre AS empresa
-           FROM anticipos a JOIN empleados e ON e.id = a.empleado_id
+        `SELECT a.*, COALESCE(cu.pagadas,0)::int AS cuotas_pagadas, COALESCE(cu.total_pagado,0)::float AS total_pagado, e.nom, e.leg_num, em.nombre AS empresa
+           FROM anticipos a
+           LEFT JOIN (SELECT anticipo_id, COUNT(*) AS pagadas, SUM(monto) AS total_pagado FROM anticipo_cuotas GROUP BY anticipo_id) cu ON cu.anticipo_id = a.id
+           JOIN empleados e ON e.id = a.empleado_id
            JOIN empresas em ON em.id = e.empresa_id
           ORDER BY (a.estado='pendiente') DESC, a.created_at DESC`
       );
       return res.json(rows);
     }
-    const { rows } = await query('SELECT * FROM anticipos WHERE empleado_id = $1 ORDER BY created_at DESC', [req.user.id]);
+    const { rows } = await query(`SELECT a.*, COALESCE(cu.pagadas,0)::int AS cuotas_pagadas, COALESCE(cu.total_pagado,0)::float AS total_pagado FROM anticipos a
+           LEFT JOIN (SELECT anticipo_id, COUNT(*) AS pagadas, SUM(monto) AS total_pagado FROM anticipo_cuotas GROUP BY anticipo_id) cu ON cu.anticipo_id = a.id WHERE a.empleado_id = $1 ORDER BY a.created_at DESC`, [req.user.id]);
     res.json(rows);
   } catch (e) { next(e); }
 });
@@ -27,7 +30,8 @@ router.get('/', async (req, res, next) => {
 // GET /api/anticipos/mias — SIEMPRE los propios (cualquier rol)
 router.get('/mias', async (req, res, next) => {
   try {
-    const { rows } = await query('SELECT * FROM anticipos WHERE empleado_id = $1 ORDER BY created_at DESC', [req.user.id]);
+    const { rows } = await query(`SELECT a.*, COALESCE(cu.pagadas,0)::int AS cuotas_pagadas, COALESCE(cu.total_pagado,0)::float AS total_pagado FROM anticipos a
+           LEFT JOIN (SELECT anticipo_id, COUNT(*) AS pagadas, SUM(monto) AS total_pagado FROM anticipo_cuotas GROUP BY anticipo_id) cu ON cu.anticipo_id = a.id WHERE a.empleado_id = $1 ORDER BY a.created_at DESC`, [req.user.id]);
     res.json(rows);
   } catch (e) { next(e); }
 });
@@ -72,6 +76,17 @@ router.patch('/:id', requireRole('manager', 'rrhh', 'admin'), async (req, res, n
     );
     if (!r.rowCount) return res.status(409).json({ error: 'El adelanto no existe o ya fue resuelto' });
     res.json({ ok: true, estado, cuotas: nCuotas, cuotaDesde: desde });
+  } catch (e) { next(e); }
+});
+
+// GET /api/anticipos/:id/cuotas — detalle de cuotas aplicadas (propio o gestor)
+router.get('/:id/cuotas', async (req, res, next) => {
+  try {
+    const a = (await query('SELECT empleado_id FROM anticipos WHERE id=$1', [req.params.id])).rows[0];
+    if (!a) return res.status(404).json({ error: 'Adelanto no encontrado' });
+    if (a.empleado_id !== req.user.id && !puedeAprobar(req.user.role)) return res.status(403).json({ error: 'Sin permiso' });
+    const { rows } = await query('SELECT nro, anio, mes, monto, created_at FROM anticipo_cuotas WHERE anticipo_id=$1 ORDER BY anio, mes', [req.params.id]);
+    res.json(rows);
   } catch (e) { next(e); }
 });
 
