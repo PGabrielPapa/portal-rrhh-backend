@@ -154,4 +154,60 @@ router.delete('/periodos/:id', requireRole('rrhh', 'admin'), async (req, res, ne
   catch (e) { next(e); }
 });
 
+// Impuesto anual según escala progresiva (Art. 94).
+function impuestoEscala(base, escala) {
+  if (base <= 0 || !escala?.length) return 0;
+  for (const t of escala) { const hasta = t.hasta == null ? Infinity : t.hasta; if (base > t.desde && base <= hasta) return t.fijo + (base - t.desde) * t.alicuota / 100; }
+  const last = escala[escala.length - 1]; return last.fijo + (base - last.desde) * last.alicuota / 100;
+}
+
+// GET /api/ganancias/anual?anio=&empresa=  — liquidación anual del impuesto (ajuste a imputar en abril)
+router.get('/anual', async (req, res, next) => {
+  try {
+    if (!gestiona(req.user.role)) return res.status(403).json({ error: 'No autorizado' });
+    const anio = Number(req.query.anio) || new Date().getFullYear() - 1;
+    const empresa = req.query.empresa;
+    const ganTabla = await ganTablaParaFecha(`${anio}-12-31`);
+    if (!ganTabla) return res.status(400).json({ error: 'No hay tabla de Ganancias para ese año' });
+
+    const cond = ['r.anio = $1', `r.tipo IN ('mensual','quincenal_1','quincenal_2','sac1','sac2','vacaciones','complementaria','final')`], pr = [anio];
+    if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
+    const rows = (await query(
+      `SELECT r.empleado_id, r.data, e.nom, e.leg_num, e.cuil, e.data AS edata, em.nombre AS empresa
+         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
+        WHERE ${cond.join(' AND ')}`, pr)).rows;
+    // Agrupar por empleado
+    const porEmp = {};
+    for (const r of rows) {
+      const t = r.data?.totales || {}, d = r.data?.descuentos || [];
+      const e = porEmp[r.empleado_id] || (porEmp[r.empleado_id] = { nom: r.nom, legNum: r.leg_num, cuil: r.cuil, empresa: r.empresa, edata: r.edata || {}, remun: 0, aportes: 0, retenido: 0 });
+      e.remun += Number(t.totalRemun || 0);
+      for (const x of d) {
+        if (/Ganancias/i.test(x.concepto)) e.retenido += Number(x.monto || 0);
+        else if (/Jubilación|Obra Social|ANSSAL|INSSJP|Cuota sindical/i.test(x.concepto)) e.aportes += Number(x.monto || 0);
+      }
+    }
+    // Familiares por empleado (cargas)
+    const items = [];
+    for (const [empId, e] of Object.entries(porEmp)) {
+      const fams = (await query('SELECT tipo, discapacidad, vigencia_hasta FROM familiares WHERE empleado_id=$1', [empId])).rows.filter((x) => !x.vigencia_hasta);
+      const esC = (tp) => ['conyuge', 'cónyuge', 'concubino', 'concubina'].includes(String(tp || '').toLowerCase());
+      const esH = (tp) => ['hijo', 'hija', 'hijastro', 'hijastra'].includes(String(tp || '').toLowerCase());
+      const cargas = (fams.some((x) => esC(x.tipo)) ? Number(ganTabla.cargaConyugeAnual || 0) : 0)
+        + fams.filter((x) => esH(x.tipo) && !x.discapacidad).length * Number(ganTabla.cargaHijoAnual || 0)
+        + fams.filter((x) => esH(x.tipo) && x.discapacidad).length * Number(ganTabla.cargaHijoIncAnual || 0);
+      const remSujeta = Math.max(0, e.remun - e.aportes - Number(ganTabla.mniAnual || 0) - Number(ganTabla.dedEspAnual || 0) - Number(ganTabla.dedEsp2Anual || 0) - cargas);
+      const impuestoDet = r2(impuestoEscala(remSujeta, ganTabla.escala));
+      const diferencia = r2(impuestoDet - e.retenido);
+      items.push({ empleadoId: Number(empId), nom: e.nom, legNum: e.legNum, cuil: e.cuil, empresa: e.empresa,
+        remunAnual: r2(e.remun), aportesAnual: r2(e.aportes), cargas: r2(cargas), remSujeta: r2(remSujeta),
+        impuestoDeterminado: impuestoDet, retenidoAnual: r2(e.retenido), diferencia,
+        accion: diferencia > 0.5 ? 'retener' : diferencia < -0.5 ? 'devolver' : 'sin ajuste' });
+    }
+    items.sort((a, b) => a.empresa.localeCompare(b.empresa) || String(a.legNum).localeCompare(String(b.legNum)));
+    const tot = items.reduce((a, x) => ({ retener: a.retener + Math.max(0, x.diferencia), devolver: a.devolver + Math.max(0, -x.diferencia) }), { retener: 0, devolver: 0 });
+    res.json({ anio, tablaPeriodo: ganTabla.periodo || '', items, totales: { cant: items.length, aRetener: r2(tot.retener), aDevolver: r2(tot.devolver) } });
+  } catch (e) { next(e); }
+});
+
 export default router;
