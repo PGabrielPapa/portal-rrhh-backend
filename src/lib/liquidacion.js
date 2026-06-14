@@ -63,7 +63,8 @@ export function calcularF1357(emp, params, familiares, { anio, mes }) {
   const basico = num(d.basico) || num(d.sueldo) || num(emp.bruto);
   const anios = aniosAntiguedad(emp.ingreso, anio, mes);
   const antiguedad = esFC ? 0 : basico * anios * num(p.pctAntiguedadPorAnio) / 100;
-  const presentismo = esFC ? 0 : (basico + antiguedad) * num(p.pctPresentismo) / 100;
+  const pierdePresentismo = num(opts?.diasSuspension) > 0 || num(opts?.ausenciasInjustificadas) > 0;
+  const presentismo = (esFC || pierdePresentismo) ? 0 : (basico + antiguedad) * num(p.pctPresentismo) / 100;
   const complemento = num(d.complemento);
   const regularRemun = basico + antiguedad + presentismo + complemento;
 
@@ -172,7 +173,8 @@ export function calcularRecibo(emp, params, opts) {
   const basico = num(d.basico) || num(d.sueldo) || num(emp.bruto);
   const anios = aniosAntiguedad(emp.ingreso, anio, mes);
   const antiguedad = esFC ? 0 : basico * anios * num(p.pctAntiguedadPorAnio) / 100;
-  const presentismo = esFC ? 0 : (basico + antiguedad) * num(p.pctPresentismo) / 100;
+  const pierdePresentismo = num(opts?.diasSuspension) > 0 || num(opts?.ausenciasInjustificadas) > 0;
+  const presentismo = (esFC || pierdePresentismo) ? 0 : (basico + antiguedad) * num(p.pctPresentismo) / 100;
   const complemento = num(d.complemento);
   const noRem = num(d.norem);
   const regularRemun = basico + antiguedad + presentismo + complemento;
@@ -269,6 +271,16 @@ export function calcularRecibo(emp, params, opts) {
     // Otros conceptos manuales
     if (num(opts?.otrosRemun) > 0) haberes.push({ concepto: opts?.otrosRemunLabel || 'Otros haberes remunerativos', tipo: 'rem', monto: round2(num(opts.otrosRemun)) });
     if (num(opts?.otrosNoRem) > 0) haberes.push({ concepto: opts?.otrosNoRemLabel || 'Otros haberes no remunerativos', tipo: 'norem', monto: round2(num(opts.otrosNoRem)) });
+    // Feriados trabajados: un jornal adicional por feriado (Art. 166/168 LCT)
+    const ferT = num(opts?.feriadosTrabajados);
+    if (ferT > 0) haberes.push({ concepto: `Feriados trabajados (${ferT})`, tipo: 'rem', monto: round2((basico / 30) * ferT) });
+    // Horas extra exentas de Ganancias (Art. 82 LIG) — remunerativas para aportes
+    const heEx = num(opts?.hsExtrasExentas);
+    if (heEx > 0) haberes.push({ concepto: `Horas extra exentas Ganancias (${heEx} hs)`, tipo: 'rem', monto: round2((basico / 200) * 1.5 * heEx) });
+    // Conceptos exentos (no tributan aportes ni Ganancias): bono productividad, indemnizaciones, otros
+    if (num(opts?.bonoProductividadExento) > 0) haberes.push({ concepto: 'Bono productividad (exento)', tipo: 'exento', monto: round2(num(opts.bonoProductividadExento)) });
+    if (num(opts?.indemnizaciones) > 0) haberes.push({ concepto: 'Indemnizaciones (exento)', tipo: 'exento', monto: round2(num(opts.indemnizaciones)) });
+    if (num(opts?.otrosExentos) > 0) haberes.push({ concepto: opts?.otrosExentosLabel || 'Otros conceptos exentos', tipo: 'exento', monto: round2(num(opts.otrosExentos)) });
     const ajB = num(opts?.ajusteSueldoBruto);
     if (ajB > 0) haberes.push({ concepto: 'Ajuste de sueldo', tipo: 'rem', monto: round2(ajB) });
   }
@@ -295,7 +307,13 @@ export function calcularRecibo(emp, params, opts) {
   if (tipo === 'mensual' || esQuincenal) {
     const baseAnual = regularRemun * 13;
     const aportesAnual = (regularRemun * (num(p.pctJubilacion) + num(p.pctObraSocial) + num(p.pctAnssal) + num(p.pctPamiEmp) + (esFC ? 0 : num(p.pctSindicatoEmp))) / 100) * 13;
-    const ganSujeta = Math.max(0, baseAnual - aportesAnual - num(G.mniAnual) - num(G.dedEspAnual) - num(G.dedEsp2Anual));
+    // Cargas de familia (Ganancias): override por novedades o cero.
+    const cargasFam = (opts?.tieneConyuge ? num(G.cargaConyugeAnual) : 0)
+      + num(opts?.nroHijosMenores) * num(G.cargaHijoAnual)
+      + num(opts?.nroHijosIncapacitados) * num(G.cargaHijoIncAnual);
+    // Deducciones voluntarias SIRADIG (anuales): seguros, alquileres, médicos, etc.
+    const dedVol = num(opts?.dedVoluntariasAnual);
+    const ganSujeta = Math.max(0, baseAnual - aportesAnual - num(G.mniAnual) - num(G.dedEspAnual) - num(G.dedEsp2Anual) - cargasFam - dedVol);
     const impAnual = impuestoEscala(ganSujeta, G.escala);
     let ganRet = (impAnual / 12) * (esQuincenal ? 0.5 : 1);
     const topePct = (p.gan_topeRetencionPct != null ? num(p.gan_topeRetencionPct) : 35);
@@ -309,11 +327,30 @@ export function calcularRecibo(emp, params, opts) {
   const antAjDesc = (tipo === 'mensual' || esQuincenal) ? num(opts?.anticipoAjusteDesc) : 0;
   if (antAjDesc > 0) descuentos.push({ concepto: 'Descuento anticipo ajuste de sueldo', monto: round2(antAjDesc) });
 
-  // Otros descuentos manuales / embargo / cuota alimentaria.
+  // Suspensiones / ausencias (días no trabajados → descuento) + embargos.
   if ((tipo === 'mensual' || esQuincenal)) {
+    const valorDia = (basico + presentismo + antiguedad + complemento) / 30;
+    const dSusp = num(opts?.diasSuspension);
+    if (dSusp > 0) descuentos.push({ concepto: `Suspensión disciplinaria (${dSusp} días)`, monto: round2(valorDia * dSusp) });
+    const dAus = num(opts?.ausenciasInjustificadas);
+    if (dAus > 0) descuentos.push({ concepto: `Ausencias injustificadas (${dAus} días)`, monto: round2(valorDia * dAus) });
     if (num(opts?.otrosDesc) > 0) descuentos.push({ concepto: opts?.otrosDescLabel || 'Otros descuentos', monto: round2(num(opts.otrosDesc)) });
-    if (num(opts?.embargo) > 0) descuentos.push({ concepto: 'Embargo judicial', monto: round2(num(opts.embargo)) });
-    if (num(opts?.cuotaAlimentaria) > 0) descuentos.push({ concepto: 'Cuota alimentaria', monto: round2(num(opts.cuotaAlimentaria)) });
+
+    // Neto disponible para topes de embargo.
+    const netoParcial = totalHaberes - descuentos.reduce((a, x) => a + x.monto, 0);
+    // Embargo por alimentos: % del neto (sin tope del 20%).
+    const aliPct = num(opts?.embargoAlimentosPct);
+    let mAlim = num(opts?.cuotaAlimentaria);
+    if (aliPct > 0) mAlim += round2(netoParcial * aliPct / 100);
+    if (mAlim > 0) descuentos.push({ concepto: `Embargo/cuota alimentaria${aliPct > 0 ? ` (${aliPct}%)` : ''}`, monto: round2(mAlim) });
+    // Embargo común: tope = 20% de (neto − SMVM) si neto > SMVM (Ley 27.586 / CPCCN).
+    const embC = num(opts?.embargo);
+    if (embC > 0) {
+      const smvm = num(opts?.smvm) || num(p.smvm);
+      let monto = embC, topeAplicado = false;
+      if (smvm > 0) { const tope = netoParcial > smvm ? (netoParcial - smvm) * 0.20 : 0; if (embC > tope) { monto = round2(tope); topeAplicado = true; } }
+      if (monto > 0) descuentos.push({ concepto: 'Embargo judicial' + (topeAplicado ? ' (con tope legal 20%)' : ''), monto: round2(monto) });
+    }
   }
 
   // Cuotas de anticipos de sueldo aprobados (módulo Adelantos).
