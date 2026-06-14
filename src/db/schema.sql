@@ -440,3 +440,10 @@ CREATE TABLE IF NOT EXISTS hys_epp_entregas (
   fecha DATE NOT NULL, observaciones TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_hys_epp_emp ON hys_epp_entregas(empleado_id);
+-- ── Reglamento interno (vacaciones por antigüedad + licencias especiales) ──
+CREATE TABLE IF NOT EXISTS reglamento (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT reglamento_singleton CHECK (id = 1)
+);

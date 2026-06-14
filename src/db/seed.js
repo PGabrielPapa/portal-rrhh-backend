@@ -174,6 +174,31 @@ async function main() {
       console.log('[seed] sindicatos: ok');
     } catch (e) { console.warn('[seed] sindicatos:', e.message); }
 
+    // Reglamento interno (vacaciones por antigüedad + licencias especiales) — solo si no existe
+    try {
+      const rex = await client.query('SELECT 1 FROM reglamento WHERE id=1');
+      if (!rex.rowCount) {
+        const data = {
+          vacaciones: [
+            { hasta: 5, dias: 14 }, { hasta: 10, dias: 21 }, { hasta: 20, dias: 28 }, { hasta: null, dias: 35 },
+          ],
+          licencias: [
+            { tipo: 'Matrimonio', dias: 12, computo: 'corridos', art: 'Art. 158 inc. b LCT', nota: '12 días corridos' },
+            { tipo: 'Nacimiento de hijo', dias: 2, computo: 'corridos', art: 'Art. 158 inc. a LCT', nota: '2 días corridos (al menos 1 hábil)' },
+            { tipo: 'Fallecimiento familiar directo', dias: 4, computo: 'corridos', art: 'Art. 158 inc. c LCT', nota: 'Padres, cónyuge, hijos, hermanos/as' },
+            { tipo: 'Fallecimiento familiar político', dias: 2, computo: 'corridos', art: 'Art. 158 inc. c LCT', nota: 'Abuelos, suegros, cuñados, hijastros' },
+            { tipo: 'Examen', dias: 4, computo: 'corridos', art: 'Art. 158 inc. d LCT', nota: 'Hasta 4 días por examen, máx. 20 días por año' },
+            { tipo: 'Donación de sangre', dias: 1, computo: 'corridos', art: 'Ley 22.990', nota: '1 día' },
+            { tipo: 'Matrimonio de hijo', dias: 1, computo: 'hábil', art: 'CCT', nota: '1 día hábil' },
+            { tipo: 'Mudanza', dias: 2, computo: 'corridos', art: 'CCT', nota: '2 días corridos' },
+          ],
+          texto: '',
+        };
+        await client.query('INSERT INTO reglamento (id, data) VALUES (1, $1)', [JSON.stringify(data)]);
+        console.log('[seed] reglamento: ok');
+      }
+    } catch (e) { console.warn('[seed] reglamento:', e.message); }
+
     await client.query('COMMIT');
     console.log(`[seed] empleados cargados: ${ok} · omitidos: ${skip}`);
     console.log('[seed] contraseña inicial = DNI (cambio forzado en primer login).');
