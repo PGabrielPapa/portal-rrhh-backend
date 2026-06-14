@@ -12,7 +12,7 @@ async function recibosPeriodo(anio, mes, empresa) {
   const cond = ['r.anio = $1', 'r.mes = $2'], pr = [Number(anio), Number(mes)];
   if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
   const { rows } = await query(
-    `SELECT r.data, r.tipo, e.nom, e.leg_num, e.cuil, em.nombre AS empresa
+    `SELECT r.data, r.tipo, e.nom, e.leg_num, e.cuil, e.data AS edata, em.nombre AS empresa
        FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
       WHERE ${cond.join(' AND ')} ORDER BY em.nombre, e.nom`, pr);
   return rows;
@@ -85,6 +85,29 @@ router.get('/asiento', async (req, res, next) => {
       return { empresa, lineas, totalDebe, totalHaber, balanceado: Math.abs(totalDebe - totalHaber) < 0.5 };
     });
     res.json({ asientos });
+  } catch (e) { next(e); }
+});
+
+const contribDe = (cm, re) => (cm || []).filter((c) => re.test(c.concepto)).reduce((s, c) => s + Number(c.monto || 0), 0);
+
+// GET /api/reportes/ddjj-sindical?anio=&mes=&empresa=  (cuotas por sindicato)
+router.get('/ddjj-sindical', async (req, res, next) => {
+  try {
+    const rows = await recibosPeriodo(req.query.anio, req.query.mes, req.query.empresa);
+    const grupos = {};
+    for (const r of rows) {
+      const sind = String(r.edata?.cod_sindicato || '').toUpperCase().trim() || 'SIN CONVENIO / FC';
+      const cuotaEmp = aporteDe(r.data?.descuentos, /Cuota sindical/i);
+      const cuotaPat = contribDe(r.data?.costoEmpleador?.contribuciones, /sindical/i);
+      const baseRem = Number(r.data?.totales?.totalRemun || 0);
+      const g = grupos[sind] || (grupos[sind] = { sindicato: sind, items: [], totales: { baseRem: 0, cuotaEmp: 0, cuotaPat: 0, total: 0 } });
+      g.items.push({ legNum: r.leg_num, nom: r.nom, cuil: r.cuil, empresa: r.empresa, baseRem: r2(baseRem), cuotaEmp: r2(cuotaEmp), cuotaPat: r2(cuotaPat), total: r2(cuotaEmp + cuotaPat) });
+      g.totales.baseRem += baseRem; g.totales.cuotaEmp += cuotaEmp; g.totales.cuotaPat += cuotaPat; g.totales.total += cuotaEmp + cuotaPat;
+    }
+    const out = Object.values(grupos).map((g) => ({ ...g, totales: { baseRem: r2(g.totales.baseRem), cuotaEmp: r2(g.totales.cuotaEmp), cuotaPat: r2(g.totales.cuotaPat), total: r2(g.totales.total) } }))
+      .sort((a, b) => a.sindicato.localeCompare(b.sindicato));
+    const tot = out.reduce((a, g) => ({ cuotaEmp: a.cuotaEmp + g.totales.cuotaEmp, cuotaPat: a.cuotaPat + g.totales.cuotaPat, total: a.total + g.totales.total }), { cuotaEmp: 0, cuotaPat: 0, total: 0 });
+    res.json({ grupos: out, totales: { cuotaEmp: r2(tot.cuotaEmp), cuotaPat: r2(tot.cuotaPat), total: r2(tot.total) } });
   } catch (e) { next(e); }
 });
 
