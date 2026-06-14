@@ -64,7 +64,10 @@ export function calcularF1357(emp, params, familiares, { anio, mes }) {
   const anios = aniosAntiguedad(emp.ingreso, anio, mes);
   const antiguedad = esFC ? 0 : basico * anios * num(p.pctAntiguedadPorAnio) / 100;
   const pierdePresentismo = num(opts?.diasSuspension) > 0 || num(opts?.ausenciasInjustificadas) > 0;
-  const presentismo = (esFC || pierdePresentismo) ? 0 : (basico + antiguedad) * num(p.pctPresentismo) / 100;
+  // Base del presentismo según el CCT del empleado (pres_base del sindicato): 'basico' | 'basico+antig' | 'basico+antig+titulo'.
+  const presBase = opts?.presBase || 'basico';
+  const basePres = presBase === 'basico' ? basico : (basico + antiguedad);
+  const presentismo = (esFC || pierdePresentismo) ? 0 : basePres * num(p.pctPresentismo) / 100;
   const complemento = num(d.complemento);
   const regularRemun = basico + antiguedad + presentismo + complemento;
 
@@ -174,7 +177,10 @@ export function calcularRecibo(emp, params, opts) {
   const anios = aniosAntiguedad(emp.ingreso, anio, mes);
   const antiguedad = esFC ? 0 : basico * anios * num(p.pctAntiguedadPorAnio) / 100;
   const pierdePresentismo = num(opts?.diasSuspension) > 0 || num(opts?.ausenciasInjustificadas) > 0;
-  const presentismo = (esFC || pierdePresentismo) ? 0 : (basico + antiguedad) * num(p.pctPresentismo) / 100;
+  // Base del presentismo según el CCT del empleado (pres_base del sindicato): 'basico' | 'basico+antig' | 'basico+antig+titulo'.
+  const presBase = opts?.presBase || 'basico';
+  const basePres = presBase === 'basico' ? basico : (basico + antiguedad);
+  const presentismo = (esFC || pierdePresentismo) ? 0 : basePres * num(p.pctPresentismo) / 100;
   const complemento = num(d.complemento);
   const noRem = num(d.norem);
   const regularRemun = basico + antiguedad + presentismo + complemento;
@@ -309,9 +315,12 @@ export function calcularRecibo(emp, params, opts) {
   const totalAnticipo = haberes.filter((h) => h.tipo === 'anticipo').reduce((s, h) => s + h.monto, 0);
   const totalHaberes = totalRemun + totalNoRem + totalExento + totalAnticipo;
 
-  // Aportes del trabajador (solo sobre remunerativos)
+  // Aportes del trabajador (sobre base remunerativa con tope Art. 9 Ley 24.241, si está configurado)
   const descuentos = [];
-  const ap = (pct) => round2(totalRemun * num(pct) / 100);
+  const topeMax = num(p.topeAportesMax) > 0 ? num(p.topeAportesMax) : Infinity;
+  const topeMin = num(p.topeAportesMin) > 0 ? num(p.topeAportesMin) : 0;
+  const baseAportes = Math.min(Math.max(totalRemun, topeMin), topeMax);
+  const ap = (pct) => round2(baseAportes * num(pct) / 100);
   const aJub = ap(p.pctJubilacion), aOS = ap(p.pctObraSocial), aAnssal = ap(p.pctAnssal), aPami = ap(p.pctPamiEmp), aSind = esFC ? 0 : ap(p.pctSindicatoEmp);
   if (aJub > 0) descuentos.push({ concepto: 'Jubilación', monto: aJub });
   if (aOS > 0) descuentos.push({ concepto: 'Obra Social', monto: aOS });

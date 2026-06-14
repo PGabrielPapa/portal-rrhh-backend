@@ -41,6 +41,13 @@ async function acumGananciasDe(empleadoId, anio, mes) {
   return { remGravAcum: r2(remGravAcum), aportesAcum: r2(aportesAcum), retenidoAcum: r2(retenidoAcum) };
 }
 
+// Mapa de pres_base por código de sindicato (para la base del presentismo, como la vanilla).
+async function presBaseMap() {
+  try { const { rows } = await query('SELECT codigo, pres_base FROM sindicatos'); const m = {}; for (const r of rows) m[String(r.codigo).toUpperCase()] = r.pres_base; return m; }
+  catch { return {}; }
+}
+const presBaseDe = (m, emp) => m[String(emp?.data?.cod_sindicato || '').toUpperCase()] || 'basico';
+
 async function getEmp(id) {
   const er = await query(`SELECT e.*, em.nombre AS empresa_nombre FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE e.id=$1`, [id]);
   if (!er.rows[0]) return null;
@@ -81,7 +88,8 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const cuotas = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
     const acumGan = await acumGananciasDe(empleadoId, anio, mes);
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
-    res.json(calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, ...extra }));
+    const presBase = presBaseDe(await presBaseMap(), emp);
+    res.json(calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -95,7 +103,8 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
     const acumGan = await acumGananciasDe(empleadoId, anio, mes);
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
-    const recibo = calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, ...extra });
+    const presBase = presBaseDe(await presBaseMap(), emp);
+    const recibo = calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, ...extra });
     const ins = await query(
       `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, publicado)
        VALUES ($1,$2,$3,$4,$5,$6,$7,true)
@@ -125,6 +134,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     if (empresa && await periodoCerrado(empresa, anio, mes)) return res.status(409).json({ error: `El período ${String(mes).padStart(2,'0')}/${anio} de ${empresa} está cerrado` });
     const params = await getParams();
     const ganTabla = await ganTablaParaFecha(fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
+    const pbMap = await presBaseMap();
     const cr = await query(
       `INSERT INTO corridas (anio, mes, tipo, empresa, estado, creado_por) VALUES ($1,$2,$3,$4,'borrador',$5) RETURNING id`,
       [Number(anio), Number(mes), tipo, empresa || null, req.user.dni]
@@ -135,7 +145,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       const emp = await getEmp(id);
       const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
       const acumGan = await acumGananciasDe(id, anio, mes);
-      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla });
+      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: presBaseDe(pbMap, emp) });
       totalNeto += recibo.totales.neto; cant++;
       const rr = await query(
         `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)
