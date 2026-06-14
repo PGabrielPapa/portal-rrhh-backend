@@ -411,3 +411,17 @@ CREATE TABLE IF NOT EXISTS ganancias_periodos (
   updated_by           TEXT,
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- ── Catálogo de sindicatos (parámetros de aportes) ──
+CREATE TABLE IF NOT EXISTS sindicatos (
+  id                    SERIAL PRIMARY KEY,
+  codigo                TEXT NOT NULL UNIQUE,
+  nombre                TEXT NOT NULL,
+  pct_empleado          NUMERIC(6,2) NOT NULL DEFAULT 0,
+  pct_patronal          NUMERIC(6,2) NOT NULL DEFAULT 0,
+  pct_antig_por_anio    NUMERIC(6,2) NOT NULL DEFAULT 1,
+  nota                  TEXT,
+  tiene_adicional_titulo BOOLEAN NOT NULL DEFAULT false,
+  pres_base             TEXT NOT NULL DEFAULT 'basico',
+  updated_by            TEXT,
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);

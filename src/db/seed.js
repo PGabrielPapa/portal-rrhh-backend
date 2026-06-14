@@ -156,6 +156,24 @@ async function main() {
       }
     } catch (e) { console.warn('[seed] ganancias:', e.message); }
 
+    // Catálogo de sindicatos (idempotente)
+    try {
+      const SIND = [
+        ['COMERCIO','Empleados de Comercio (SEC/FAECYS)',2.5,0.5,1,'Cuota sindical 2% + FAECYS 0,5%',true,'basico+antig+titulo'],
+        ['UOM','Unión Obrera Metalúrgica',2.5,1.5,1,'Cuota sindical + FONDO',true,'basico+antig'],
+        ['ASIMRA','Sup. Industria Metalmecánica',3,1.5,1,'Cuota sindical + fondo cultura',true,'basico+antig'],
+        ['UOYEP','Unión Obreros y Emp. Plásticos',2,1.5,1,'Aporte UOYEP',false,'basico'],
+        ['UOCRA','Unión Obrera de la Construcción (UOCRA)',2,2,1,'Cuota sindical construcción',false,'basico'],
+        ['UECARA','Empl. de Conducción (UECARA)',2.5,1.5,1,'Personal jerárquico construcción',false,'basico'],
+      ];
+      for (const x of SIND) {
+        await client.query(
+          `INSERT INTO sindicatos (codigo, nombre, pct_empleado, pct_patronal, pct_antig_por_anio, nota, tiene_adicional_titulo, pres_base)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (codigo) DO NOTHING`, x);
+      }
+      console.log('[seed] sindicatos: ok');
+    } catch (e) { console.warn('[seed] sindicatos:', e.message); }
+
     await client.query('COMMIT');
     console.log(`[seed] empleados cargados: ${ok} · omitidos: ${skip}`);
     console.log('[seed] contraseña inicial = DNI (cambio forzado en primer login).');
