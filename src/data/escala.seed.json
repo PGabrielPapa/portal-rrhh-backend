@@ -1,0 +1,30 @@
+{
+  "id": "esc_seed_2026_04",
+  "vigencia": "2026-04-01",
+  "mesLabel": "Abril 2026",
+  "origen": "inicial",
+  "porcentaje": null,
+  "alcance": "todas",
+  "comentario": "Escala unificada inicial — 04/2026",
+  "tramos": [
+    { "key": "INI", "label": "Inicial" },
+    { "key": "JUN", "label": "Junior" },
+    { "key": "SEMI", "label": "Semi Senior" },
+    { "key": "SEN", "label": "Senior" }
+  ],
+  "categorias": [
+    { "cat": "OP",  "label": "Operario",                         "nota": "Aux. Plast. -15,61%",     "tramos": { "INI": 1296956.96, "JUN": 1361804.81, "SEMI": 1497985.29, "SEN": 1647783.82 } },
+    { "cat": "OF",  "label": "Oficial",                          "nota": "Operador Plast. -22,10%", "tramos": { "INI": 1316511.93, "JUN": 1382337.53, "SEMI": 1520571.28, "SEN": 1672628.41 } },
+    { "cat": "ASI", "label": "Asistente",                        "nota": "Adm. 3 Plast. -11,70%",   "tramos": { "INI": 1335551.67, "JUN": 1402329.25, "SEMI": 1542562.18, "SEN": 1696818.40 } },
+    { "cat": "ANA", "label": "Analista / Supervisor de Fábrica", "nota": "",                        "tramos": { "INI": 1696818.40, "JUN": 1781659.31, "SEMI": 1959825.25, "SEN": 2155807.77 } },
+    { "cat": "COO", "label": "Coordinador",                      "nota": "",                        "tramos": { "INI": 2155807.77, "JUN": 2328703.55, "SEMI": 2561573.91, "SEN": 2817731.30 } },
+    { "cat": "JEF", "label": "Jefe de Departamento",             "nota": "",                        "tramos": { "INI": 2817731.30, "JUN": 2958617.87, "SEMI": 3254479.65, "SEN": 3579927.62 } },
+    { "cat": "GER", "label": "Gerente",                          "nota": "",                        "tramos": { "INI": 3579927.62, "JUN": 3579927.62, "SEMI": 3937920.38, "SEN": 4331712.42 } }
+  ],
+  "regionales": [
+    { "key": "REG",     "label": "Gerente Regional",          "desc": "Neuquén / Córdoba / Mendoza / Rosario / Santa Fe / Corrientes", "monto": 2765771.32 },
+    { "key": "BSAS-3F", "label": "Gerente Buenos Aires · 3F", "desc": "Sucursal 3 de Febrero",                                         "monto": 2475489.38 },
+    { "key": "BSAS-JM", "label": "Gerente Buenos Aires · JM", "desc": "Sucursal José Marmol",                                          "monto": 3318925.58 }
+  ],
+  "montos_titulo": { "secundario": 0, "terciario": 0, "universitario": 0 }
+}

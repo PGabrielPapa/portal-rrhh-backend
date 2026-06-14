@@ -101,6 +101,21 @@ async function main() {
     }
     console.log('[seed] conceptos: ok');
 
+    // Escala salarial inicial (solo si no hay ninguna versión)
+    try {
+      const exist = await client.query("SELECT 1 FROM escala_versiones LIMIT 1");
+      if (!exist.rowCount) {
+        const esc = JSON.parse(fs.readFileSync(path.join(dataDir, 'escala.seed.json'), 'utf8'));
+        await client.query(
+          `INSERT INTO escala_versiones (vigencia, mes_label, origen, porcentaje, alcance, comentario, data, creado_por)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [esc.vigencia, esc.mesLabel, esc.origen || 'inicial', esc.porcentaje, esc.alcance || 'todas', esc.comentario || null,
+           JSON.stringify({ tramos: esc.tramos, categorias: esc.categorias, regionales: esc.regionales, montos_titulo: esc.montos_titulo }), null]
+        );
+        console.log('[seed] escala inicial: ok');
+      } else { console.log('[seed] escala: ya existe'); }
+    } catch (e) { console.warn('[seed] escala:', e.message); }
+
     await client.query('COMMIT');
     console.log(`[seed] empleados cargados: ${ok} · omitidos: ${skip}`);
     console.log('[seed] contraseña inicial = DNI (cambio forzado en primer login).');

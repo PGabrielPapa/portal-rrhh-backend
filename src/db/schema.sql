@@ -292,3 +292,18 @@ CREATE TABLE IF NOT EXISTS familiares (
 CREATE INDEX IF NOT EXISTS idx_familiares_empleado ON familiares(empleado_id);
 ALTER TABLE familiares ADD COLUMN IF NOT EXISTS apellido TEXT;
 ALTER TABLE familiares ADD COLUMN IF NOT EXISTS genero TEXT;
+
+-- ── Escalas salariales / convenios (versiones por paritaria) ──
+CREATE TABLE IF NOT EXISTS escala_versiones (
+  id          SERIAL PRIMARY KEY,
+  vigencia    DATE NOT NULL,
+  mes_label   TEXT,
+  origen      TEXT NOT NULL DEFAULT 'inicial',   -- inicial | incremento
+  porcentaje  NUMERIC(6,2),
+  alcance     TEXT NOT NULL DEFAULT 'todas',
+  comentario  TEXT,
+  data        JSONB NOT NULL,                    -- { tramos, categorias, regionales, montos_titulo }
+  creado_por  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_escala_vigencia ON escala_versiones(vigencia);
