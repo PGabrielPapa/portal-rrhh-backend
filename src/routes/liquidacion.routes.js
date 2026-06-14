@@ -166,15 +166,17 @@ router.get('/corrida/:id', requireRole('rrhh', 'admin'), async (req, res, next) 
     const items = (await query(
       `SELECT r.id, r.neto, r.data, e.nom, e.leg_num, em.nombre AS empresa
          FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
-        WHERE r.corrida_id=$1 ORDER BY em.nombre, e.nom`, [req.params.id])).rows;
+        WHERE r.corrida_id=$1 ORDER BY em.nombre ASC, e.leg_num ASC`, [req.params.id])).rows;
     res.json({
       corrida: c,
       items: items.map((r) => ({
         id: r.id, nom: r.nom, legNum: r.leg_num, empresa: r.empresa,
         neto: Number(r.neto),
         totalRemun: r.data?.totales?.totalRemun || 0, totalNoRem: r.data?.totales?.totalNoRem || 0,
+        totalHaberes: r.data?.totales?.totalHaberes || 0,
         totalDescuentos: r.data?.totales?.totalDescuentos || 0,
         costoTotal: r.data?.costoEmpleador?.costoTotal || 0,
+        haberes: r.data?.haberes || [], descuentos: r.data?.descuentos || [],
       })),
     });
   } catch (e) { next(e); }
