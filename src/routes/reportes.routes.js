@@ -111,4 +111,36 @@ router.get('/ddjj-sindical', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// GET /api/reportes/documentos?empresa=&tipo=  (repositorio de documentos generados/firmados)
+router.get('/documentos', async (req, res, next) => {
+  try {
+    const { empresa, tipo } = req.query;
+    const out = [];
+    const filtEmp = (em) => !empresa || em === empresa;
+    if (!tipo || tipo === 'sancion') {
+      const sanc = (await query(
+        `SELECT s.id, s.tipo, s.falta, s.fecha, s.fecha_notificacion, s.estado, e.nom, e.leg_num, em.nombre AS empresa
+           FROM sanciones s JOIN empleados e ON e.id=s.empleado_id JOIN empresas em ON em.id=e.empresa_id
+          WHERE s.estado IN ('aplicada','notificada') OR s.fecha_notificacion IS NOT NULL ORDER BY s.fecha DESC`)).rows;
+      for (const x of sanc) if (filtEmp(x.empresa)) out.push({ tipo: 'Sanción', refId: x.id, modulo: 'sanciones', empleado: x.nom, legNum: x.leg_num, empresa: x.empresa, detalle: `${x.tipo || ''}${x.falta ? ' — ' + x.falta : ''}`, fecha: x.fecha_notificacion || x.fecha, estado: x.estado });
+    }
+    if (!tipo || tipo === 'certificado') {
+      const cert = (await query(
+        `SELECT c.id, c.destinatario, c.estado, c.generado_at, c.created_at, e.nom, e.leg_num, em.nombre AS empresa
+           FROM certificados c JOIN empleados e ON e.id=c.empleado_id JOIN empresas em ON em.id=e.empresa_id
+          WHERE c.estado='generado' ORDER BY c.generado_at DESC NULLS LAST`)).rows;
+      for (const x of cert) if (filtEmp(x.empresa)) out.push({ tipo: 'Certificado de trabajo', refId: x.id, modulo: 'cert-trabajo-rrhh', empleado: x.nom, legNum: x.leg_num, empresa: x.empresa, detalle: x.destinatario ? `Para: ${x.destinatario}` : '', fecha: x.generado_at || x.created_at, estado: x.estado });
+    }
+    if (!tipo || tipo === 'licencia') {
+      const lic = (await query(
+        `SELECT l.id, l.tipo, l.desde, l.estado, l.justificacion, (l.comprobante_data IS NOT NULL) AS tiene, e.nom, e.leg_num, em.nombre AS empresa
+           FROM licencias l JOIN empleados e ON e.id=l.empleado_id JOIN empresas em ON em.id=e.empresa_id
+          WHERE l.comprobante_data IS NOT NULL OR l.estado='aprobada' ORDER BY l.desde DESC`)).rows;
+      for (const x of lic) if (filtEmp(x.empresa)) out.push({ tipo: 'Licencia', refId: x.id, modulo: 'licencias-rrhh', empleado: x.nom, legNum: x.leg_num, empresa: x.empresa, detalle: `${x.tipo}${x.tiene ? ' (con comprobante)' : ''}`, fecha: x.desde, estado: x.estado });
+    }
+    out.sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
 export default router;
