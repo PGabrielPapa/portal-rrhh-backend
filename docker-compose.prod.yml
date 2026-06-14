@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────────────────────────────────
+# Producción — Portal RR.HH. (DigitalOcean Droplet con Docker)
+# Levanta: Postgres + API (Node) + Frontend (nginx, sirve la SPA y proxya /api).
+#
+# Requisitos:
+#   1) Clonar AMBOS repos lado a lado:
+#        ~/portal-rrhh-backend   (este repo)
+#        ~/portal-rrhh-frontend
+#   2) Copiar .env.prod.example → .env y completar (sobre todo JWT_SECRET y la
+#      contraseña de Postgres).
+#   3)  docker compose -f docker-compose.prod.yml up -d --build
+#
+# El frontend queda servido en el puerto 80; la API no se expone afuera
+# (solo accesible vía el proxy /api del nginx del frontend).
+# ─────────────────────────────────────────────────────────────────────────
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: prh_db_prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-portal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?definí POSTGRES_PASSWORD en .env}
+      POSTGRES_DB: ${POSTGRES_DB:-portal_rrhh}
+    volumes: ["pgdata_prod:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-portal} -d ${POSTGRES_DB:-portal_rrhh}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    container_name: prh_api_prod
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgres://${POSTGRES_USER:-portal}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-portal_rrhh}
+      JWT_SECRET: ${JWT_SECRET:?definí JWT_SECRET en .env}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-10}
+      NODE_ENV: production
+    depends_on:
+      db: { condition: service_healthy }
+    # Migra el esquema, siembra (idempotente) y arranca la API.
+    command: sh -c "node src/db/migrate.js && node src/db/seed.js && node src/server.js"
+
+  web:
+    build: ../portal-rrhh-frontend
+    container_name: prh_web_prod
+    restart: unless-stopped
+    depends_on: [api]
+    ports: ["80:80"]   # cambiá a "443:443" + cert si usás HTTPS directo
+
+volumes:
+  pgdata_prod:
