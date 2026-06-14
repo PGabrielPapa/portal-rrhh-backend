@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { calcularRecibo } from '../lib/liquidacion.js';
+import { ganTablaParaFecha } from '../lib/gananciasParams.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -78,7 +79,8 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const t = tipo || 'mensual';
     const cuotas = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
     const acumGan = await acumGananciasDe(empleadoId, anio, mes);
-    res.json(calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ...extra }));
+    const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
+    res.json(calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -91,7 +93,8 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
     const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
     const acumGan = await acumGananciasDe(empleadoId, anio, mes);
-    const recibo = calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ...extra });
+    const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
+    const recibo = calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, ...extra });
     const ins = await query(
       `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, publicado)
        VALUES ($1,$2,$3,$4,$5,$6,$7,true)
@@ -119,6 +122,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     if (!emps.length) return res.status(400).json({ error: 'No hay empleados activos para ese filtro' });
 
     const params = await getParams();
+    const ganTabla = await ganTablaParaFecha(fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const cr = await query(
       `INSERT INTO corridas (anio, mes, tipo, empresa, estado, creado_por) VALUES ($1,$2,$3,$4,'borrador',$5) RETURNING id`,
       [Number(anio), Number(mes), tipo, empresa || null, req.user.dni]
@@ -129,7 +133,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       const emp = await getEmp(id);
       const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
       const acumGan = await acumGananciasDe(id, anio, mes);
-      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan });
+      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla });
       totalNeto += recibo.totales.neto; cant++;
       const rr = await query(
         `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)

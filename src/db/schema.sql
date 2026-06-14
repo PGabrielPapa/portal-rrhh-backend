@@ -395,3 +395,19 @@ CREATE TABLE IF NOT EXISTS recibo_vistas (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_recibo_vistas ON recibo_vistas(recibo_id);
+-- ── Parámetros del Impuesto a las Ganancias por período (editables por RR.HH.) ──
+CREATE TABLE IF NOT EXISTS ganancias_periodos (
+  id                   SERIAL PRIMARY KEY,
+  periodo              TEXT NOT NULL UNIQUE,
+  vigencia_desde       DATE NOT NULL,
+  rg                   TEXT,
+  mni_anual            NUMERIC(16,2) NOT NULL DEFAULT 0,
+  ded_esp_anual        NUMERIC(16,2) NOT NULL DEFAULT 0,
+  ded_esp2_anual       NUMERIC(16,2) NOT NULL DEFAULT 0,
+  carga_conyuge_anual  NUMERIC(16,2) NOT NULL DEFAULT 0,
+  carga_hijo_anual     NUMERIC(16,2) NOT NULL DEFAULT 0,
+  carga_hijo_inc_anual NUMERIC(16,2) NOT NULL DEFAULT 0,
+  escala               JSONB NOT NULL DEFAULT '[]'::jsonb,  -- [{ desde, hasta, fijo, alicuota }]
+  updated_by           TEXT,
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);

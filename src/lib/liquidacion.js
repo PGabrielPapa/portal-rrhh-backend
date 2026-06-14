@@ -180,7 +180,7 @@ export function calcularRecibo(emp, params, opts) {
   const regularRemun = basico + antiguedad + presentismo + complemento;
   const mejorRem = num(opts?.mejorRem) || (regularRemun + noRem);
   const fechaPago = opts?.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-01`;
-  const G = ganParaFecha(fechaPago);
+  const G = opts?.ganTabla || ganParaFecha(fechaPago);
 
   const haberes = [];
   const tipoLabel = {

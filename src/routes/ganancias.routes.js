@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { calcularRecibo } from '../lib/liquidacion.js';
+import { ganTablaParaFecha, mapGanRow } from '../lib/gananciasParams.js';
+import { requireRole } from '../middleware/auth.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -44,6 +46,8 @@ async function f1357For(empleadoId, anio, mes, anualizada) {
   const nroHijosMenores = fams.filter((x) => esHijo(x.tipo) && !x.discapacidad).length;
   const nroHijosIncapacitados = fams.filter((x) => esHijo(x.tipo) && x.discapacidad).length;
 
+  const fechaRef = `${anio}-${String(mes).padStart(2, '0')}-15`;
+  const ganTabla = await ganTablaParaFecha(fechaRef);
   const ac = await acumular(empleadoId, anio, mes);
   // Mes corriente: usa el recibo guardado si existe; si no, lo calcula al vuelo.
   const guardado = (await query(
@@ -51,7 +55,7 @@ async function f1357For(empleadoId, anio, mes, anualizada) {
     [empleadoId, Number(anio), Number(mes)])).rows[0]?.data;
   const rec = guardado || calcularRecibo(emp, params, {
     anio: Number(anio), mes: Number(mes), tipo: anualizada ? 'anual' : 'mensual',
-    fechaPago: `${anio}-${String(mes).padStart(2, '0')}-15`,
+    fechaPago: fechaRef, ganTabla,
     acumGanancias: { remGravAcum: ac.remun, aportesAcum: ac.jub + ac.os + ac.sind, retenidoAcum: ac.retenido },
     tieneConyuge, nroHijosMenores, nroHijosIncapacitados, gananciasAnualizada: anualizada,
   });
@@ -104,6 +108,50 @@ router.get('/f1357/:empleadoId', async (req, res, next) => {
     if (!out) return res.status(404).json({ error: 'Empleado no encontrado' });
     res.json(out);
   } catch (e) { next(e); }
+});
+
+// ── Parámetros de Ganancias por período (RR.HH./admin) ──
+router.get('/periodos', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try { const { rows } = await query('SELECT * FROM ganancias_periodos ORDER BY vigencia_desde ASC'); res.json(rows.map(mapGanRow)); }
+  catch (e) { next(e); }
+});
+
+router.post('/periodos', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!b.periodo || !b.vigenciaDesde) return res.status(400).json({ error: 'Período y vigencia desde son obligatorios' });
+    const ins = await query(
+      `INSERT INTO ganancias_periodos (periodo, vigencia_desde, rg, mni_anual, ded_esp_anual, ded_esp2_anual, carga_conyuge_anual, carga_hijo_anual, carga_hijo_inc_anual, escala, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (periodo) DO UPDATE SET vigencia_desde=EXCLUDED.vigencia_desde, rg=EXCLUDED.rg, mni_anual=EXCLUDED.mni_anual,
+         ded_esp_anual=EXCLUDED.ded_esp_anual, ded_esp2_anual=EXCLUDED.ded_esp2_anual, carga_conyuge_anual=EXCLUDED.carga_conyuge_anual,
+         carga_hijo_anual=EXCLUDED.carga_hijo_anual, carga_hijo_inc_anual=EXCLUDED.carga_hijo_inc_anual, escala=EXCLUDED.escala, updated_by=EXCLUDED.updated_by, updated_at=now()
+       RETURNING *`,
+      [b.periodo, b.vigenciaDesde, b.rg || null, b.mniAnual || 0, b.dedEspAnual || 0, b.dedEsp2Anual || 0,
+       b.cargaConyugeAnual || 0, b.cargaHijoAnual || 0, b.cargaHijoIncAnual || 0, JSON.stringify(b.escala || []), req.user.dni]
+    );
+    res.status(201).json(mapGanRow(ins.rows[0]));
+  } catch (e) { next(e); }
+});
+
+router.put('/periodos/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const r = await query(
+      `UPDATE ganancias_periodos SET periodo=$1, vigencia_desde=$2, rg=$3, mni_anual=$4, ded_esp_anual=$5, ded_esp2_anual=$6,
+         carga_conyuge_anual=$7, carga_hijo_anual=$8, carga_hijo_inc_anual=$9, escala=$10, updated_by=$11, updated_at=now()
+       WHERE id=$12 RETURNING *`,
+      [b.periodo, b.vigenciaDesde, b.rg || null, b.mniAnual || 0, b.dedEspAnual || 0, b.dedEsp2Anual || 0,
+       b.cargaConyugeAnual || 0, b.cargaHijoAnual || 0, b.cargaHijoIncAnual || 0, JSON.stringify(b.escala || []), req.user.dni, req.params.id]
+    );
+    if (!r.rowCount) return res.status(404).json({ error: 'Período no encontrado' });
+    res.json(mapGanRow(r.rows[0]));
+  } catch (e) { next(e); }
+});
+
+router.delete('/periodos/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try { const r = await query('DELETE FROM ganancias_periodos WHERE id=$1 RETURNING id', [req.params.id]); if (!r.rowCount) return res.status(404).json({ error: 'No encontrado' }); res.json({ ok: true }); }
+  catch (e) { next(e); }
 });
 
 export default router;

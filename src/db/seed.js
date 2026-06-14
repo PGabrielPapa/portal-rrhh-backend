@@ -139,6 +139,23 @@ async function main() {
       console.log(`[seed] convenios: ${convs.length}`);
     } catch (e) { console.warn('[seed] convenios:', e.message); }
 
+    // Parámetros de Ganancias — período inicial (solo si no hay ninguno)
+    try {
+      const gex = await client.query('SELECT 1 FROM ganancias_periodos LIMIT 1');
+      if (!gex.rowCount) {
+        const gan = JSON.parse(fs.readFileSync(path.join(dataDir, 'ganancias.seed.json'), 'utf8'));
+        const vig = /(\d{4})-S([12])/.exec(gan.periodo || '');
+        const vigenciaDesde = vig ? `${vig[1]}-${vig[2] === '1' ? '01' : '07'}-01` : '2026-01-01';
+        await client.query(
+          `INSERT INTO ganancias_periodos (periodo, vigencia_desde, mni_anual, ded_esp_anual, ded_esp2_anual, carga_conyuge_anual, carga_hijo_anual, carga_hijo_inc_anual, escala)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [gan.periodo || '2026-S1', vigenciaDesde, gan.mniAnual || 0, gan.dedEspAnual || 0, gan.dedEsp2Anual || 0,
+           gan.cargaConyugeAnual || 0, gan.cargaHijoAnual || 0, gan.cargaHijoIncAnual || 0, JSON.stringify(gan.escala || [])]
+        );
+        console.log('[seed] ganancias período inicial: ok');
+      }
+    } catch (e) { console.warn('[seed] ganancias:', e.message); }
+
     await client.query('COMMIT');
     console.log(`[seed] empleados cargados: ${ok} · omitidos: ${skip}`);
     console.log('[seed] contraseña inicial = DNI (cambio forzado en primer login).');
