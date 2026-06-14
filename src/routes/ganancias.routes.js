@@ -1,48 +1,106 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { calcularF1357 } from '../lib/liquidacion.js';
+import { calcularRecibo } from '../lib/liquidacion.js';
 
 const router = Router();
 router.use(requireAuth);
 
 const gestiona = (role) => ['rrhh', 'admin'].includes(role);
+const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+const hoy = () => { const d = new Date(); return { anio: d.getFullYear(), mes: d.getMonth() + 1 }; };
 
-async function f1357For(empleadoId, anio, mes) {
+// Acumula remunerativo y aportes por categoría + retención, de enero a mes-1.
+async function acumular(empleadoId, anio, mes) {
+  const rows = (await query(
+    `SELECT data FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes < $3
+       AND tipo IN ('mensual','quincenal_1','quincenal_2','sac1','sac2','vacaciones')`,
+    [empleadoId, Number(anio), Number(mes)])).rows;
+  const a = { remun: 0, jub: 0, os: 0, sind: 0, retenido: 0 };
+  for (const { data } of rows) {
+    a.remun += Number(data?.totales?.totalRemun || 0);
+    for (const d of (data?.descuentos || [])) {
+      const c = d.concepto || '';
+      if (/Ganancias/i.test(c)) a.retenido += Number(d.monto || 0);
+      else if (/Jubilación/i.test(c)) a.jub += Number(d.monto || 0);
+      else if (/Obra Social|ANSSAL|INSSJP/i.test(c)) a.os += Number(d.monto || 0);
+      else if (/Cuota sindical/i.test(c)) a.sind += Number(d.monto || 0);
+    }
+  }
+  return a;
+}
+
+async function f1357For(empleadoId, anio, mes, anualizada) {
   const er = await query(
-    `SELECT e.*, em.nombre AS empresa_nombre FROM empleados e JOIN empresas em ON em.id = e.empresa_id WHERE e.id = $1`,
-    [empleadoId]
-  );
+    `SELECT e.*, em.nombre AS empresa_nombre FROM empleados e JOIN empresas em ON em.id = e.empresa_id WHERE e.id = $1`, [empleadoId]);
   if (!er.rows[0]) return null;
   const r = er.rows[0];
   const emp = { legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} };
-  const pr = await query('SELECT data FROM parametros_liq WHERE id = 1');
-  const fr = await query('SELECT tipo, discapacidad, vigencia_hasta FROM familiares WHERE empleado_id = $1', [empleadoId]);
-  return calcularF1357(emp, pr.rows[0]?.data || {}, fr.rows, { anio, mes });
+  const params = (await query('SELECT data FROM parametros_liq WHERE id = 1')).rows[0]?.data || {};
+  const fams = (await query('SELECT tipo, discapacidad, vigencia_hasta FROM familiares WHERE empleado_id = $1', [empleadoId])).rows.filter((x) => !x.vigencia_hasta);
+  const esConyuge = (t) => ['conyuge', 'cónyuge', 'concubino', 'concubina'].includes(String(t || '').toLowerCase());
+  const esHijo = (t) => ['hijo', 'hija', 'hijastro', 'hijastra'].includes(String(t || '').toLowerCase());
+  const tieneConyuge = fams.some((x) => esConyuge(x.tipo));
+  const nroHijosMenores = fams.filter((x) => esHijo(x.tipo) && !x.discapacidad).length;
+  const nroHijosIncapacitados = fams.filter((x) => esHijo(x.tipo) && x.discapacidad).length;
+
+  const ac = await acumular(empleadoId, anio, mes);
+  // Mes corriente: usa el recibo guardado si existe; si no, lo calcula al vuelo.
+  const guardado = (await query(
+    `SELECT data FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes=$3 AND tipo='mensual' LIMIT 1`,
+    [empleadoId, Number(anio), Number(mes)])).rows[0]?.data;
+  const rec = guardado || calcularRecibo(emp, params, {
+    anio: Number(anio), mes: Number(mes), tipo: anualizada ? 'anual' : 'mensual',
+    fechaPago: `${anio}-${String(mes).padStart(2, '0')}-15`,
+    acumGanancias: { remGravAcum: ac.remun, aportesAcum: ac.jub + ac.os + ac.sind, retenidoAcum: ac.retenido },
+    tieneConyuge, nroHijosMenores, nroHijosIncapacitados, gananciasAnualizada: anualizada,
+  });
+  const g = rec.ganancias || {};
+  // Aportes acumulados por categoría = previos + mes corriente
+  let curJub = 0, curOS = 0, curSind = 0;
+  for (const d of (rec.descuentos || [])) {
+    const c = d.concepto || '';
+    if (/Jubilación/i.test(c)) curJub += Number(d.monto || 0);
+    else if (/Obra Social|ANSSAL|INSSJP/i.test(c)) curOS += Number(d.monto || 0);
+    else if (/Cuota sindical/i.test(c)) curSind += Number(d.monto || 0);
+  }
+  const jub = r2(ac.jub + curJub), os = r2(ac.os + curOS), sind = r2(ac.sind + curSind);
+  const ret = Number(g.retencionPeriodo || 0);
+
+  return {
+    empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, cuil: emp.cuil, cat: emp.cat },
+    periodo: { anio: Number(anio), mes: Number(mes), periodoLabel: `${String(mes).padStart(2, '0')}/${anio}`, tablas: g.periodo || '', anualizada: !!g.anualizada, mesesTranscurridos: g.mesesTranscurridos || mes },
+    gravadas: { remBrutaNoHab: r2(g.remGravAcum || 0), sac: 0, totalGravada: r2(g.remGravAcum || 0) },
+    dedGenerales: { jubilacion: jub, obraSocial: os, cuotaSindical: sind, total: r2(g.aportesAcum || (jub + os + sind)) },
+    dedPersonales: {
+      mni: r2(g.mni || 0),
+      cargasFamilia: { total: r2(g.cargasFamilia || 0), tieneConyuge, nHijos: nroHijosMenores, nHijosInc: nroHijosIncapacitados },
+      dedEspecial: r2(g.dedEspecial || 0), dedEspecial2: r2(g.dedEspecial2 || 0), dedVoluntarias: r2(g.dedVoluntarias || 0),
+      total: r2((g.mni || 0) + (g.cargasFamilia || 0) + (g.dedEspecial || 0) + (g.dedEspecial2 || 0) + (g.dedVoluntarias || 0)),
+    },
+    determinacion: {
+      remSujeta: r2(g.remSujeta || 0), impuestoDeterminado: r2(g.impuestoDeterminado || 0),
+      retenidoAnterior: r2(g.retenidoAnterior || ac.retenido),
+      impuestoARetener: r2(Math.max(0, ret)), devolucion: r2(Math.max(0, -ret)),
+    },
+    nota: 'Cálculo acumulado (RG 4003/17). Montos de Ganancias según parámetros vigentes cargados.',
+  };
 }
 
-const hoy = () => { const d = new Date(); return { anio: d.getFullYear(), mes: d.getMonth() + 1 }; };
-
-// GET /api/ganancias/f1357?anio=&mes=  — F.1357 del propio empleado
 router.get('/f1357', async (req, res, next) => {
   try {
     const def = hoy();
-    const anio = Number(req.query.anio) || def.anio;
-    const mes = Number(req.query.mes) || def.mes;
-    const out = await f1357For(req.user.id, anio, mes);
+    const out = await f1357For(req.user.id, Number(req.query.anio) || def.anio, Number(req.query.mes) || def.mes, req.query.anual === '1');
     if (!out) return res.status(404).json({ error: 'Empleado no encontrado' });
     res.json(out);
   } catch (e) { next(e); }
 });
 
-// GET /api/ganancias/f1357/:empleadoId?anio=&mes=  — F.1357 de un empleado (RR.HH./admin)
 router.get('/f1357/:empleadoId', async (req, res, next) => {
   try {
     if (!gestiona(req.user.role)) return res.status(403).json({ error: 'No autorizado' });
     const def = hoy();
-    const anio = Number(req.query.anio) || def.anio;
-    const mes = Number(req.query.mes) || def.mes;
-    const out = await f1357For(Number(req.params.empleadoId), anio, mes);
+    const out = await f1357For(Number(req.params.empleadoId), Number(req.query.anio) || def.anio, Number(req.query.mes) || def.mes, req.query.anual === '1');
     if (!out) return res.status(404).json({ error: 'Empleado no encontrado' });
     res.json(out);
   } catch (e) { next(e); }
