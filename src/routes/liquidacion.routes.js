@@ -282,4 +282,41 @@ router.get('/corrida/:id/banco', requireRole('rrhh', 'admin'), async (req, res, 
   } catch (e) { next(e); }
 });
 
+// POST /api/liquidacion/simular { anio, mes, empresa?, incrementoPct } — simulación de costo (no persiste)
+router.post('/simular', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { anio, mes, empresa, incrementoPct } = req.body || {};
+    if (!anio || !mes) return res.status(400).json({ error: 'anio y mes son obligatorios' });
+    const pct = Number(incrementoPct) || 0;
+    const f = 1 + pct / 100;
+    const cond = ['e.activo = true'], pr = [];
+    if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
+    const emps = (await query(
+      `SELECT e.*, em.nombre AS empresa_nombre FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')} ORDER BY em.nombre, e.leg_num`, pr)).rows;
+    const params = await getParams();
+    const items = []; const tot = { costoActual: 0, costoSim: 0, netoActual: 0, netoSim: 0 };
+    for (const r of emps) {
+      const base = { legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} };
+      const d = base.data;
+      const scale = (x) => x == null ? x : Number(x) * f;
+      const simData = { ...d, basico: scale(d.basico), sueldo: scale(d.sueldo), complemento: scale(d.complemento), norem: scale(d.norem) };
+      const empSim = { ...base, bruto: base.bruto * f, data: simData };
+      const recA = calcularRecibo(base, params, { anio: Number(anio), mes: Number(mes), tipo: 'mensual' });
+      const recS = calcularRecibo(empSim, params, { anio: Number(anio), mes: Number(mes), tipo: 'mensual' });
+      tot.costoActual += recA.costoEmpleador.costoTotal; tot.costoSim += recS.costoEmpleador.costoTotal;
+      tot.netoActual += recA.totales.neto; tot.netoSim += recS.totales.neto;
+      items.push({ legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre,
+        netoActual: recA.totales.neto, netoSim: recS.totales.neto,
+        costoActual: recA.costoEmpleador.costoTotal, costoSim: recS.costoEmpleador.costoTotal });
+    }
+    const r2n = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+    res.json({
+      incrementoPct: pct, cant: items.length, items,
+      totales: { netoActual: r2n(tot.netoActual), netoSim: r2n(tot.netoSim),
+        costoActual: r2n(tot.costoActual), costoSim: r2n(tot.costoSim),
+        deltaCosto: r2n(tot.costoSim - tot.costoActual), deltaNeto: r2n(tot.netoSim - tot.netoActual) },
+    });
+  } catch (e) { next(e); }
+});
+
 export default router;
