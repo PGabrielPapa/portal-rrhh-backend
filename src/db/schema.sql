@@ -447,3 +447,13 @@ CREATE TABLE IF NOT EXISTS reglamento (
   updated_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT reglamento_singleton CHECK (id = 1)
 );
+-- ── Cierre de períodos (bloqueo de liquidación por empresa + período) ──
+CREATE TABLE IF NOT EXISTS cierres_periodo (
+  id SERIAL PRIMARY KEY,
+  empresa TEXT NOT NULL,
+  anio INTEGER NOT NULL,
+  mes INTEGER NOT NULL,
+  cerrado_por TEXT,
+  cerrado_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_cierre UNIQUE (empresa, anio, mes)
+);

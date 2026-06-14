@@ -16,6 +16,7 @@ import reportesRoutes from './routes/reportes.routes.js';
 import sindicatosRoutes from './routes/sindicatos.routes.js';
 import hysRoutes from './routes/hys.routes.js';
 import reglamentoRoutes from './routes/reglamento.routes.js';
+import cierresRoutes from './routes/cierres.routes.js';
 import anticiposRoutes from './routes/anticipos.routes.js';
 import parametrosRoutes from './routes/parametros.routes.js';
 import conceptosRoutes from './routes/conceptos.routes.js';
@@ -51,6 +52,7 @@ export function createApp() {
   app.use('/api/sindicatos', sindicatosRoutes);
   app.use('/api/hys', hysRoutes);
   app.use('/api/reglamento', reglamentoRoutes);
+  app.use('/api/cierres', cierresRoutes);
   app.use('/api/anticipos', anticiposRoutes);
   app.use('/api/parametros', parametrosRoutes);
   app.use('/api/conceptos', conceptosRoutes);

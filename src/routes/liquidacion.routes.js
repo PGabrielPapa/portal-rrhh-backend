@@ -3,6 +3,7 @@ import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { calcularRecibo } from '../lib/liquidacion.js';
 import { ganTablaParaFecha } from '../lib/gananciasParams.js';
+import { periodoCerrado } from './cierres.routes.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -121,6 +122,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       `SELECT e.id FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')}`, pr)).rows;
     if (!emps.length) return res.status(400).json({ error: 'No hay empleados activos para ese filtro' });
 
+    if (empresa && await periodoCerrado(empresa, anio, mes)) return res.status(409).json({ error: `El período ${String(mes).padStart(2,'0')}/${anio} de ${empresa} está cerrado` });
     const params = await getParams();
     const ganTabla = await ganTablaParaFecha(fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const cr = await query(
