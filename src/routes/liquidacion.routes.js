@@ -232,25 +232,53 @@ router.get('/corrida/:id/reporte', requireRole('rrhh', 'admin'), async (req, res
   } catch (e) { next(e); }
 });
 
-// GET /api/liquidacion/corrida/:id/banco — archivo de acreditación (CSV)
+const BANCOS = [
+  { v: 'generico', label: 'Genérico (CSV)', formato: 'CSV' },
+  { v: 'galicia', label: 'Banco Galicia', formato: 'CSV' },
+  { v: 'santander', label: 'Santander', formato: 'CSV' },
+  { v: 'bbva', label: 'BBVA', formato: 'CSV' },
+  { v: 'bna', label: 'Banco Nación (Datanet)', formato: 'TXT' },
+  { v: 'macro', label: 'Banco Macro', formato: 'TXT' },
+  { v: 'provincia', label: 'Banco Provincia (Bapro)', formato: 'TXT' },
+  { v: 'icbc', label: 'ICBC', formato: 'TXT' },
+  { v: 'supervielle', label: 'Supervielle', formato: 'TXT' },
+];
+const sinAcentos = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const padB = (v, n, ch, right) => { v = String(v == null ? '' : v).slice(0, n); return right ? v.padStart(n, ch) : v.padEnd(n, ch); };
+
+// GET /api/liquidacion/bancos — catálogo de formatos
+router.get('/bancos', requireRole('rrhh', 'admin'), (req, res) => res.json(BANCOS));
+
+// GET /api/liquidacion/corrida/:id/banco?banco=&fecha=&leyenda= — archivo de acreditación (CSV o TXT posicional)
 router.get('/corrida/:id/banco', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
+    const banco = String(req.query.banco || 'generico');
+    const fecha = String(req.query.fecha || new Date().toISOString().slice(0, 10));
+    const leyenda = sinAcentos(req.query.leyenda || 'HABERES').toUpperCase();
     const rows = (await query(
       `SELECT e.leg_num, e.nom, e.cuil, r.neto,
               (SELECT json_agg(json_build_object('cbu', c.cbu, 'pct', c.porcentaje)) FROM cbus c WHERE c.empleado_id=e.id AND c.activo=true) AS cbus
          FROM recibos r JOIN empleados e ON e.id=r.empleado_id
         WHERE r.corrida_id=$1 ORDER BY e.nom`, [req.params.id])).rows;
-    const lineas = ['Legajo,Nombre,CUIL,CBU,Porcentaje,Importe'];
+    const recs = [];
     for (const r of rows) {
       const cbus = r.cbus && r.cbus.length ? r.cbus : [{ cbu: '', pct: 100 }];
-      for (const c of cbus) {
-        const imp = (Number(r.neto) * Number(c.pct || 100) / 100).toFixed(2);
-        lineas.push(`${r.leg_num},"${r.nom}",${r.cuil || ''},${c.cbu || ''},${c.pct || 100},${imp}`);
-      }
+      for (const c of cbus) recs.push({ leg: r.leg_num, nom: r.nom, cuil: String(r.cuil || '').replace(/\D/g, ''), cbu: String(c.cbu || '').replace(/\D/g, ''), centavos: Math.round(Number(r.neto) * Number(c.pct || 100) / 100 * 100) });
     }
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="acreditacion_corrida_${req.params.id}.csv"`);
-    res.send('﻿' + lineas.join('\r\n'));
+    const cfg = BANCOS.find((b) => b.v === banco) || BANCOS[0];
+    let body, ext, mime;
+    if (cfg.formato === 'TXT') {
+      const fechaTxt = fecha.replace(/-/g, '');
+      const lineas = recs.map((x) => padB(x.cbu, 22, '0', true) + padB(x.cuil, 11, '0', true) + padB(x.centavos, 15, '0', true) + padB(sinAcentos(x.nom), 30, ' ', false) + padB(leyenda, 20, ' ', false) + fechaTxt);
+      body = lineas.join('\r\n'); ext = 'txt'; mime = 'text/plain; charset=utf-8';
+    } else {
+      const lineas = ['Legajo,Nombre,CUIL,CBU,Importe,Leyenda,Fecha'];
+      for (const x of recs) lineas.push(`${x.leg},"${sinAcentos(x.nom)}",${x.cuil},${x.cbu},${(x.centavos / 100).toFixed(2)},${leyenda},${fecha}`);
+      body = '\uFEFF' + lineas.join('\r\n'); ext = 'csv'; mime = 'text/csv; charset=utf-8';
+    }
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `attachment; filename="acreditacion_${banco}_corrida_${req.params.id}.${ext}"`);
+    res.send(body);
   } catch (e) { next(e); }
 });
 
