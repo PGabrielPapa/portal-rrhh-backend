@@ -116,6 +116,20 @@ async function main() {
       } else { console.log('[seed] escala: ya existe'); }
     } catch (e) { console.warn('[seed] escala:', e.message); }
 
+    // Convenios por sindicato (idempotente por código)
+    try {
+      const convs = JSON.parse(fs.readFileSync(path.join(dataDir, 'convenios.seed.json'), 'utf8'));
+      for (const c of convs) {
+        await client.query(
+          `INSERT INTO convenios (codigo, nombre, cct, vigencia, data)
+           VALUES ($1,$2,$3,$4,$5) ON CONFLICT (codigo) DO NOTHING`,
+          [c.codigo, c.nombre, c.cct || null, c.vigencia || null,
+           JSON.stringify({ mesLabel: c.mesLabel, acuerdo: c.acuerdo, tablas: c.tablas, adicionales: c.adicionales, noRemunerativos: c.noRemunerativos })]
+        );
+      }
+      console.log(`[seed] convenios: ${convs.length}`);
+    } catch (e) { console.warn('[seed] convenios:', e.message); }
+
     await client.query('COMMIT');
     console.log(`[seed] empleados cargados: ${ok} · omitidos: ${skip}`);
     console.log('[seed] contraseña inicial = DNI (cambio forzado en primer login).');

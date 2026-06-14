@@ -307,3 +307,15 @@ CREATE TABLE IF NOT EXISTS escala_versiones (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_escala_vigencia ON escala_versiones(vigencia);
+
+-- ── Convenios / escalas por sindicato (SEC, UOM, UOCRA, UECARA, ASIMRA, UOYEP…) ──
+CREATE TABLE IF NOT EXISTS convenios (
+  id         SERIAL PRIMARY KEY,
+  codigo     TEXT NOT NULL UNIQUE,
+  nombre     TEXT NOT NULL,
+  cct        TEXT,
+  vigencia   DATE,
+  data       JSONB NOT NULL,
+  updated_by TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

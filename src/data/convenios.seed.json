@@ -1,0 +1,140 @@
+[
+  {
+    "codigo": "SEC", "nombre": "Empleados de Comercio (FAECYS / SEC)", "cct": "CCT 130/75",
+    "vigencia": "2026-05-01", "mesLabel": "Mayo 2026",
+    "acuerdo": "Acuerdo abr–jun 2026 (hom. 27/04/2026): +5% escalonado (2% abr + 1,5% may + 1,5% jun) + bono $120.000 · CAC, CAME, UDECA",
+    "tablas": [
+      { "titulo": "Maestranza", "tipo": "mensual", "cats": [
+        { "cat": "Cat. A", "basico": 1215095, "ok": true }, { "cat": "Cat. B", "basico": 1218163, "ok": true }, { "cat": "Cat. C", "basico": 1222258, "ok": true } ] },
+      { "titulo": "Administrativos", "tipo": "mensual", "cats": [
+        { "cat": "Cat. A", "basico": 1226972, "ok": true }, { "cat": "Cat. B", "basico": 1231728, "ok": true }, { "cat": "Cat. C", "basico": 1236477, "ok": true },
+        { "cat": "Cat. D", "basico": 1250732, "ok": true }, { "cat": "Cat. E", "basico": 1262610, "ok": true }, { "cat": "Cat. F", "basico": 1279966, "ok": true } ] },
+      { "titulo": "Cajeros", "tipo": "mensual", "cats": [
+        { "cat": "Cat. A", "basico": 1231163, "ok": true }, { "cat": "Cat. B", "basico": 1236559, "ok": true }, { "cat": "Cat. C", "basico": 1243613, "ok": true } ] },
+      { "titulo": "Personal Auxiliar", "tipo": "mensual", "cats": [
+        { "cat": "Cat. A", "basico": 1231163, "ok": true }, { "cat": "Cat. B", "basico": 1238055, "ok": true }, { "cat": "Cat. C", "basico": 1247013, "ok": true } ] },
+      { "titulo": "Auxiliar Especializado", "tipo": "mensual", "cats": [
+        { "cat": "Cat. A", "basico": 1240437, "ok": true }, { "cat": "Cat. B", "basico": 1254950, "ok": true } ] },
+      { "titulo": "Vendedores", "tipo": "mensual", "cats": [
+        { "cat": "Cat. A", "basico": 1231163, "ok": true }, { "cat": "Cat. B", "basico": 1254950, "ok": true }, { "cat": "Cat. C", "basico": 1262610, "ok": true }, { "cat": "Cat. D", "basico": 1279966, "ok": true } ] }
+    ],
+    "adicionales": [
+      { "concepto": "Presentismo (Art. 40)", "detalle": "8,33% sobre básico + rubros rem. y NR del acuerdo", "rem": true },
+      { "concepto": "Antigüedad (Art. 24)", "detalle": "1,20% por año, progresivo y acumulativo", "rem": true }
+    ],
+    "noRemunerativos": [
+      { "mes": "2026-04", "label": "Bono extraordinario abr–jun 2026", "monto": 120000, "activo": true, "nota": "$100.000 prórroga + $20.000 nuevo. En jul 2026 se incorporan $20.000 al básico." }
+    ]
+  },
+  {
+    "codigo": "UOM", "nombre": "Unión Obrera Metalúrgica — Rama 17", "cct": "CCT 260/75 – Rama 17 (Metalmecánica · Ascensores · Fundición · Herrería · Pulvimetalurgia)",
+    "vigencia": "2026-05-01", "mesLabel": "Mayo 2026",
+    "acuerdo": "Disp. 207/2026 + base abr 2026 | Cámaras: ADIMRA, AFARTE, CAIAMA, FEDEHOGAR, AFAC, CAMIMA",
+    "tablas": [
+      { "titulo": "Jornalizado (valor por hora)", "subtitulo": "Jornal = valor × 8 hs", "tipo": "hora", "cats": [
+        { "cat": "Ingresante", "valorHora": 4313.43, "ok": true }, { "cat": "Operario Calificado", "valorHora": 4672.74, "ok": true },
+        { "cat": "Medio Oficial", "valorHora": 5036.08, "ok": true }, { "cat": "Operario Especializado", "valorHora": 5387.45, "ok": true },
+        { "cat": "Operario Especializado Múltiple", "valorHora": 5695.63, "ok": true }, { "cat": "Oficial", "valorHora": 5958.84, "ok": true },
+        { "cat": "Oficial Múltiple / Sup. CNC", "valorHora": 6418.60, "ok": true }, { "cat": "Oficial Múltiple Superior CNC", "valorHora": 6868.42, "ok": true } ] },
+      { "titulo": "Mensualizado A — Administrativos", "tipo": "mensual", "cats": [
+        { "cat": "Cat. 1°", "basico": 833257.48, "ok": true }, { "cat": "Cat. 2°", "basico": 924732.49, "ok": true }, { "cat": "Cat. 3°", "basico": 1067759.96, "ok": true }, { "cat": "Cat. 4°", "basico": 1166170.85, "ok": true } ] },
+      { "titulo": "Mensualizado B — Técnicos", "tipo": "mensual", "cats": [
+        { "cat": "Cat. 1°", "basico": 833257.48, "ok": true }, { "cat": "Cat. 2°", "basico": 924875.28, "ok": true }, { "cat": "Cat. 3°", "basico": 988568.62, "ok": true },
+        { "cat": "Cat. 4°", "basico": 1121394.56, "ok": true }, { "cat": "Cat. 5°", "basico": 1166216.35, "ok": true }, { "cat": "Cat. 6°", "basico": 1276880.99, "ok": true } ] },
+      { "titulo": "Mensualizado C — Auxiliares", "tipo": "mensual", "cats": [
+        { "cat": "Cat. 1°", "basico": 801577.24, "ok": true }, { "cat": "Cat. 2°", "basico": 872359.46, "ok": true }, { "cat": "Cat. 3°", "basico": 992754.70, "ok": true } ] }
+    ],
+    "adicionales": [
+      { "concepto": "Título técnico o secundario (Art. 53/54)", "detalle": "$ 22.836,06 mensual", "rem": true },
+      { "concepto": "Idiomas (Art. 55)", "detalle": "$ 12.909,84 mensual", "rem": true },
+      { "concepto": "Subsidio padres incapacitados (Art. 57)", "detalle": "$ 57.089,72 mensual", "rem": true },
+      { "concepto": "Fallecimiento de familiar (Art. 58)", "detalle": "$ 142.723,51 único", "rem": false },
+      { "concepto": "Antigüedad", "detalle": "1% por año, acumulativo (sobre básico)", "rem": true }
+    ],
+    "noRemunerativos": [
+      { "mes": "2026-03", "label": "Marzo 2026", "monto": 35000, "activo": true }
+    ]
+  },
+  {
+    "codigo": "UOCRA", "nombre": "Unión Obrera de la Construcción (UOCRA)", "cct": "CCT 76/75 y 577/10",
+    "vigencia": "2026-05-01", "mesLabel": "Mayo 2026",
+    "acuerdo": "Acuerdo mar–may 2026: +2%+1,9%+1,8% acumulativos | CAMARCO y FAEC",
+    "tablas": [
+      { "titulo": "Personal de Obra — Jornalizado (valor hora, Zona A)", "subtitulo": "Zona A: CABA, BsAs, Santa Fe, Córdoba, Mendoza, Salta, Tucumán, Corrientes, Jujuy y más", "tipo": "hora", "cats": [
+        { "cat": "Oficial Especializado", "valorHora": 6011, "ok": true }, { "cat": "Oficial", "valorHora": 5142, "ok": true },
+        { "cat": "Medio Oficial", "valorHora": 4752, "ok": true }, { "cat": "Ayudante", "valorHora": 4375, "ok": true },
+        { "cat": "Sereno (mensual)", "basico": 808877, "ok": true, "nota": "valor mensual Zona A" } ] }
+    ],
+    "adicionales": [
+      { "concepto": "Zona B (Neuquén, Río Negro, Chubut)", "detalle": "+11% s/básico Zona A", "rem": true },
+      { "concepto": "Zona C (Santa Cruz)", "detalle": "+38% s/básico Zona A", "rem": true },
+      { "concepto": "Zona C Austral (Tierra del Fuego)", "detalle": "≈ ×2 s/básico Zona A", "rem": true },
+      { "concepto": "Aporte solidario extraordinario (no afiliados)", "detalle": "2% remuneración, desde abr 2026 (12 meses). Afiliados exentos.", "rem": false },
+      { "concepto": "Antigüedad", "detalle": "1% por año acumulativo", "rem": true }
+    ],
+    "noRemunerativos": [
+      { "mes": "2026-05", "label": "NR Oficial Especializado Zona A", "monto": 125400, "activo": true },
+      { "mes": "2026-05", "label": "NR Oficial Zona A", "monto": 114400, "activo": true },
+      { "mes": "2026-05", "label": "NR Medio Oficial Zona A", "monto": 104900, "activo": true },
+      { "mes": "2026-05", "label": "NR Ayudante / Sereno Zona A", "monto": 98500, "activo": true, "nota": "Zonas B/C/Austral aplican coeficiente adicional" }
+    ]
+  },
+  {
+    "codigo": "UECARA", "nombre": "Empleados de la Construcción y Afines (UECARA)", "cct": "CCT 660/13 (Nacional) — CCT 735/15 (Córdoba)",
+    "vigencia": "2026-05-01", "mesLabel": "Mayo 2026",
+    "acuerdo": "Acuerdo mar–may 2026: +2%+1,9%+1,8% acum. (~5,78%) + NR por cat. y zona | CAMARCO y FAEC",
+    "tablas": [
+      { "titulo": "Grupos del CCT 660/13", "subtitulo": "Montos: ver planilla oficial vigente", "tipo": "mensual", "cats": [
+        { "cat": "Grupo I — Capataces de Obra", "basico": null, "ok": false, "nota": "ver planilla UECARA vigente" },
+        { "cat": "Grupo II — Administrativos", "basico": null, "ok": false, "nota": "ver planilla UECARA vigente" },
+        { "cat": "Grupo III — Técnicos", "basico": null, "ok": false, "nota": "ver planilla UECARA vigente" },
+        { "cat": "Grupo IV — Sistemas", "basico": null, "ok": false, "nota": "ver planilla UECARA vigente" },
+        { "cat": "Grupo V — Maestranza", "basico": null, "ok": false, "nota": "ver planilla UECARA vigente" } ] }
+    ],
+    "adicionales": [
+      { "concepto": "Aporte solidario extraordinario (no afiliados)", "detalle": "1,5% salarios sujetos a aportes, desde abr 2026 (6 meses). Afiliados exentos.", "rem": false },
+      { "concepto": "Antigüedad", "detalle": "1% por año acumulativo", "rem": true }
+    ],
+    "noRemunerativos": [
+      { "mes": "2026-05", "label": "NR mayo 2026 (por categoría y zona)", "monto": null, "activo": true, "nota": "Monto variable por grupo y zona (Norte / Centro / Norpatagonia / Patagonia Sur). Ver planilla oficial." }
+    ]
+  },
+  {
+    "codigo": "ASIMRA", "nombre": "Supervisores de la Industria Metalmecánica (ASIMRA)", "cct": "CCT 246/94 Rama 16 · CCTs 233/94, 237/94, 247/95 y otros",
+    "vigencia": "2026-04-01", "mesLabel": "Abril 2026",
+    "acuerdo": "Acuerdo sep 2025–mar 2026: 4,2% nov + 4,2% ene (14% acum.) + NR 6 cuotas | ADIMRA, AFARTE, CAJAMA, FEDEHOGAR, AFAC, CAMIMA",
+    "tablas": [
+      { "titulo": "Supervisores — CCT 246/94 Rama 16 (Mecánica y Electrónica)", "subtitulo": "Categoría de referencia del acuerdo. Resto: ajuste proporcional.", "tipo": "mensual", "cats": [
+        { "cat": "Supervisor de Fábrica de 1° (ref. Rama 16)", "basico": 1112823, "ok": true, "nota": "Desde 1/4/2026. Base de cálculo del acuerdo." },
+        { "cat": "Demás categorías por Rama", "basico": null, "ok": false, "nota": "Ajuste proporcional — ver planilla ADIMRA/ASIMRA por Rama" } ] }
+    ],
+    "adicionales": [
+      { "concepto": "Cuota sindical ASIMRA", "detalle": "≈ 3% remuneración bruta — verificar % de tu seccional", "rem": false },
+      { "concepto": "Antigüedad", "detalle": "1% por año acumulativo", "rem": true }
+    ],
+    "noRemunerativos": [
+      { "mes": "2026-03", "label": "Gratif. NR mar 2026 (última cuota del acuerdo)", "monto": 43050, "activo": true }
+    ]
+  },
+  {
+    "codigo": "UOYEP", "nombre": "Unión Obreros y Empleados Plásticos (UOYEP)", "cct": "CCT 797/22",
+    "vigencia": "2026-05-01", "mesLabel": "Mayo 2026",
+    "acuerdo": "Acuerdo mar–ago 2026: +16,83% total en 6 meses + NR $80.000 (mayo) | CAIP",
+    "tablas": [
+      { "titulo": "Producción y Mantenimiento (jornalizado, por hora)", "subtitulo": "CCT 797/22 — Operarios de planta, jornada legal", "tipo": "hora", "cats": [
+        { "cat": "Operario", "valorHora": 5859.82, "ok": true }, { "cat": "Auxiliar", "valorHora": 6318.52, "ok": true },
+        { "cat": "Operador", "valorHora": 6799.49, "ok": true }, { "cat": "Operador Calificado", "valorHora": 7103.66, "ok": true },
+        { "cat": "Operador Especializado", "valorHora": 7400.74, "ok": true }, { "cat": "Oficial Especializado", "valorHora": 8213.79, "ok": true } ] },
+      { "titulo": "Personal Administrativo (mensual)", "tipo": "mensual", "cats": [
+        { "cat": "Nivel 1 (inicial)", "basico": null, "ok": false, "nota": "consultar planilla oficial UOYEP/CAIP" },
+        { "cat": "Nivel máximo", "basico": null, "ok": false, "nota": "consultar planilla oficial UOYEP/CAIP" } ] }
+    ],
+    "adicionales": [
+      { "concepto": "Presentismo", "detalle": "Verificar % vigente en CCT 797/22", "rem": true },
+      { "concepto": "Antigüedad", "detalle": "1% por año acumulativo", "rem": true }
+    ],
+    "noRemunerativos": [
+      { "mes": "2026-05", "label": "NR todas las categorías — mayo 2026", "monto": 80000, "activo": true, "nota": "$80.000 fija para todas las categorías." }
+    ]
+  }
+]
