@@ -87,7 +87,7 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
 // POST /api/liquidacion/corrida { anio, mes, tipo, empresa? } — calcula y guarda recibos (borrador, no publicados)
 router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
-    const { anio, mes, tipo = 'mensual', empresa } = req.body || {};
+    const { anio, mes, tipo = 'mensual', empresa, fechaPago } = req.body || {};
     if (!anio || !mes) return res.status(400).json({ error: 'anio y mes son obligatorios' });
     const cond = ['e.activo = true'], pr = [];
     if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
@@ -105,7 +105,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     for (const { id } of emps) {
       const emp = await getEmp(id);
       const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
-      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas });
+      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas });
       totalNeto += recibo.totales.neto; cant++;
       const rr = await query(
         `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)

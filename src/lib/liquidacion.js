@@ -10,6 +10,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let GAN = { mniAnual: 0, dedEspAnual: 0, dedEsp2Anual: 0, escala: [] };
 try { GAN = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'ganancias.seed.json'), 'utf8')); } catch { /* defaults */ }
 
+// Períodos de Ganancias con su vigencia (para resolver por fecha de pago, como la vanilla).
+// Si el seed trae `periodos`, se usan; si no, se arma uno desde los campos planos.
+function _vigDesdePeriodo(p) {
+  const m = /(\d{4})-S([12])/.exec(p || '');
+  if (m) return `${m[1]}-${m[2] === '1' ? '01' : '07'}-01`;
+  return '2000-01-01';
+}
+const GAN_PERIODOS = (Array.isArray(GAN.periodos) && GAN.periodos.length)
+  ? GAN.periodos.map((p) => ({ ...p, vigenciaDesde: p.vigenciaDesde || _vigDesdePeriodo(p.periodo) }))
+  : [{ ...GAN, vigenciaDesde: _vigDesdePeriodo(GAN.periodo) }];
+
+// Devuelve la tabla de Ganancias vigente a la fecha (la de mayor vigenciaDesde <= fecha).
+function ganParaFecha(fechaISO) {
+  const ref = String(fechaISO || '').slice(0, 10) || '2100-12-31';
+  const aplic = GAN_PERIODOS.filter((p) => p.vigenciaDesde <= ref).sort((a, b) => a.vigenciaDesde.localeCompare(b.vigenciaDesde));
+  return aplic.length ? aplic[aplic.length - 1] : GAN_PERIODOS.slice().sort((a, b) => a.vigenciaDesde.localeCompare(b.vigenciaDesde))[0];
+}
+
 const num = (x) => { const n = Number(x); return Number.isFinite(n) ? n : 0; };
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
@@ -159,6 +177,8 @@ export function calcularRecibo(emp, params, opts) {
   const noRem = num(d.norem);
   const regularRemun = basico + antiguedad + presentismo + complemento;
   const mejorRem = num(opts?.mejorRem) || (regularRemun + noRem);
+  const fechaPago = opts?.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-01`;
+  const G = ganParaFecha(fechaPago);
 
   const haberes = [];
   const tipoLabel = {
@@ -231,13 +251,24 @@ export function calcularRecibo(emp, params, opts) {
     detalle.anticipoAjuste = { concepto, monto: round2(monto) };
   } else {
     // mensual / quincenal
-    const f = esQuincenal ? 0.5 : 1;
+    const diasBase = esQuincenal ? 15 : 30;
+    const diasTrab = num(opts?.diasTrabajados) > 0 ? Math.min(num(opts.diasTrabajados), diasBase) : diasBase;
+    const f = diasTrab / 30; // proporción sobre el mes (15/30 para quincena completa)
     const suf = esQuincenal ? ` (${tipo === 'quincenal_1' ? '1ª' : '2ª'} quinc.)` : '';
-    haberes.push({ concepto: 'Sueldo básico' + suf, tipo: 'rem', monto: round2(basico * f) });
+    const diasTxt = diasTrab !== diasBase ? ` (${diasTrab} días)` : '';
+    haberes.push({ concepto: 'Sueldo básico' + suf + diasTxt, tipo: 'rem', monto: round2(basico * f) });
     if (antiguedad > 0) haberes.push({ concepto: `Antigüedad (${anios} año${anios !== 1 ? 's' : ''})${suf}`, tipo: 'rem', monto: round2(antiguedad * f) });
     if (presentismo > 0) haberes.push({ concepto: 'Presentismo' + suf, tipo: 'rem', monto: round2(presentismo * f) });
     if (complemento > 0) haberes.push({ concepto: 'Complemento variable' + suf, tipo: 'rem', monto: round2(complemento * f) });
     if (noRem > 0) haberes.push({ concepto: 'Asignación no remunerativa' + suf, tipo: 'norem', monto: round2(noRem * f) });
+    // Horas extra (valor hora normal = básico / 200)
+    const vHora = basico / 200;
+    const he50 = num(opts?.horasExtra50), he100 = num(opts?.horasExtra100);
+    if (he50 > 0) haberes.push({ concepto: `Horas extra 50% (${he50} hs)`, tipo: 'rem', monto: round2(vHora * 1.5 * he50) });
+    if (he100 > 0) haberes.push({ concepto: `Horas extra 100% (${he100} hs)`, tipo: 'rem', monto: round2(vHora * 2 * he100) });
+    // Otros conceptos manuales
+    if (num(opts?.otrosRemun) > 0) haberes.push({ concepto: opts?.otrosRemunLabel || 'Otros haberes remunerativos', tipo: 'rem', monto: round2(num(opts.otrosRemun)) });
+    if (num(opts?.otrosNoRem) > 0) haberes.push({ concepto: opts?.otrosNoRemLabel || 'Otros haberes no remunerativos', tipo: 'norem', monto: round2(num(opts.otrosNoRem)) });
     const ajB = num(opts?.ajusteSueldoBruto);
     if (ajB > 0) haberes.push({ concepto: 'Ajuste de sueldo', tipo: 'rem', monto: round2(ajB) });
   }
@@ -264,8 +295,8 @@ export function calcularRecibo(emp, params, opts) {
   if (tipo === 'mensual' || esQuincenal) {
     const baseAnual = regularRemun * 13;
     const aportesAnual = (regularRemun * (num(p.pctJubilacion) + num(p.pctObraSocial) + num(p.pctAnssal) + num(p.pctPamiEmp) + (esFC ? 0 : num(p.pctSindicatoEmp))) / 100) * 13;
-    const ganSujeta = Math.max(0, baseAnual - aportesAnual - num(GAN.mniAnual) - num(GAN.dedEspAnual) - num(GAN.dedEsp2Anual));
-    const impAnual = impuestoEscala(ganSujeta, GAN.escala);
+    const ganSujeta = Math.max(0, baseAnual - aportesAnual - num(G.mniAnual) - num(G.dedEspAnual) - num(G.dedEsp2Anual));
+    const impAnual = impuestoEscala(ganSujeta, G.escala);
     let ganRet = (impAnual / 12) * (esQuincenal ? 0.5 : 1);
     const topePct = (p.gan_topeRetencionPct != null ? num(p.gan_topeRetencionPct) : 35);
     const tope = netoAntesGan * topePct / 100;
@@ -277,6 +308,13 @@ export function calcularRecibo(emp, params, opts) {
   // Descuento del anticipo de ajuste de sueldo abonado durante el mes (regularización).
   const antAjDesc = (tipo === 'mensual' || esQuincenal) ? num(opts?.anticipoAjusteDesc) : 0;
   if (antAjDesc > 0) descuentos.push({ concepto: 'Descuento anticipo ajuste de sueldo', monto: round2(antAjDesc) });
+
+  // Otros descuentos manuales / embargo / cuota alimentaria.
+  if ((tipo === 'mensual' || esQuincenal)) {
+    if (num(opts?.otrosDesc) > 0) descuentos.push({ concepto: opts?.otrosDescLabel || 'Otros descuentos', monto: round2(num(opts.otrosDesc)) });
+    if (num(opts?.embargo) > 0) descuentos.push({ concepto: 'Embargo judicial', monto: round2(num(opts.embargo)) });
+    if (num(opts?.cuotaAlimentaria) > 0) descuentos.push({ concepto: 'Cuota alimentaria', monto: round2(num(opts.cuotaAlimentaria)) });
+  }
 
   // Cuotas de anticipos de sueldo aprobados (módulo Adelantos).
   if ((tipo === 'mensual' || esQuincenal) && Array.isArray(opts?.cuotasAnticipos)) {
@@ -306,7 +344,7 @@ export function calcularRecibo(emp, params, opts) {
 
   return {
     empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, cuil: emp.cuil, cat: emp.cat },
-    periodo: { anio, mes, tipo, tipoLabel },
+    periodo: { anio, mes, tipo, tipoLabel, fechaPago, ganPeriodo: G.periodo || null },
     haberes, descuentos, detalle,
     totales: {
       totalRemun: round2(totalRemun), totalNoRem: round2(totalNoRem), totalExento: round2(totalExento),
