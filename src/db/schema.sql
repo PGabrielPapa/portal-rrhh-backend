@@ -457,3 +457,11 @@ CREATE TABLE IF NOT EXISTS cierres_periodo (
   cerrado_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT uq_cierre UNIQUE (empresa, anio, mes)
 );
+-- ── Novedades de CBU (avisos a RR.HH. cuando el empleado modifica sus cuentas) ──
+CREATE TABLE IF NOT EXISTS cbu_novedades (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  accion TEXT NOT NULL, detalle TEXT, leida BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_cbu_nov_leida ON cbu_novedades(leida);

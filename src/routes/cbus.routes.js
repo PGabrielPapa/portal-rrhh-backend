@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { query } from '../db.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
 import { validarCBU, bancoDesdeCBU } from '../lib/cbu.js';
 
 const router = Router();
@@ -15,6 +15,7 @@ async function sumaActivos(empleadoId, excluirId) {
 }
 
 const COLS = 'id, cbu, banco, alias, titular, porcentaje::float AS porcentaje, activo, vigencia_desde, vigencia_hasta, created_at';
+async function nov(empleadoId, accion, detalle) { try { await query('INSERT INTO cbu_novedades (empleado_id, accion, detalle) VALUES ($1,$2,$3)', [empleadoId, accion, detalle || null]); } catch { /* */ } }
 
 // GET /api/cbus — cuentas activas + historial + resumen de distribución
 router.get('/', async (req, res, next) => {
@@ -44,6 +45,7 @@ router.post('/', async (req, res, next) => {
       'INSERT INTO cbus (empleado_id, cbu, banco, alias, titular, porcentaje) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
       [req.user.id, v.cbu, banco || v.banco, alias || null, titular || null, pct]
     );
+    await nov(req.user.id, 'alta', `Nueva cuenta ${(banco || v.banco) || ''} ****${v.cbu.slice(-4)} (${pct}%)`);
     res.status(201).json({ ok: true, id: ins.rows[0].id, banco: banco || v.banco });
   } catch (e) { next(e); }
 });
@@ -65,6 +67,7 @@ router.patch('/:id', async (req, res, next) => {
       [banco ?? null, alias ?? null, titular ?? null, pct ?? null, req.params.id, req.user.id]
     );
     if (!r.rowCount) return res.status(404).json({ error: 'CBU no encontrado o inactivo' });
+    await nov(req.user.id, 'edicion', 'Modificó datos/porcentaje de una cuenta');
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -84,6 +87,7 @@ router.patch('/:id/activo', async (req, res, next) => {
       const r = await query('UPDATE cbus SET activo=false, vigencia_hasta=now() WHERE id=$1 AND empleado_id=$2', [req.params.id, req.user.id]);
       if (!r.rowCount) return res.status(404).json({ error: 'CBU no encontrado' });
     }
+    await nov(req.user.id, activo ? 'activacion' : 'desactivacion', `${activo ? 'Activó' : 'Desactivó'} una cuenta`);
     res.json({ ok: true, activo });
   } catch (e) { next(e); }
 });
@@ -93,8 +97,24 @@ router.delete('/:id', async (req, res, next) => {
   try {
     const r = await query('DELETE FROM cbus WHERE id=$1 AND empleado_id=$2 RETURNING id', [req.params.id, req.user.id]);
     if (!r.rowCount) return res.status(404).json({ error: 'CBU no encontrado' });
+    await nov(req.user.id, 'baja', 'Quitó una cuenta');
     res.json({ ok: true });
   } catch (e) { next(e); }
+});
+
+// ── Novedades de CBU (RR.HH.) ──
+router.get('/novedades', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
+  try {
+    const soloNoLeidas = req.query.noLeidas === '1';
+    const { rows } = await query(`SELECT n.*, e.nom, e.leg_num, em.nombre AS empresa FROM cbu_novedades n JOIN empleados e ON e.id=n.empleado_id JOIN empresas em ON em.id=e.empresa_id ${soloNoLeidas ? 'WHERE n.leida=false' : ''} ORDER BY n.created_at DESC LIMIT 200`);
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+router.patch('/novedades/:id/leida', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
+  try { await query('UPDATE cbu_novedades SET leida=true WHERE id=$1', [req.params.id]); res.json({ ok: true }); } catch (e) { next(e); }
+});
+router.post('/novedades/leer-todas', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
+  try { await query('UPDATE cbu_novedades SET leida=true WHERE leida=false'); res.json({ ok: true }); } catch (e) { next(e); }
 });
 
 // GET /api/cbus/banco/:cbu — autodetección de banco por CBU (para la UI)
