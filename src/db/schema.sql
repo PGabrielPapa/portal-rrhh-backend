@@ -141,6 +141,26 @@ CREATE TABLE IF NOT EXISTS recibos (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT uq_recibo UNIQUE (empleado_id, anio, mes, tipo)
 );
+ALTER TABLE recibos ADD COLUMN IF NOT EXISTS corrida_id INTEGER;
+ALTER TABLE recibos ADD COLUMN IF NOT EXISTS publicado  BOOLEAN NOT NULL DEFAULT false;
+
+-- ── Corridas de liquidación (planilla por período/tipo con estados) ──
+CREATE TABLE IF NOT EXISTS corridas (
+  id          SERIAL PRIMARY KEY,
+  anio        INTEGER NOT NULL,
+  mes         INTEGER NOT NULL,
+  tipo        TEXT NOT NULL DEFAULT 'mensual',
+  empresa     TEXT,                              -- NULL = todas
+  estado      TEXT NOT NULL DEFAULT 'borrador',  -- borrador | aprobada | publicada
+  total_neto  NUMERIC(16,2) NOT NULL DEFAULT 0,
+  cant        INTEGER NOT NULL DEFAULT 0,
+  creado_por  TEXT,
+  aprobado_por TEXT,
+  aprobado_at  TIMESTAMPTZ,
+  publicado_at TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_recibos_corrida ON recibos(corrida_id);
 CREATE INDEX IF NOT EXISTS idx_recibos_empleado ON recibos(empleado_id);
 
 -- ── Licencias (solicitud + aprobación) ──

@@ -105,7 +105,48 @@ export function calcularF1357(emp, params, familiares, { anio, mes }) {
   };
 }
 
-export function calcularRecibo(emp, params, { anio, mes }) {
+// ── Helpers de liquidación final (indemnizaciones) ──
+function diasEntreFechas(a, b) { return Math.floor((b - a) / 86400000) + 1; }
+function parseDate(s) { if (!s) return null; const d = new Date(String(s).slice(0, 10) + 'T12:00:00'); return isNaN(d) ? null : d; }
+
+function calcSacProporcional(ingreso, fechaEgreso, mejorRem) {
+  const fEg = parseDate(fechaEgreso); if (!fEg) return { monto: 0, dias: 0 };
+  const anio = fEg.getFullYear(), mes = fEg.getMonth() + 1;
+  const sem = mes <= 6 ? 1 : 2;
+  const inicioSem = new Date(anio, sem === 1 ? 0 : 6, 1, 12);
+  const fIng = parseDate(ingreso) || inicioSem;
+  const inicio = fIng > inicioSem ? fIng : inicioSem;
+  const dias = diasEntreFechas(inicio, fEg);
+  return { monto: (mejorRem / 2) * (dias / 180), dias, semestre: sem };
+}
+function calcPreaviso(ingreso, fechaEgreso, bruto) {
+  const fEg = parseDate(fechaEgreso), fIng = parseDate(ingreso);
+  if (!fEg || !fIng) return { meses: 0, dias: 0, monto: 0 };
+  const meses = (fEg.getFullYear() - fIng.getFullYear()) * 12 + (fEg.getMonth() - fIng.getMonth());
+  let mP = 0, dP = 0;
+  if (meses < 3) { mP = 0; dP = 15; } else if (meses < 60) { mP = 1; } else { mP = 2; }
+  return { meses: mP, dias: dP, monto: mP * bruto + dP * (bruto / 30), antiguedadMeses: meses };
+}
+function calcIntegracionMes(fechaEgreso, bruto) {
+  const fEg = parseDate(fechaEgreso); if (!fEg) return { dias: 0, monto: 0 };
+  const ult = new Date(fEg.getFullYear(), fEg.getMonth() + 1, 0).getDate();
+  const dias = ult - fEg.getDate();
+  return { dias, monto: dias * (bruto / 30) };
+}
+function calcIndemAntiguedad(ingreso, fechaEgreso, mejorRem, topeCCT) {
+  const fEg = parseDate(fechaEgreso), fIng = parseDate(ingreso);
+  if (!fEg || !fIng) return { anios: 0, monto: 0, topeAplicado: false };
+  const aniosFloat = (fEg - fIng) / (365.25 * 86400000);
+  const ent = Math.floor(aniosFloat), frac = aniosFloat - ent;
+  const aniosCalc = Math.max(1, frac > 0.25 ? ent + 1 : ent);
+  let base = mejorRem, topeAplicado = false;
+  if (num(topeCCT) > 0 && base > num(topeCCT) * 3) { base = num(topeCCT) * 3; topeAplicado = true; }
+  return { anios: aniosCalc, monto: base * aniosCalc, baseAplicada: base, topeAplicado };
+}
+
+// Liquidación. opts: { anio, mes, tipo, diasVac, fechaEgreso, motivoBaja, mejorRem, diasVacNoGozadas, topeCCT }
+export function calcularRecibo(emp, params, opts) {
+  const { anio, mes, tipo = 'mensual' } = opts || {};
   const p = params || {};
   const d = emp.data || {};
   const esFC = !d.cod_sindicato || String(d.cod_sindicato).toUpperCase() === 'FC';
@@ -116,74 +157,136 @@ export function calcularRecibo(emp, params, { anio, mes }) {
   const presentismo = esFC ? 0 : (basico + antiguedad) * num(p.pctPresentismo) / 100;
   const complemento = num(d.complemento);
   const noRem = num(d.norem);
-
   const regularRemun = basico + antiguedad + presentismo + complemento;
-  const esSAC = (mes === 6 || mes === 12);
-  const sac = esSAC ? regularRemun * 0.5 : 0;
+  const mejorRem = num(opts?.mejorRem) || (regularRemun + noRem);
 
-  const haberes = [{ concepto: 'Sueldo básico', tipo: 'rem', monto: round2(basico) }];
-  if (antiguedad > 0) haberes.push({ concepto: `Antigüedad (${anios} año${anios !== 1 ? 's' : ''})`, tipo: 'rem', monto: round2(antiguedad) });
-  if (presentismo > 0) haberes.push({ concepto: 'Presentismo', tipo: 'rem', monto: round2(presentismo) });
-  if (complemento > 0) haberes.push({ concepto: 'Complemento variable', tipo: 'rem', monto: round2(complemento) });
-  if (sac > 0) haberes.push({ concepto: `SAC (aguinaldo ${mes === 6 ? '1er' : '2do'} sem.)`, tipo: 'rem', monto: round2(sac) });
-  if (noRem > 0) haberes.push({ concepto: 'Asignación no remunerativa', tipo: 'norem', monto: round2(noRem) });
+  const haberes = [];
+  const tipoLabel = {
+    mensual: 'Mensual', quincenal_1: 'Quincena 1ª (1–15)', quincenal_2: 'Quincena 2ª (16–fin)',
+    sac1: 'SAC 1° semestre', sac2: 'SAC 2° semestre', vacaciones: 'Vacaciones', final: 'Liquidación final',
+  }[tipo] || tipo;
 
-  const totalRemun = regularRemun + sac;
-  const totalNoRem = noRem;
-  const totalHaberes = totalRemun + totalNoRem;
+  const esQuincenal = tipo === 'quincenal_1' || tipo === 'quincenal_2';
+  const esSAConly = tipo === 'sac1' || tipo === 'sac2';
+  const esVacaciones = tipo === 'vacaciones';
+  const esFinal = tipo === 'final';
+  const detalle = {};
 
-  // Aportes del trabajador (sobre remunerativos, incl. SAC)
+  if (esSAConly) {
+    const sac = regularRemun * 0.5;
+    haberes.push({ concepto: `SAC ${tipo === 'sac1' ? '1°' : '2°'} semestre (50% mejor remuneración)`, tipo: 'rem', monto: round2(sac) });
+  } else if (esVacaciones) {
+    const diasCorr = anios < 5 ? 14 : anios < 10 ? 21 : anios < 20 ? 28 : 35;
+    const diasVac = num(opts?.diasVac) > 0 ? num(opts.diasVac) : diasCorr;
+    const valorDia = (regularRemun + noRem) / 25; // Art. 155 LCT
+    haberes.push({ concepto: `Vacaciones (${diasVac} días × $${round2(valorDia)})`, tipo: 'rem', monto: round2(diasVac * valorDia) });
+    detalle.vacaciones = { dias: diasVac, valorDia: round2(valorDia), diasCorresponden: diasCorr };
+  } else if (esFinal) {
+    const fEg = opts?.fechaEgreso;
+    const diaEgreso = parseDate(fEg)?.getDate() || 30;
+    const valorDia = regularRemun / 30;
+    // Haberes del mes hasta el egreso
+    haberes.push({ concepto: `Haberes ${diaEgreso} día(s) del mes de egreso`, tipo: 'rem', monto: round2(valorDia * diaEgreso) });
+    // SAC proporcional
+    const sacP = calcSacProporcional(emp.ingreso, fEg, mejorRem);
+    haberes.push({ concepto: `SAC proporcional (${sacP.dias} días del semestre)`, tipo: 'rem', monto: round2(sacP.monto) });
+    // Vacaciones no gozadas
+    const diasVNG = num(opts?.diasVacNoGozadas);
+    if (diasVNG > 0) { const vd = mejorRem / 25; haberes.push({ concepto: `Vacaciones no gozadas (${diasVNG} días)`, tipo: 'norem', monto: round2(diasVNG * vd) }); }
+    detalle.sacProporcional = { monto: round2(sacP.monto), dias: sacP.dias };
+    // Indemnizaciones (solo despido sin causa)
+    if (opts?.motivoBaja === 'sin_causa') {
+      const pre = calcPreaviso(emp.ingreso, fEg, mejorRem);
+      const integ = calcIntegracionMes(fEg, mejorRem);
+      const ind = calcIndemAntiguedad(emp.ingreso, fEg, mejorRem, opts?.topeCCT);
+      const sacPre = pre.monto / 12;
+      haberes.push({ concepto: `Preaviso (${pre.meses ? pre.meses + ' mes(es)' : pre.dias + ' días'})`, tipo: 'rem', monto: round2(pre.monto) });
+      if (sacPre > 0) haberes.push({ concepto: 'SAC sobre preaviso', tipo: 'rem', monto: round2(sacPre) });
+      if (integ.monto > 0) haberes.push({ concepto: `Integración mes de despido (${integ.dias} días)`, tipo: 'norem', monto: round2(integ.monto) });
+      haberes.push({ concepto: `Indemnización por antigüedad — Art. 245 (${ind.anios} años${ind.topeAplicado ? ', con tope CCT' : ''})`, tipo: 'exento', monto: round2(ind.monto) });
+      detalle.indemnizacion = { preaviso: round2(pre.monto), sacPreaviso: round2(sacPre), integracion: round2(integ.monto), art245: round2(ind.monto), anios: ind.anios };
+    }
+  } else {
+    // mensual / quincenal
+    const f = esQuincenal ? 0.5 : 1;
+    const suf = esQuincenal ? ` (${tipo === 'quincenal_1' ? '1ª' : '2ª'} quinc.)` : '';
+    haberes.push({ concepto: 'Sueldo básico' + suf, tipo: 'rem', monto: round2(basico * f) });
+    if (antiguedad > 0) haberes.push({ concepto: `Antigüedad (${anios} año${anios !== 1 ? 's' : ''})${suf}`, tipo: 'rem', monto: round2(antiguedad * f) });
+    if (presentismo > 0) haberes.push({ concepto: 'Presentismo' + suf, tipo: 'rem', monto: round2(presentismo * f) });
+    if (complemento > 0) haberes.push({ concepto: 'Complemento variable' + suf, tipo: 'rem', monto: round2(complemento * f) });
+    if (noRem > 0) haberes.push({ concepto: 'Asignación no remunerativa' + suf, tipo: 'norem', monto: round2(noRem * f) });
+  }
+
+  const totalRemun = haberes.filter((h) => h.tipo === 'rem').reduce((s, h) => s + h.monto, 0);
+  const totalNoRem = haberes.filter((h) => h.tipo === 'norem').reduce((s, h) => s + h.monto, 0);
+  const totalExento = haberes.filter((h) => h.tipo === 'exento').reduce((s, h) => s + h.monto, 0);
+  const totalHaberes = totalRemun + totalNoRem + totalExento;
+
+  // Aportes del trabajador (solo sobre remunerativos)
   const descuentos = [];
-  const aporte = (label, pct) => { const m = totalRemun * num(pct) / 100; if (m > 0) descuentos.push({ concepto: label, monto: round2(m) }); };
-  aporte('Jubilación', p.pctJubilacion);
-  aporte('Obra Social', p.pctObraSocial);
-  aporte('ANSSAL', p.pctAnssal);
-  aporte('INSSJP (PAMI)', p.pctPamiEmp);
-  if (!esFC) aporte('Cuota sindical', p.pctSindicatoEmp);
+  const ap = (pct) => round2(totalRemun * num(pct) / 100);
+  const aJub = ap(p.pctJubilacion), aOS = ap(p.pctObraSocial), aAnssal = ap(p.pctAnssal), aPami = ap(p.pctPamiEmp), aSind = esFC ? 0 : ap(p.pctSindicatoEmp);
+  if (aJub > 0) descuentos.push({ concepto: 'Jubilación', monto: aJub });
+  if (aOS > 0) descuentos.push({ concepto: 'Obra Social', monto: aOS });
+  if (aAnssal > 0) descuentos.push({ concepto: 'ANSSAL', monto: aAnssal });
+  if (aPami > 0) descuentos.push({ concepto: 'INSSJP (PAMI)', monto: aPami });
+  if (aSind > 0) descuentos.push({ concepto: 'Cuota sindical', monto: aSind });
   const totalAportes = descuentos.reduce((s, x) => s + x.monto, 0);
-
   const netoAntesGan = totalHaberes - totalAportes;
 
-  // ── Ganancias 4ª (estimación anualizada) con tope del 35% ──
-  // Base anual ≈ remuneración regular × 13 (12 + SAC). Deducciones: aportes +
-  // MNI + deducción especial. Retención mensual = impuesto anual / 12, topeada
-  // al 35% del neto del mes.
-  const baseAnual = regularRemun * 13;
-  const aportesAnual = (regularRemun * (num(p.pctJubilacion) + num(p.pctObraSocial) + num(p.pctAnssal) + num(p.pctPamiEmp) + (esFC ? 0 : num(p.pctSindicatoEmp))) / 100) * 13;
-  const ganSujeta = Math.max(0, baseAnual - aportesAnual - num(GAN.mniAnual) - num(GAN.dedEspAnual) - num(GAN.dedEsp2Anual));
-  const impAnual = impuestoEscala(ganSujeta, GAN.escala);
-  let ganRet = impAnual / 12;
-  const topePct = (p.gan_topeRetencionPct != null ? num(p.gan_topeRetencionPct) : 35);
-  const tope = netoAntesGan * topePct / 100;
-  let ganTopeada = false;
-  if (ganRet > tope) { ganRet = tope; ganTopeada = true; }
-  if (ganRet > 0) descuentos.push({ concepto: 'Impuesto a las Ganancias 4ª (estimación)' + (ganTopeada ? ` — tope ${topePct}%` : ''), monto: round2(ganRet) });
+  // Ganancias 4ª (estimación) — solo en liquidaciones de haberes regulares
+  if (tipo === 'mensual' || esQuincenal) {
+    const baseAnual = regularRemun * 13;
+    const aportesAnual = (regularRemun * (num(p.pctJubilacion) + num(p.pctObraSocial) + num(p.pctAnssal) + num(p.pctPamiEmp) + (esFC ? 0 : num(p.pctSindicatoEmp))) / 100) * 13;
+    const ganSujeta = Math.max(0, baseAnual - aportesAnual - num(GAN.mniAnual) - num(GAN.dedEspAnual) - num(GAN.dedEsp2Anual));
+    const impAnual = impuestoEscala(ganSujeta, GAN.escala);
+    let ganRet = (impAnual / 12) * (esQuincenal ? 0.5 : 1);
+    const topePct = (p.gan_topeRetencionPct != null ? num(p.gan_topeRetencionPct) : 35);
+    const tope = netoAntesGan * topePct / 100;
+    let ganTopeada = false;
+    if (ganRet > tope) { ganRet = tope; ganTopeada = true; }
+    if (ganRet > 0) descuentos.push({ concepto: 'Impuesto a las Ganancias 4ª (estimación)' + (ganTopeada ? ` — tope ${topePct}%` : ''), monto: round2(ganRet) });
+  }
 
   const totalDescuentos = descuentos.reduce((s, x) => s + x.monto, 0);
   const neto = totalHaberes - totalDescuentos;
 
-  // ── Costo del empleador (contribuciones patronales + SCVO) — no afecta el neto ──
+  // Costo del empleador (contribuciones patronales + SCVO) — sobre remunerativos
   const contribuciones = [];
-  const contrib = (label, pct) => { const m = totalRemun * num(pct) / 100; if (m > 0) contribuciones.push({ concepto: label, monto: round2(m) }); };
-  contrib('Jubilación patronal (SIPA)', p.pctJubPatronal);
-  contrib('Obra Social patronal', p.pctOsPatronal);
-  contrib('INSSJP patronal (PAMI)', p.pctPamiPatronal);
-  contrib('Fondo Nacional de Empleo', p.pctDesempleo);
-  contrib('ART', p.pctArt);
-  contrib('Cuota sindical patronal', p.pctSindicatoPatronal);
-  const scvo = num(p.scvoPercapita);
-  if (scvo > 0) contribuciones.push({ concepto: 'SCVO (Dto. 1567/74)', monto: round2(scvo) });
+  const co = (pct) => round2(totalRemun * num(pct) / 100);
+  const cJub = co(p.pctJubPatronal), cOS = co(p.pctOsPatronal), cPami = co(p.pctPamiPatronal), cFne = co(p.pctDesempleo), cArt = co(p.pctArt), cSind = co(p.pctSindicatoPatronal);
+  const scvo = round2(num(p.scvoPercapita));
+  if (cJub > 0) contribuciones.push({ concepto: 'Jubilación patronal (SIPA)', monto: cJub });
+  if (cOS > 0) contribuciones.push({ concepto: 'Obra Social patronal', monto: cOS });
+  if (cPami > 0) contribuciones.push({ concepto: 'INSSJP patronal (PAMI)', monto: cPami });
+  if (cFne > 0) contribuciones.push({ concepto: 'Fondo Nacional de Empleo', monto: cFne });
+  if (cArt > 0) contribuciones.push({ concepto: 'ART', monto: cArt });
+  if (cSind > 0) contribuciones.push({ concepto: 'Cuota sindical patronal', monto: cSind });
+  if (scvo > 0) contribuciones.push({ concepto: 'SCVO (Dto. 1567/74)', monto: scvo });
   const totalContrib = contribuciones.reduce((s, x) => s + x.monto, 0);
 
   return {
     empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, cuil: emp.cuil, cat: emp.cat },
-    periodo: { anio, mes },
-    haberes, descuentos,
+    periodo: { anio, mes, tipo, tipoLabel },
+    haberes, descuentos, detalle,
     totales: {
-      totalRemun: round2(totalRemun), totalNoRem: round2(totalNoRem),
+      totalRemun: round2(totalRemun), totalNoRem: round2(totalNoRem), totalExento: round2(totalExento),
       totalHaberes: round2(totalHaberes), totalDescuentos: round2(totalDescuentos), neto: round2(neto),
     },
     costoEmpleador: { contribuciones, totalContrib: round2(totalContrib), costoTotal: round2(totalHaberes + totalContrib) },
-    nota: 'Ganancias e antigüedad/SAC estimadas (sin SIRADIG ni embargos). En migración.',
+    composicion: {
+      remun: round2(totalRemun), noRem: round2(totalNoRem), exento: round2(totalExento), descuentos: round2(totalDescuentos), neto: round2(neto),
+      // Detalle por concepto (empleador + trabajador) — Decreto 407/2026
+      cargas: {
+        seguridadSocial: { empleador: round2(cJub + cFne), trabajador: round2(aJub) },
+        obraSocial:      { empleador: round2(cOS),          trabajador: round2(aOS + aAnssal) },
+        inssjp:          { empleador: round2(cPami),        trabajador: round2(aPami) },
+        sindical:        { empleador: round2(cSind),        trabajador: round2(aSind) },
+        art:             { empleador: round2(cArt),         trabajador: 0 },
+        scvo:            { empleador: round2(scvo),         trabajador: 0 },
+      },
+      costoTotal: round2(totalHaberes + totalContrib),
+    },
+    nota: 'Liquidación estimada (Ganancias sin SIRADIG; sin feriados/horas extra/embargos). En migración.',
   };
 }

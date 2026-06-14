@@ -10,9 +10,13 @@ const puedeVerTodos = (role) => ['rrhh', 'admin', 'manager'].includes(role);
 router.get('/', async (req, res, next) => {
   try {
     let empleadoId = req.user.id;
-    if (req.query.empleadoId && puedeVerTodos(req.user.role)) empleadoId = Number(req.query.empleadoId);
+    const gestor = puedeVerTodos(req.user.role);
+    if (req.query.empleadoId && gestor) empleadoId = Number(req.query.empleadoId);
+    const esPropio = empleadoId === req.user.id;
+    // El empleado solo ve recibos publicados; los gestores ven todos.
+    const filtro = (esPropio && !gestor) ? 'AND publicado = true' : (req.query.empleadoId && gestor ? '' : (esPropio ? '' : ''));
     const { rows } = await query(
-      `SELECT id, anio, mes, tipo, neto, created_at FROM recibos WHERE empleado_id = $1 ORDER BY anio DESC, mes DESC`,
+      `SELECT id, anio, mes, tipo, neto, created_at, publicado FROM recibos WHERE empleado_id = $1 ${filtro} ORDER BY anio DESC, mes DESC`,
       [empleadoId]
     );
     res.json(rows);
@@ -48,7 +52,9 @@ router.get('/:id', async (req, res, next) => {
     const { rows } = await query('SELECT * FROM recibos WHERE id = $1', [req.params.id]);
     const rec = rows[0];
     if (!rec) return res.status(404).json({ error: 'Recibo no encontrado' });
-    if (rec.empleado_id !== req.user.id && !puedeVerTodos(req.user.role)) return res.status(403).json({ error: 'Sin permiso' });
+    const gestor = puedeVerTodos(req.user.role);
+    if (rec.empleado_id !== req.user.id && !gestor) return res.status(403).json({ error: 'Sin permiso' });
+    if (rec.empleado_id === req.user.id && !gestor && !rec.publicado) return res.status(404).json({ error: 'Recibo no disponible' });
     res.json(rec.data);
   } catch (e) { next(e); }
 });
