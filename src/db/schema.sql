@@ -425,3 +425,18 @@ CREATE TABLE IF NOT EXISTS sindicatos (
   updated_by            TEXT,
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- ── Higiene y Seguridad: capacitaciones y entregas de EPP ──
+CREATE TABLE IF NOT EXISTS hys_capacitaciones (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  codigo TEXT, nombre TEXT NOT NULL, fecha DATE NOT NULL, vigencia_meses INTEGER,
+  dictada_por TEXT, observaciones TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_hys_cap_emp ON hys_capacitaciones(empleado_id);
+CREATE TABLE IF NOT EXISTS hys_epp_entregas (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  codigo TEXT, nombre TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 1, talle TEXT,
+  fecha DATE NOT NULL, observaciones TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_hys_epp_emp ON hys_epp_entregas(empleado_id);
