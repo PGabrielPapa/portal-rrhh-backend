@@ -335,3 +335,18 @@ CREATE TABLE IF NOT EXISTS convenio_versiones (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_conv_ver_codigo ON convenio_versiones(codigo, vigencia);
+
+-- ── ART por empresa (contratos + histórico de alícuotas) ──
+CREATE TABLE IF NOT EXISTS art_contratos (
+  id           SERIAL PRIMARY KEY,
+  empresa_id   INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  art_codigo   TEXT NOT NULL,
+  art_nombre   TEXT NOT NULL,
+  nro_contrato TEXT,
+  fecha_inicio DATE,
+  fecha_fin    DATE,
+  activo       BOOLEAN NOT NULL DEFAULT true,
+  alicuotas    JSONB NOT NULL DEFAULT '[]'::jsonb,   -- [{ desde, pct, nota }]
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_art_empresa ON art_contratos(empresa_id);

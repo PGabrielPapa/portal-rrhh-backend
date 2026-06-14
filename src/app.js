@@ -11,6 +11,7 @@ import cbusRoutes from './routes/cbus.routes.js';
 import gananciasRoutes from './routes/ganancias.routes.js';
 import escalaRoutes from './routes/escala.routes.js';
 import conveniosRoutes from './routes/convenios.routes.js';
+import artRoutes from './routes/art.routes.js';
 import anticiposRoutes from './routes/anticipos.routes.js';
 import parametrosRoutes from './routes/parametros.routes.js';
 import conceptosRoutes from './routes/conceptos.routes.js';
@@ -41,6 +42,7 @@ export function createApp() {
   app.use('/api/ganancias', gananciasRoutes);
   app.use('/api/escala', escalaRoutes);
   app.use('/api/convenios', conveniosRoutes);
+  app.use('/api/art', artRoutes);
   app.use('/api/anticipos', anticiposRoutes);
   app.use('/api/parametros', parametrosRoutes);
   app.use('/api/conceptos', conceptosRoutes);
