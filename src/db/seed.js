@@ -126,6 +126,15 @@ async function main() {
           [c.codigo, c.nombre, c.cct || null, c.vigencia || null,
            JSON.stringify({ mesLabel: c.mesLabel, acuerdo: c.acuerdo, tablas: c.tablas, adicionales: c.adicionales, noRemunerativos: c.noRemunerativos })]
         );
+        const vex = await client.query('SELECT 1 FROM convenio_versiones WHERE codigo=$1 LIMIT 1', [c.codigo]);
+        if (!vex.rowCount) {
+          await client.query(
+            `INSERT INTO convenio_versiones (codigo, vigencia, mes_label, origen, comentario, data)
+             VALUES ($1,$2,$3,'inicial',$4,$5)`,
+            [c.codigo, c.vigencia || '2026-01-01', c.mesLabel || null, c.acuerdo || null,
+             JSON.stringify({ acuerdo: c.acuerdo, tablas: c.tablas, adicionales: c.adicionales, noRemunerativos: c.noRemunerativos })]
+          );
+        }
       }
       console.log(`[seed] convenios: ${convs.length}`);
     } catch (e) { console.warn('[seed] convenios:', e.message); }

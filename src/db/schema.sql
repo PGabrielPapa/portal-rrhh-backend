@@ -319,3 +319,19 @@ CREATE TABLE IF NOT EXISTS convenios (
   updated_by TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Versiones por sindicato (histórico de paritarias / ediciones)
+CREATE TABLE IF NOT EXISTS convenio_versiones (
+  id          SERIAL PRIMARY KEY,
+  codigo      TEXT NOT NULL,
+  vigencia    DATE NOT NULL,
+  mes_label   TEXT,
+  origen      TEXT NOT NULL DEFAULT 'inicial',   -- inicial | porcentaje | monto | edicion
+  porcentaje  NUMERIC(8,2),
+  monto       NUMERIC(14,2),
+  comentario  TEXT,
+  data        JSONB NOT NULL,                    -- snapshot { tablas, adicionales, noRemunerativos }
+  creado_por  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_conv_ver_codigo ON convenio_versiones(codigo, vigencia);
