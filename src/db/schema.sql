@@ -211,6 +211,8 @@ CREATE TABLE IF NOT EXISTS evaluaciones (
   created_by TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE evaluaciones ADD COLUMN IF NOT EXISTS datos JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE evaluaciones ADD COLUMN IF NOT EXISTS promedio NUMERIC(4,2);
 CREATE INDEX IF NOT EXISTS idx_evaluaciones_empleado ON evaluaciones(empleado_id);
 
 -- Sanciones: campos agregados (falta cometida + estado del flujo)
