@@ -25,6 +25,18 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
     res.status(201).json({ ok: true, id: r.rows[0].id });
   } catch (e) { next(e); }
 });
+// PUT /api/beneficios/:id — editar el beneficio otorgado (rrhh/admin)
+router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!b.tipo) return res.status(400).json({ error: 'El tipo es obligatorio' });
+    const r = await query(
+      `UPDATE beneficios SET tipo=$1, modalidad=$2, monto=$3, proveedor=$4, vigencia_desde=$5, vigencia_hasta=$6, detalle=$7 WHERE id=$8 RETURNING id`,
+      [b.tipo, b.modalidad || null, parseFloat(b.monto) || 0, b.proveedor || null, b.vigenciaDesde || null, b.vigenciaHasta || null, b.detalle || null, req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Beneficio no encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
 router.patch('/:id/activo', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try { await query('UPDATE beneficios SET activo=$1 WHERE id=$2', [!!(req.body || {}).activo, req.params.id]); res.json({ ok: true }); }
   catch (e) { next(e); }
