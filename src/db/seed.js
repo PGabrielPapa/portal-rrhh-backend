@@ -48,6 +48,18 @@ async function main() {
       console.log('[seed] logos de empresas: ok');
     } catch (e) { console.warn('[seed] logos:', e.message); }
 
+    // Firma de RR.HH. — única para todas las empresas (igual que la vanilla).
+    // Idempotente: solo completa donde no haya firma cargada (no pisa subidas manuales).
+    try {
+      const firma = JSON.parse(fs.readFileSync(path.join(dataDir, 'firmas.seed.json'), 'utf8'));
+      if (firma.imagen) {
+        for (const id of Object.values(empresaId)) {
+          await client.query("UPDATE empresas SET firma = $1 WHERE id = $2 AND (firma IS NULL OR firma = '')", [firma.imagen, id]);
+        }
+        console.log('[seed] firma RR.HH. en empresas: ok');
+      }
+    } catch (e) { console.warn('[seed] firmas:', e.message); }
+
 
     // Contraseña inicial = DNI (hasheada). must_change_pwd = true.
     let ok = 0, skip = 0;
