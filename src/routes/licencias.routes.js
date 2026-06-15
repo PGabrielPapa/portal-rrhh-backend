@@ -72,8 +72,9 @@ router.post('/', async (req, res, next) => {
     if (!tipo || !desde || !hasta) return res.status(400).json({ error: 'Tipo, desde y hasta son obligatorios' });
     if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
     // Imprevisibles: no se solicitan con anticipación (RR.HH. las registra).
-    if (['enfermedad', 'fallecimiento familiar', 'nacimiento'].includes(String(tipo).toLowerCase())) {
-      return res.status(400).json({ error: `${tipo} es una licencia imprevisible y no puede solicitarse con anticipación; debe registrarla RR.HH.` });
+    const tl = String(tipo).toLowerCase();
+    if (tl.startsWith('enfermedad') || tl.startsWith('fallecimiento') || tl.includes('nacimiento')) {
+      return res.status(400).json({ error: `${tipo} es una licencia imprevisible y no puede solicitarse con anticipación; debe registrarla RR.HH. (o justificarla con comprobante).` });
     }
     const dias = diasEntre(desde, hasta);
     if (esVacaciones(tipo)) {
