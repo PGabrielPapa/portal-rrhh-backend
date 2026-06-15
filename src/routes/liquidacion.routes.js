@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { calcularRecibo } from '../lib/liquidacion.js';
 import { ganTablaParaFecha } from '../lib/gananciasParams.js';
 import { periodoCerrado } from './cierres.routes.js';
+import { idsEquipoDe } from '../lib/equipo.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -55,6 +56,43 @@ async function getEmp(id) {
   return { id: r.id, legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} };
 }
 async function getParams() { const pr = await query('SELECT data FROM parametros_liq WHERE id = 1'); return pr.rows[0]?.data || {}; }
+
+const round2c = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+const aniosAntig = (ing, anio, mes) => { if (!ing) return 0; const d = new Date(ing); const ref = new Date(anio, mes - 1, 1); let a = ref.getFullYear() - d.getFullYear(); if (ref.getMonth() < d.getMonth()) a--; return Math.max(0, a); };
+
+// GET /api/liquidacion/costo-equipo — costo laboral de los empleados a cargo (organigrama).
+// Calcula una liquidación MENSUAL del período pedido (o el actual) para cada integrante.
+router.get('/costo-equipo', requireRole('manager', 'rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const ids = [...await idsEquipoDe(req.user.id)];
+    const now = new Date();
+    const anio = Number(req.query.anio) || now.getFullYear();
+    const mes = Number(req.query.mes) || (now.getMonth() + 1);
+    if (!ids.length) return res.json({ periodo: { anio, mes }, items: [], totales: { cant: 0, remun: 0, contrib: 0, costo: 0, neto: 0 } });
+    const params = await getParams();
+    const pbMap = await presBaseMap();
+    const ganTabla = await ganTablaParaFecha(`${anio}-${String(mes).padStart(2, '0')}-15`);
+    const { rows } = await query(
+      `SELECT e.id, e.leg_num, e.nom, e.cuil, e.cat, e.tramo, e.ingreso, e.bruto, e.data, em.nombre AS empresa
+         FROM empleados e JOIN empresas em ON em.id=e.empresa_id
+        WHERE e.id = ANY($1) AND e.activo=true ORDER BY em.nombre, e.nom`, [ids]);
+    const items = []; let tRem = 0, tContrib = 0, tCosto = 0, tNeto = 0;
+    for (const r of rows) {
+      const emp = { id: r.id, legNum: r.leg_num, nom: r.nom, empresa: r.empresa, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} };
+      let rec; try { rec = calcularRecibo(emp, params, { anio, mes, tipo: 'mensual', ganTabla, presBase: presBaseDe(pbMap, emp) }); } catch { continue; }
+      const remun = rec.totales.totalHaberes || 0;       // remuneración asignada (bruto del recibo)
+      const contrib = rec.costoEmpleador?.totalContrib || 0;
+      const costo = rec.costoEmpleador?.costoTotal || 0;
+      const neto = rec.totales.neto || 0;
+      tRem += remun; tContrib += contrib; tCosto += costo; tNeto += neto;
+      const nom = String(r.nom || '');
+      const apellido = nom.split(',')[0]?.trim() || nom;
+      const nombre = nom.split(',')[1]?.trim() || '';
+      items.push({ id: r.id, legNum: r.leg_num, apellido, nombre, empresa: r.empresa, tarea: r.data?.tarea || r.data?.desc_categoria || [r.cat, r.tramo].filter(Boolean).join(' '), ingreso: r.ingreso, antiguedad: aniosAntig(r.ingreso, anio, mes), remun: round2c(remun), contrib: round2c(contrib), costo: round2c(costo), neto: round2c(neto) });
+    }
+    res.json({ periodo: { anio, mes }, items, totales: { cant: items.length, remun: round2c(tRem), contrib: round2c(tContrib), costo: round2c(tCosto), neto: round2c(tNeto) } });
+  } catch (e) { next(e); }
+});
 
 // Cuotas de anticipos aprobados a descontar en (anio, mes). Determinístico por período.
 function r2(n) { return Math.round((Number(n) + Number.EPSILON) * 100) / 100; }
