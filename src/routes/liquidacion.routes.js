@@ -318,8 +318,56 @@ const BANCOS = [
 const sinAcentos = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 const padB = (v, n, ch, right) => { v = String(v == null ? '' : v).slice(0, n); return right ? v.padStart(n, ch) : v.padEnd(n, ch); };
 
-// GET /api/liquidacion/bancos — catálogo de formatos
-router.get('/bancos', requireRole('rrhh', 'admin'), (req, res) => res.json(BANCOS));
+// Asegura el catálogo de diseños en la base (siembra desde BANCOS la primera vez).
+async function ensureDisenos() {
+  const c = await query('SELECT COUNT(*)::int AS n FROM banco_disenos');
+  if (c.rows[0].n === 0) {
+    for (const b of BANCOS) await query(
+      `INSERT INTO banco_disenos (codigo, label, formato, version, descripcion) VALUES ($1,$2,$3,1,$4) ON CONFLICT (codigo) DO NOTHING`,
+      [b.v, b.label, b.formato, `Diseño de registro inicial — ${b.label} (${b.formato})`]);
+  }
+}
+
+// GET /api/liquidacion/bancos — catálogo de diseños (con versión y fecha de actualización)
+router.get('/bancos', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    await ensureDisenos();
+    const { rows } = await query('SELECT codigo AS v, label, formato, version, descripcion, actualizado_at, actualizado_por FROM banco_disenos ORDER BY label');
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+
+// GET /api/liquidacion/bancos/:codigo/verificar — ¿el diseño cambió desde la última generación?
+router.get('/bancos/:codigo/verificar', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    await ensureDisenos();
+    const d = (await query('SELECT codigo, label, formato, version, descripcion, actualizado_at, actualizado_por FROM banco_disenos WHERE codigo=$1', [req.params.codigo])).rows[0];
+    if (!d) return res.status(404).json({ error: 'Banco no encontrado' });
+    const last = (await query('SELECT version_diseno, created_at FROM banco_generaciones WHERE banco=$1 ORDER BY created_at DESC LIMIT 1', [req.params.codigo])).rows[0] || null;
+    res.json({
+      ...d,
+      ultimaVersion: last ? last.version_diseno : null,
+      ultimaFecha: last ? last.created_at : null,
+      primeraVez: !last,
+      actualizado: last ? (d.version > last.version_diseno) : false,
+    });
+  } catch (e) { next(e); }
+});
+
+// PATCH /api/liquidacion/bancos/:codigo — registrar una actualización del diseño (incrementa versión)
+router.patch('/bancos/:codigo', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    await ensureDisenos();
+    const { label, formato, descripcion } = req.body || {};
+    if (formato && !['CSV', 'TXT'].includes(formato)) return res.status(400).json({ error: 'Formato inválido (CSV o TXT)' });
+    const r = await query(
+      `UPDATE banco_disenos SET label=COALESCE($1,label), formato=COALESCE($2,formato), descripcion=COALESCE($3,descripcion),
+              version=version+1, actualizado_por=$4, actualizado_at=now() WHERE codigo=$5 RETURNING *`,
+      [label || null, formato || null, descripcion || null, req.user.dni, req.params.codigo]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Banco no encontrado' });
+    res.json(r.rows[0]);
+  } catch (e) { next(e); }
+});
 
 // GET /api/liquidacion/corrida/:id/banco?banco=&fecha=&leyenda= — archivo de acreditación (CSV o TXT posicional)
 router.get('/corrida/:id/banco', requireRole('rrhh', 'admin'), async (req, res, next) => {
@@ -337,7 +385,9 @@ router.get('/corrida/:id/banco', requireRole('rrhh', 'admin'), async (req, res, 
       const cbus = r.cbus && r.cbus.length ? r.cbus : [{ cbu: '', pct: 100 }];
       for (const c of cbus) recs.push({ leg: r.leg_num, nom: r.nom, cuil: String(r.cuil || '').replace(/\D/g, ''), cbu: String(c.cbu || '').replace(/\D/g, ''), centavos: Math.round(Number(r.neto) * Number(c.pct || 100) / 100 * 100) });
     }
-    const cfg = BANCOS.find((b) => b.v === banco) || BANCOS[0];
+    await ensureDisenos();
+    const dis = (await query('SELECT formato, version FROM banco_disenos WHERE codigo=$1', [banco])).rows[0];
+    const cfg = dis ? { v: banco, formato: dis.formato } : (BANCOS.find((b) => b.v === banco) || BANCOS[0]);
     let body, ext, mime;
     if (cfg.formato === 'TXT') {
       const fechaTxt = fecha.replace(/-/g, '');
@@ -348,6 +398,7 @@ router.get('/corrida/:id/banco', requireRole('rrhh', 'admin'), async (req, res, 
       for (const x of recs) lineas.push(`${x.leg},"${sinAcentos(x.nom)}",${x.cuil},${x.cbu},${(x.centavos / 100).toFixed(2)},${leyenda},${fecha}`);
       body = '\uFEFF' + lineas.join('\r\n'); ext = 'csv'; mime = 'text/csv; charset=utf-8';
     }
+    if (dis) await query('INSERT INTO banco_generaciones (banco, version_diseno, corrida_id, created_by) VALUES ($1,$2,$3,$4)', [banco, dis.version, Number(req.params.id), req.user.dni]).catch(() => {});
     res.setHeader('Content-Type', mime);
     res.setHeader('Content-Disposition', `attachment; filename="acreditacion_${banco}_corrida_${req.params.id}.${ext}"`);
     res.send(body);

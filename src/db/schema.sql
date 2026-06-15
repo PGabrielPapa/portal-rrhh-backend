@@ -470,3 +470,22 @@ CREATE TABLE IF NOT EXISTS cbu_novedades (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_cbu_nov_leida ON cbu_novedades(leida);
+-- ── Diseños de registro de bancos (versionados) + log de generaciones ──
+CREATE TABLE IF NOT EXISTS banco_disenos (
+  codigo          TEXT PRIMARY KEY,
+  label           TEXT NOT NULL,
+  formato         TEXT NOT NULL DEFAULT 'CSV',     -- CSV | TXT
+  version         INTEGER NOT NULL DEFAULT 1,
+  descripcion     TEXT,
+  actualizado_por TEXT,
+  actualizado_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS banco_generaciones (
+  id             SERIAL PRIMARY KEY,
+  banco          TEXT NOT NULL,
+  version_diseno INTEGER NOT NULL,
+  corrida_id     INTEGER,
+  created_by     TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_banco_gen ON banco_generaciones(banco, created_at DESC);
