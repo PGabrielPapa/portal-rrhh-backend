@@ -42,12 +42,14 @@ router.post('/', requireRole('manager', 'rrhh', 'admin'), async (req, res, next)
       const ids = await idsEquipoDe(req.user.id);
       if (!ids.has(Number(empleadoId))) return res.status(403).json({ error: 'Solo podés registrar sanciones de integrantes de tu equipo.' });
     }
-    const esManager = req.user.role === 'manager';
-    const estado = esManager ? 'solicitada' : 'aplicada';
-    // RR.HH./admin aplican directo y cargan notificación/cumplimiento; el gerente solo solicita.
-    const fNotif = esManager ? null : (fechaNotificacion || null);
-    const fCumpl = esManager ? null : (fechaCumplimiento || null);
-    if (!esManager && !fNotif) return res.status(400).json({ error: 'La fecha de notificación es obligatoria' });
+    // Es solicitud (la resuelve RR.HH.) si lo pide un gerente, O si viene de la pantalla
+    // "Sanciones del equipo" (flag solicitar) aunque el usuario sea admin/rrhh.
+    const esSolicitud = req.user.role === 'manager' || (req.body || {}).solicitar === true;
+    const estado = esSolicitud ? 'solicitada' : 'aplicada';
+    // En una solicitud, la notificación/cumplimiento los carga RR.HH. al aplicarla.
+    const fNotif = esSolicitud ? null : (fechaNotificacion || null);
+    const fCumpl = esSolicitud ? null : (fechaCumplimiento || null);
+    if (!esSolicitud && !fNotif) return res.status(400).json({ error: 'La fecha de notificación es obligatoria' });
     const r = await query(
       'INSERT INTO sanciones (empleado_id, tipo, falta, fecha, dias, descripcion, estado, fecha_notificacion, fecha_cumplimiento, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
       [empleadoId, tipo, falta || null, fecha, parseInt(dias, 10) || 0, descripcion || null, estado, fNotif, fCumpl, req.user.dni]);
