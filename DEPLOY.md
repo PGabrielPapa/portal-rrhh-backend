@@ -7,7 +7,9 @@ Dos repos: `portal-rrhh-backend` (este) y `portal-rrhh-frontend`.
 
 ## Opción A — Droplet con Docker (recomendada, todo en un servidor)
 
-1. **Crear el Droplet**: Ubuntu 22.04, imagen "Docker" del Marketplace (ya trae Docker + Compose). Mínimo 2 GB RAM.
+1. **Crear el Droplet**: Ubuntu 22.04/24.04 (imagen "Docker" del Marketplace si está; si no, Ubuntu común e instalás Docker con `curl -fsSL https://get.docker.com | sh`). Mínimo 2 GB RAM.
+
+   **DNS (para HTTPS):** creá un registro **A** de tu dominio (ej. `rrhh.tu-dominio.com`) apuntando a la **IP del droplet**, y abrí los puertos **80 y 443** (firewall de DigitalOcean).
 
 2. **Clonar los dos repos lado a lado** (en el server):
    ```bash
@@ -19,7 +21,7 @@ Dos repos: `portal-rrhh-backend` (este) y `portal-rrhh-frontend`.
 3. **Configurar variables**:
    ```bash
    cp .env.prod.example .env
-   nano .env            # completar POSTGRES_PASSWORD y JWT_SECRET (openssl rand -hex 32)
+   nano .env            # completar POSTGRES_PASSWORD, JWT_SECRET (openssl rand -hex 32) y DOMAIN
    ```
 
 4. **Levantar**:
@@ -28,11 +30,11 @@ Dos repos: `portal-rrhh-backend` (este) y `portal-rrhh-frontend`.
    ```
    - Postgres queda con volumen persistente (`pgdata_prod`).
    - La API migra el esquema y siembra los datos iniciales en el primer arranque (idempotente).
-   - El frontend queda en el **puerto 80**. La API no se expone afuera; el nginx del frontend la proxya en `/api`.
+   - **Caddy** publica los puertos 80/443 y obtiene el **certificado HTTPS automáticamente** (Let's Encrypt) para `DOMAIN`. El frontend (nginx) y la API quedan solo en la red interna; la API se sirve vía `/api`.
 
-5. **Acceso**: `http://IP_DEL_DROPLET` → login con DNI; contraseña inicial = DNI (se fuerza cambio).
+5. **Acceso**: `https://TU_DOMINIO` → login con DNI; contraseña inicial = DNI (se fuerza cambio). La primera carga puede tardar unos segundos mientras Caddy emite el certificado.
 
-6. **HTTPS** (recomendado): poné un reverse proxy delante (Caddy o nginx con certbot) apuntando al puerto 80, o usá un Load Balancer de DigitalOcean con certificado gestionado.
+6. **HTTPS**: ya viene resuelto por Caddy (no hay que hacer nada más que tener el DNS apuntando y los puertos 80/443 abiertos). El certificado se renueva solo.
 
 ### Actualizar a una nueva versión
 ```bash

@@ -39,6 +39,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?definí JWT_SECRET en .env}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      TRUST_PROXY: 2
       BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-10}
       NODE_ENV: production
     depends_on:
@@ -51,7 +52,26 @@ services:
     container_name: prh_web_prod
     restart: unless-stopped
     depends_on: [api]
-    ports: ["80:80"]   # cambiá a "443:443" + cert si usás HTTPS directo
+    expose: ["80"]     # solo red interna; Caddy lo publica con TLS
+
+  # Reverse proxy con HTTPS automático (Let's Encrypt). Requiere un dominio
+  # apuntando (registro A) a la IP del droplet y los puertos 80/443 abiertos.
+  caddy:
+    image: caddy:2-alpine
+    container_name: prh_caddy_prod
+    restart: unless-stopped
+    depends_on: [web]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: "${DOMAIN:?definí DOMAIN en .env, p.ej. rrhh.tu-dominio.com}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
 
 volumes:
   pgdata_prod:
+  caddy_data:
+  caddy_config:

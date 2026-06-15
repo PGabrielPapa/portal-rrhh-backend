@@ -1,0 +1,5 @@
+# HTTPS automático para el Portal RR.HH. Caddy obtiene y renueva el certificado
+# de Let's Encrypt solo, y redirige HTTP→HTTPS. Proxya todo al nginx (web).
+{$DOMAIN} {
+	reverse_proxy web:80
+}
