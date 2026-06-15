@@ -105,6 +105,25 @@ router.post('/registrar', requireRole('rrhh', 'admin'), async (req, res, next) =
   } catch (e) { next(e); }
 });
 
+// POST /api/licencias/justificar — el empleado informa Y justifica (con comprobante) una
+// licencia imprevisible que NO fue solicitada antes (enfermedad, fallecimiento, etc.).
+router.post('/justificar', async (req, res, next) => {
+  try {
+    const { tipo, desde, hasta, motivo, comprobanteNombre, comprobanteMime, comprobanteData } = req.body || {};
+    if (!tipo || !desde || !hasta) return res.status(400).json({ error: 'Tipo, desde y hasta son obligatorios' });
+    if (!comprobanteData) return res.status(400).json({ error: 'Debés adjuntar el comprobante que justifica la licencia.' });
+    if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
+    const dias = diasEntre(desde, hasta);
+    const ins = await query(
+      `INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo, estado, justificacion, comprobante_nombre, comprobante_mime, comprobante_data)
+       VALUES ($1,$2,$3,$4,$5,$6,'pendiente',true,$7,$8,$9)
+       RETURNING id, empleado_id, tipo, desde, hasta, dias, motivo, estado, created_at, justificacion, comprobante_nombre, comprobante_mime, (comprobante_data IS NOT NULL) AS tiene_comprobante`,
+      [req.user.id, String(tipo).trim(), desde, hasta, dias, motivo || null,
+       comprobanteNombre || 'comprobante', comprobanteMime || 'application/octet-stream', comprobanteData]);
+    res.status(201).json(ins.rows[0]);
+  } catch (e) { next(e); }
+});
+
 router.patch('/:id', requireRole('manager', 'rrhh', 'admin'), async (req, res, next) => {
   try {
     const estado = (req.body || {}).estado;
