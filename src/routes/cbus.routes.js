@@ -119,6 +119,22 @@ router.get('/novedades', requireRole('rrhh', 'admin', 'manager'), async (req, re
     res.json(rows);
   } catch (e) { next(e); }
 });
+// GET /api/cbus/incompletos — CHECK: empleados con cuentas activas cuya suma de acreditación es < 100%.
+router.get('/incompletos', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT e.id, e.nom, e.leg_num, em.nombre AS empresa,
+              COALESCE(SUM(c.porcentaje),0)::float AS suma, COUNT(c.id)::int AS cuentas
+         FROM empleados e JOIN empresas em ON em.id=e.empresa_id
+         LEFT JOIN cbus c ON c.empleado_id=e.id AND c.activo=true
+        WHERE e.activo=true
+        GROUP BY e.id, e.nom, e.leg_num, em.nombre
+        HAVING COUNT(c.id) > 0 AND COALESCE(SUM(c.porcentaje),0) < 99.99
+        ORDER BY em.nombre, e.nom`);
+    res.json(rows.map((r) => ({ ...r, suma: Math.round(r.suma * 100) / 100, falta: Math.round((100 - r.suma) * 100) / 100 })));
+  } catch (e) { next(e); }
+});
+
 router.patch('/novedades/:id/leida', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
   try { await query('UPDATE cbu_novedades SET leida=true WHERE id=$1', [req.params.id]); res.json({ ok: true }); } catch (e) { next(e); }
 });
