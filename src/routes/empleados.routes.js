@@ -65,6 +65,33 @@ router.get('/mi-perfil', async (req, res, next) => {
 });
 
 // GET /api/empleados/:id
+// GET /api/empleados/cumpleanios — próximos cumpleaños de compañeros (cualquier rol)
+router.get('/cumpleanios', async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT e.id, e.nom, em.nombre AS empresa, e.data FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE e.activo=true`);
+    const hoy = new Date(); const y = hoy.getFullYear();
+    const hoy0 = new Date(y, hoy.getMonth(), hoy.getDate());
+    const out = [];
+    for (const r of rows) {
+      if (r.id === req.user.id) continue;
+      const fn = String(r.data?.fecha_nac || '').trim();
+      const m = fn.match(/^(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{2,4}))?$/);
+      if (!m) continue;
+      const dd = Number(m[1]), mm = Number(m[2]), anioNac = m[3] ? Number(m[3].length === 2 ? '19' + m[3] : m[3]) : null;
+      if (!(dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12)) continue;
+      let prox = new Date(y, mm - 1, dd);
+      const esHoy = (dd === hoy.getDate() && mm === hoy.getMonth() + 1);
+      if (prox < hoy0 && !esHoy) prox = new Date(y + 1, mm - 1, dd);
+      const diasHasta = Math.round((prox - hoy0) / 86400000);
+      const edad = anioNac ? (prox.getFullYear() - anioNac) : null;
+      out.push({ nom: r.nom, empresa: r.empresa, lugar: r.data?.lugar || '', fecha: `${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}`, diasHasta, edad });
+    }
+    out.sort((a, b) => a.diasHasta - b.diasHasta);
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
 router.get('/:id', async (req, res, next) => {
   try {
     const { rows } = await query(`${SELECT} WHERE e.id = $1`, [req.params.id]);
