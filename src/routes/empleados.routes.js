@@ -109,6 +109,24 @@ router.get('/cumpleanios', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Próximo legajo por empresa: máximo numérico existente + 1, con padding a 6 dígitos.
+async function nextLegajo(client, empresaId) {
+  const r = await client.query(
+    `SELECT COALESCE(MAX(NULLIF(regexp_replace(leg_num, '\\D', '', 'g'), '')::int), 0) + 1 AS n
+       FROM empleados WHERE empresa_id = $1`, [empresaId]);
+  return String(r.rows[0].n).padStart(6, '0');
+}
+
+// GET /api/empleados/proximo-legajo?empresa=NOMBRE — legajo a asignar en la próxima alta.
+router.get('/proximo-legajo', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const empresa = String(req.query.empresa || '').trim();
+    const er = await query('SELECT id FROM empresas WHERE nombre = $1', [empresa]);
+    if (!er.rows[0]) return res.status(400).json({ error: 'Empresa no encontrada' });
+    res.json({ legNum: await nextLegajo(pool, er.rows[0].id), empresa });
+  } catch (e) { next(e); }
+});
+
 router.get('/:id', async (req, res, next) => {
   try {
     const { rows } = await query(`${SELECT} WHERE e.id = $1`, [req.params.id]);
@@ -130,19 +148,21 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
   let dni = String(b.dni || '').trim();
   const cuil = String(b.cuil || '').trim();
   if (!dni && cuil) dni = dniFromCuil(cuil);
-  if (!empresa || !legNum || !dni || !b.nom) {
-    return res.status(400).json({ error: 'Faltan campos obligatorios: empresa, legajo, DNI (o CUIL) y nombre' });
+  if (!empresa || !dni || !b.nom) {
+    return res.status(400).json({ error: 'Faltan campos obligatorios: empresa, DNI (o CUIL) y nombre' });
   }
   const client = await pool.connect();
   try {
     const empresaId = await resolveEmpresaId(client, empresa);
     if (!empresaId) return res.status(400).json({ error: `Empresa no encontrada: ${empresa}` });
+    // El legajo lo asigna el sistema (siguiente por empresa), para evitar repeticiones.
+    const legAsignado = await nextLegajo(client, empresaId);
     const core = ['empresa','legNum','leg','dni','cuil','nom','email','cat','tramo','ingreso','bruto','neto','role'];
     const data = {}; for (const k of Object.keys(b)) if (!core.includes(k)) data[k] = b[k];
     const { rows } = await client.query(
       `INSERT INTO empleados (empresa_id, leg_num, dni, cuil, nom, email, cat, tramo, ingreso, bruto, neto, es_alta, role, data)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,$12,$13) RETURNING id`,
-      [empresaId, legNum, dni, cuil || null, String(b.nom).toUpperCase(), b.email || null,
+      [empresaId, legAsignado, dni, cuil || null, String(b.nom).toUpperCase(), b.email || null,
        b.cat || null, b.tramo || null, b.ingreso || null, b.bruto || 0, b.neto || 0,
        b.role || 'employee', JSON.stringify(data)]
     );
