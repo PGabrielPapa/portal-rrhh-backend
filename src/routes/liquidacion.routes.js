@@ -64,7 +64,9 @@ const aniosAntig = (ing, anio, mes) => { if (!ing) return 0; const d = new Date(
 // Calcula una liquidación MENSUAL del período pedido (o el actual) para cada integrante.
 router.get('/costo-equipo', requireRole('manager', 'rrhh', 'admin'), async (req, res, next) => {
   try {
-    const ids = [...await idsEquipoDe(req.user.id)];
+    const set = await idsEquipoDe(req.user.id);
+    set.add(req.user.id);   // el gerente del área también es parte del costo laboral de su equipo
+    const ids = [...set];
     const now = new Date();
     const anio = Number(req.query.anio) || now.getFullYear();
     const mes = Number(req.query.mes) || (now.getMonth() + 1);
