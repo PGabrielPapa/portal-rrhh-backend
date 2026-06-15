@@ -75,7 +75,17 @@ router.get('/:id', async (req, res, next) => {
     if (rec.empleado_id === req.user.id) {
       query('INSERT INTO recibo_vistas (recibo_id, empleado_id) VALUES ($1,$2)', [rec.id, req.user.id]).catch(() => {});
     }
-    res.json(rec.data);
+    // Enriquecer con la firma del empleador (misma que el certificado) + firmante, para el PDF.
+    let firmaEmpleador = null, firmante = null;
+    try {
+      const fr = await query(
+        `SELECT em.firma, (SELECT data->'firmante' FROM parametros_liq WHERE id=1) AS firmante
+           FROM empleados e JOIN empresas em ON em.id = e.empresa_id WHERE e.id = $1`,
+        [rec.empleado_id]);
+      firmaEmpleador = fr.rows[0]?.firma || null;
+      firmante = fr.rows[0]?.firmante || null;
+    } catch { /* si falla, el recibo sale sin firma */ }
+    res.json({ ...rec.data, firmaEmpleador, firmante });
   } catch (e) { next(e); }
 });
 
