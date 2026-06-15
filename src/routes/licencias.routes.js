@@ -109,6 +109,13 @@ router.patch('/:id', requireRole('manager', 'rrhh', 'admin'), async (req, res, n
   try {
     const estado = (req.body || {}).estado;
     if (!['aprobada', 'rechazada'].includes(estado)) return res.status(400).json({ error: 'Estado inválido' });
+    // P1 — Un gerente solo resuelve licencias de SU equipo (organigrama). RR.HH./admin, cualquiera.
+    if (req.user.role === 'manager') {
+      const cur = (await query('SELECT empleado_id FROM licencias WHERE id=$1', [req.params.id])).rows[0];
+      if (!cur) return res.status(404).json({ error: 'La licencia no existe' });
+      const ids = await idsEquipoDe(req.user.id);
+      if (!ids.has(cur.empleado_id)) return res.status(403).json({ error: 'Esa licencia no corresponde a tu equipo.' });
+    }
     const r = await query(`UPDATE licencias SET estado=$1, resuelto_por=$2, resuelto_at=now() WHERE id=$3 AND estado='pendiente' RETURNING id`, [estado, req.user.dni, req.params.id]);
     if (!r.rowCount) return res.status(409).json({ error: 'La licencia no existe o ya fue resuelta' });
     res.json({ ok: true, estado });

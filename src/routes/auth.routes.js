@@ -4,8 +4,18 @@ import jwt from 'jsonwebtoken';
 import { query } from '../db.js';
 import { config } from '../config.js';
 import { requireAuth } from '../middleware/auth.js';
+import rateLimit from 'express-rate-limit';
 
 const router = Router();
+
+// P0 — Freno a la fuerza bruta: límite de intentos por IP en endpoints de credenciales.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  limit: 20,                // 20 intentos por ventana por IP
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Demasiados intentos. Esperá unos minutos y volvé a probar.' },
+});
 
 function signToken(emp) {
   return jwt.sign(
@@ -16,7 +26,7 @@ function signToken(emp) {
 }
 
 // POST /api/auth/login  { dni, password }
-router.post('/login', async (req, res, next) => {
+router.post('/login', loginLimiter, async (req, res, next) => {
   try {
     const { dni, password } = req.body || {};
     if (!dni || !password) return res.status(400).json({ error: 'DNI y contraseña son obligatorios' });
@@ -44,7 +54,7 @@ router.post('/login', async (req, res, next) => {
 });
 
 // POST /api/auth/change-password  { currentPassword, newPassword }   (auth)
-router.post('/change-password', requireAuth, async (req, res, next) => {
+router.post('/change-password', loginLimiter, requireAuth, async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body || {};
     if (!newPassword || String(newPassword).length < 6)

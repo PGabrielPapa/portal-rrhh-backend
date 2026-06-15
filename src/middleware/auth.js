@@ -7,7 +7,7 @@ export function requireAuth(req, res, next) {
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'No autenticado' });
   try {
-    req.user = jwt.verify(token, config.jwtSecret); // { id, dni, role, empresa_id }
+    req.user = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] }); // { id, dni, role, empresa_id }
     next();
   } catch {
     return res.status(401).json({ error: 'Token inválido o expirado' });

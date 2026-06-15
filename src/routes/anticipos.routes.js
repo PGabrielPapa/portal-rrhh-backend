@@ -93,6 +93,13 @@ router.patch('/:id', requireRole('manager', 'rrhh', 'admin'), async (req, res, n
   try {
     const { estado, cuotas, cuotaDesde } = req.body || {};
     if (!['aprobado', 'rechazado'].includes(estado)) return res.status(400).json({ error: 'Estado inválido' });
+    // P1 — Un gerente solo resuelve adelantos de SU equipo (organigrama). RR.HH./admin, cualquiera.
+    if (req.user.role === 'manager') {
+      const cur = (await query('SELECT empleado_id FROM anticipos WHERE id=$1', [req.params.id])).rows[0];
+      if (!cur) return res.status(404).json({ error: 'El adelanto no existe' });
+      const ids = await idsEquipoDe(req.user.id);
+      if (!ids.has(cur.empleado_id)) return res.status(403).json({ error: 'Ese adelanto no corresponde a tu equipo.' });
+    }
     if (estado === 'rechazado') {
       const r = await query(`UPDATE anticipos SET estado='rechazado', resuelto_por=$1, resuelto_at=now() WHERE id=$2 AND estado='pendiente' RETURNING id`, [req.user.dni, req.params.id]);
       if (!r.rowCount) return res.status(409).json({ error: 'El adelanto no existe o ya fue resuelto' });

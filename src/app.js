@@ -34,8 +34,11 @@ import familiaresRoutes from './routes/familiares.routes.js';
 
 export function createApp() {
   const app = express();
+  // Detrás del nginx/reverse-proxy: confiar en X-Forwarded-* para IP real (rate-limit) y HTTPS.
+  app.set('trust proxy', 1);
   app.use(helmet());
-  app.use(cors({ origin: config.corsOrigin, credentials: true }));
+  // CORS: si el origen es '*' no se pueden enviar credenciales (regla del navegador).
+  app.use(cors({ origin: config.corsOrigin, credentials: config.corsOrigin !== '*' }));
   app.use(express.json({ limit: '5mb' }));
   app.use(morgan('dev'));
 
