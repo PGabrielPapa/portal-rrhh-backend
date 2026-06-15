@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { idsEquipoDe } from '../lib/equipo.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -12,7 +13,11 @@ router.get('/', async (req, res, next) => {
   try {
     if (puedeAprobar(req.user.role)) {
       const cond = [], params = [];
-      if (req.user.role === 'manager') { params.push(req.user.empresa_id); cond.push(`e.empresa_id = $${params.length}`); }
+      if (req.user.role === 'manager') {
+        const ids = [...await idsEquipoDe(req.user.id)];
+        if (!ids.length) return res.json([]);
+        params.push(ids); cond.push(`a.empleado_id = ANY($${params.length})`);
+      }
       const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
       const { rows } = await query(
         `SELECT a.*, COALESCE(cu.pagadas,0)::int AS cuotas_pagadas, COALESCE(cu.total_pagado,0)::float AS total_pagado,

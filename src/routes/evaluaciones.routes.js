@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { idsEquipoDe } from '../lib/equipo.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -13,7 +14,7 @@ router.get('/', async (req, res, next) => {
       return res.json(rows);
     }
     const { empresa, q } = req.query; const cond = [], params = [];
-    if (req.user.role === 'manager') { params.push(req.user.empresa_id); cond.push(`e.empresa_id = $${params.length}`); }
+    if (req.user.role === 'manager') { const _ids = [...await idsEquipoDe(req.user.id)]; if (!_ids.length) return res.json([]); params.push(_ids); cond.push(`e.id = ANY($${params.length})`); }
     if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
     if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
