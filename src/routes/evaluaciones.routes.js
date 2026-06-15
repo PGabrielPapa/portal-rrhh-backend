@@ -36,6 +36,11 @@ router.post('/', requireRole('manager', 'rrhh', 'admin'), async (req, res, next)
   try {
     const { empleadoId, periodo, tipo, calificacion, comentarios, datos } = req.body || {};
     if (!empleadoId || !periodo) return res.status(400).json({ error: 'empleado y período son obligatorios' });
+    // Un gerente solo evalúa a su equipo (organigrama). RR.HH./admin, a cualquiera.
+    if (req.user.role === 'manager') {
+      const ids = await idsEquipoDe(req.user.id);
+      if (!ids.has(Number(empleadoId))) return res.status(403).json({ error: 'Solo podés evaluar a integrantes de tu equipo.' });
+    }
     // Promedio de la matriz de competencias (1-5) si viene cargada
     let promedio = null, calif = calificacion || null;
     if (datos && datos.items) {

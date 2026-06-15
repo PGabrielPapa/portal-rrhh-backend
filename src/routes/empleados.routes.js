@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query, pool } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { makeUid, dniFromCuil } from '../lib/identity.js';
+import { idsEquipoDe } from '../lib/equipo.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -61,6 +62,24 @@ router.get('/mi-perfil', async (req, res, next) => {
     const { rows } = await query(`${SELECT} WHERE e.id = $1`, [req.user.id]);
     if (!rows[0]) return res.status(404).json({ error: 'Empleado no encontrado' });
     res.json(mapRow(rows[0]));
+  } catch (e) { next(e); }
+});
+
+// GET /api/empleados/equipo — empleados a cargo del gerente según el organigrama
+// (RR.HH./admin reciben todos los activos). Debe ir ANTES de /:id.
+router.get('/equipo', async (req, res, next) => {
+  try {
+    if (req.user.role === 'manager') {
+      const ids = [...await idsEquipoDe(req.user.id)];
+      if (!ids.length) return res.json([]);
+      const { rows } = await query(`${SELECT} WHERE e.id = ANY($1) AND e.activo = true ORDER BY e.nom`, [ids]);
+      return res.json(rows.map(mapRow));
+    }
+    if (['rrhh', 'admin'].includes(req.user.role)) {
+      const { rows } = await query(`${SELECT} WHERE e.activo = true ORDER BY e.nom`);
+      return res.json(rows.map(mapRow));
+    }
+    return res.json([]);
   } catch (e) { next(e); }
 });
 
