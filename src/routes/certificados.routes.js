@@ -63,11 +63,22 @@ router.get('/:id/datos', async (req, res, next) => {
     if (!c) return res.status(404).json({ error: 'No encontrado' });
     if (c.empleado_id !== req.user.id && !gestiona(req.user.role)) return res.status(403).json({ error: 'Sin permiso' });
     const fr = await query("SELECT data->'firmante' AS firmante FROM parametros_liq WHERE id = 1");
+    // Categoría REAL: resolver el código (cat) y el tramo a su descripción según la escala vigente.
+    let categoria = c.cat || '';
+    try {
+      const er = await query('SELECT data FROM escala_versiones ORDER BY vigencia DESC, created_at DESC LIMIT 1');
+      const ed = er.rows[0]?.data || {};
+      const catLabel = (ed.categorias || []).find((x) => x.cat === c.cat)?.label;
+      const tramoLabel = (ed.tramos || []).find((x) => x.key === c.tramo)?.label;
+      categoria = [catLabel || c.cat, tramoLabel || c.tramo].filter(Boolean).join(' — ') || (c.cat || '');
+    } catch { /* si falla, queda el código */ }
     res.json({
+      categoria,
       destinatario: c.destinatario, campos: c.campos, estado: c.estado,
       firmante: fr.rows[0]?.firmante || null,
       empleado: {
         nom: c.nom, dni: c.dni, cuil: c.cuil, legNum: c.leg_num, empresa: c.empresa, cuit: c.cuit, logo: c.logo, firma: c.firma,
+        categoria,
         ingreso: c.ingreso, cat: c.cat, tramo: c.tramo, bruto: Number(c.bruto),
         condicion: c.data?.condicion || '', tarea: c.data?.tarea || '', lugar: c.data?.lugar || '',
       },
