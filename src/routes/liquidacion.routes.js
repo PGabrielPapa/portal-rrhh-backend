@@ -72,27 +72,47 @@ router.get('/costo-equipo', requireRole('manager', 'rrhh', 'admin'), async (req,
     const mes = Number(req.query.mes) || (now.getMonth() + 1);
     if (!ids.length) return res.json({ periodo: { anio, mes }, items: [], totales: { cant: 0, remun: 0, contrib: 0, costo: 0, neto: 0 } });
     const params = await getParams();
-    const pbMap = await presBaseMap();
-    const ganTabla = await ganTablaParaFecha(`${anio}-${String(mes).padStart(2, '0')}-15`);
+    const num = (x) => Number(x) || 0;
+    // Escala unificada vigente: básico por categoría + tramo.
+    const escRow = (await query('SELECT data FROM escala_versiones ORDER BY vigencia DESC, created_at DESC LIMIT 1')).rows[0];
+    const categorias = escRow?.data?.categorias || [];
+    const basicoEscala = (cat, tramo) => {
+      const c = categorias.find((x) => String(x.cat).toUpperCase() === String(cat || '').toUpperCase());
+      const v = c && c.tramos ? c.tramos[tramo] : undefined;
+      return num(v);
+    };
+    // % de contribuciones patronales (sobre la remuneración) + SCVO per cápita fijo.
+    const pctContrib = (num(params.pctJubPatronal) + num(params.pctOsPatronal) + num(params.pctPamiPatronal) + num(params.pctDesempleo) + num(params.pctArt) + num(params.pctSindicatoPatronal)) / 100;
+    const scvo = num(params.scvoPercapita);
+    const pctAntig = num(params.pctAntiguedadPorAnio);
+    const esFC = (emp) => { const cs = String(emp.data?.cod_sindicato || '').toUpperCase(); return !cs || cs === 'FC'; };
+
     const { rows } = await query(
       `SELECT e.id, e.leg_num, e.nom, e.cuil, e.cat, e.tramo, e.ingreso, e.bruto, e.data, em.nombre AS empresa
          FROM empleados e JOIN empresas em ON em.id=e.empresa_id
         WHERE e.id = ANY($1) AND e.activo=true ORDER BY em.nombre, e.nom`, [ids]);
-    const items = []; let tRem = 0, tContrib = 0, tCosto = 0, tNeto = 0;
+    const items = []; let tBasico = 0, tAntig = 0, tRem = 0, tContrib = 0, tCosto = 0;
     for (const r of rows) {
-      const emp = { id: r.id, legNum: r.leg_num, nom: r.nom, empresa: r.empresa, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} };
-      let rec; try { rec = calcularRecibo(emp, params, { anio, mes, tipo: 'mensual', ganTabla, presBase: presBaseDe(pbMap, emp) }); } catch { continue; }
-      const remun = rec.totales.totalHaberes || 0;       // remuneración asignada (bruto del recibo)
-      const contrib = rec.costoEmpleador?.totalContrib || 0;
-      const costo = rec.costoEmpleador?.costoTotal || 0;
-      const neto = rec.totales.neto || 0;
-      tRem += remun; tContrib += contrib; tCosto += costo; tNeto += neto;
+      const emp = { id: r.id, cat: r.cat, tramo: r.tramo, data: r.data || {} };
+      const anios = aniosAntig(r.ingreso, anio, mes);
+      // Básico de la escala unificada (si no está la categoría/tramo, cae al básico cargado del empleado).
+      let basico = basicoEscala(r.cat, r.tramo);
+      if (!basico) basico = num(r.data?.basico) || num(r.data?.sueldo) || 0;
+      const antiguedad = esFC(emp) ? 0 : basico * anios * pctAntig / 100;
+      const remun = basico + antiguedad;                 // básico escala + adicional antigüedad
+      const contrib = remun * pctContrib + scvo;          // contribuciones patronales sobre esa suma
+      const costo = remun + contrib;
+      tBasico += basico; tAntig += antiguedad; tRem += remun; tContrib += contrib; tCosto += costo;
       const nom = String(r.nom || '');
       const apellido = nom.split(',')[0]?.trim() || nom;
       const nombre = nom.split(',')[1]?.trim() || '';
-      items.push({ id: r.id, legNum: r.leg_num, apellido, nombre, empresa: r.empresa, tarea: r.data?.tarea || r.data?.desc_categoria || [r.cat, r.tramo].filter(Boolean).join(' '), ingreso: r.ingreso, antiguedad: aniosAntig(r.ingreso, anio, mes), remun: round2c(remun), contrib: round2c(contrib), costo: round2c(costo), neto: round2c(neto) });
+      items.push({ id: r.id, legNum: r.leg_num, apellido, nombre, empresa: r.empresa,
+        tarea: r.data?.tarea || r.data?.desc_categoria || [r.cat, r.tramo].filter(Boolean).join(' '),
+        ingreso: r.ingreso, antiguedad: anios,
+        basico: round2c(basico), adicAntiguedad: round2c(antiguedad),
+        remun: round2c(remun), contrib: round2c(contrib), costo: round2c(costo) });
     }
-    res.json({ periodo: { anio, mes }, items, totales: { cant: items.length, remun: round2c(tRem), contrib: round2c(tContrib), costo: round2c(tCosto), neto: round2c(tNeto) } });
+    res.json({ periodo: { anio, mes }, items, totales: { cant: items.length, basico: round2c(tBasico), adicAntiguedad: round2c(tAntig), remun: round2c(tRem), contrib: round2c(tContrib), costo: round2c(tCosto) } });
   } catch (e) { next(e); }
 });
 
