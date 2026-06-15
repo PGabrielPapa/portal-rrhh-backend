@@ -22,7 +22,7 @@ router.get('/', async (req, res, next) => {
       const { rows } = await query(
         `SELECT a.*, COALESCE(cu.pagadas,0)::int AS cuotas_pagadas, COALESCE(cu.total_pagado,0)::float AS total_pagado,
                 e.nom, e.leg_num, em.nombre AS empresa, e.bruto::float AS bruto,
-                COALESCE((SELECT r.neto FROM recibos r WHERE r.empleado_id=a.empleado_id ORDER BY r.anio DESC, r.mes DESC LIMIT 1), e.neto)::float AS ultimo_neto
+                COALESCE((SELECT r.neto FROM recibos r WHERE r.empleado_id=a.empleado_id AND r.tipo IN ('mensual','quincenal_1','quincenal_2') ORDER BY r.anio DESC, r.mes DESC LIMIT 1), e.neto)::float AS ultimo_neto
            FROM anticipos a
            LEFT JOIN (SELECT anticipo_id, COUNT(*) AS pagadas, SUM(monto) AS total_pagado FROM anticipo_cuotas GROUP BY anticipo_id) cu ON cu.anticipo_id = a.id
            JOIN empleados e ON e.id = a.empleado_id
@@ -54,6 +54,24 @@ router.post('/', async (req, res, next) => {
     const { motivo } = req.body || {};
     const cuotas = parseInt((req.body || {}).cuotas, 10) || 1;
     if (!(monto > 0)) return res.status(400).json({ error: 'El monto debe ser mayor a 0' });
+    const now = new Date(); const mesActual = now.getMonth() + 1; const anioActual = now.getFullYear();
+    // No se otorgan adelantos en meses de SAC (junio/diciembre) ni el mes siguiente (julio/enero).
+    if ([6, 7, 12, 1].includes(mesActual)) {
+      return res.status(400).json({ error: 'Según el reglamento, no se otorgan adelantos en los meses de SAC (junio y diciembre) ni en el mes siguiente (julio y enero).' });
+    }
+    // Máximo un adelanto por trimestre (no rechazado).
+    const q = Math.floor((mesActual - 1) / 3); const m0 = q * 3 + 1, m1 = q * 3 + 3;
+    const ya = await query(
+      `SELECT 1 FROM anticipos WHERE empleado_id=$1 AND estado <> 'rechazado'
+         AND EXTRACT(YEAR FROM created_at)=$2 AND EXTRACT(MONTH FROM created_at) BETWEEN $3 AND $4 LIMIT 1`,
+      [req.user.id, anioActual, m0, m1]);
+    if (ya.rowCount) return res.status(400).json({ error: 'Ya tenés un adelanto solicitado/aprobado en este trimestre. El reglamento permite un (1) adelanto por trimestre.' });
+    // Cuenta corriente abierta: adelanto aprobado aún no cancelado (cuotas pendientes) → no se otorga otro.
+    const abierto = await query(
+      `SELECT 1 FROM anticipos a LEFT JOIN anticipo_cuotas c ON c.anticipo_id=a.id
+        WHERE a.empleado_id=$1 AND a.estado='aprobado'
+        GROUP BY a.id, a.cuotas HAVING COUNT(c.id) < a.cuotas LIMIT 1`, [req.user.id]);
+    if (abierto.rowCount) return res.status(400).json({ error: 'Tenés un adelanto en curso sin cancelar (cuenta corriente abierta). El reglamento no permite un nuevo adelanto hasta cancelarlo totalmente.' });
     const ins = await query(
       'INSERT INTO anticipos (empleado_id, monto, motivo, cuotas) VALUES ($1,$2,$3,$4) RETURNING *',
       [req.user.id, monto, motivo || null, cuotas]
