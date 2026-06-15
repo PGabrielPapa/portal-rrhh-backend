@@ -69,17 +69,12 @@ router.get('/mi-perfil', async (req, res, next) => {
 // (RR.HH./admin reciben todos los activos). Debe ir ANTES de /:id.
 router.get('/equipo', async (req, res, next) => {
   try {
-    if (req.user.role === 'manager') {
-      const ids = [...await idsEquipoDe(req.user.id)];
-      if (!ids.length) return res.json([]);
-      const { rows } = await query(`${SELECT} WHERE e.id = ANY($1) AND e.activo = true ORDER BY e.nom`, [ids]);
-      return res.json(rows.map(mapRow));
-    }
-    if (['rrhh', 'admin'].includes(req.user.role)) {
-      const { rows } = await query(`${SELECT} WHERE e.activo = true ORDER BY e.nom`);
-      return res.json(rows.map(mapRow));
-    }
-    return res.json([]);
+    // SIEMPRE el subárbol del organigrama del usuario actual (aunque sea rrhh/admin):
+    // esta ruta es para la vista "mi equipo", no para listados globales.
+    const ids = [...await idsEquipoDe(req.user.id)];
+    if (!ids.length) return res.json([]);
+    const { rows } = await query(`${SELECT} WHERE e.id = ANY($1) AND e.activo = true ORDER BY e.nom`, [ids]);
+    res.json(rows.map(mapRow));
   } catch (e) { next(e); }
 });
 
