@@ -48,6 +48,11 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
     const cat = ARTS_CATALOGO.find((a) => a.codigo === artCodigo);
     const alic = [];
     if (alicuotaInicial != null && Number(alicuotaInicial) > 0) alic.push({ desde: fechaInicio || new Date().toISOString().slice(0, 10), pct: Number(alicuotaInicial), nota: 'Inicio contrato' });
+    // Histórico por períodos: al cargar una nueva ART, cerrar el contrato vigente anterior de esa empresa.
+    const cierre = fechaInicio || new Date().toISOString().slice(0, 10);
+    await query(
+      `UPDATE art_contratos SET activo=false, fecha_fin=COALESCE(fecha_fin, $1)
+         WHERE empresa_id=$2 AND activo=true`, [cierre, empresaId]);
     const ins = await query(
       `INSERT INTO art_contratos (empresa_id, art_codigo, art_nombre, nro_contrato, fecha_inicio, fecha_fin, alicuotas)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
