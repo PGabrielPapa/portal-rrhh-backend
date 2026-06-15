@@ -50,25 +50,34 @@ router.post('/', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// PATCH /api/cbus/:id — editar datos / porcentaje (solo propios y activos)
+// PATCH /api/cbus/:id — editar datos / porcentaje (versionado: deja histórico)
+// Cada modificación CIERRA la cuenta vigente (pasa al historial con su rango de
+// vigencia) e inserta una nueva cuenta activa con los datos nuevos.
 router.patch('/:id', async (req, res, next) => {
   try {
     const { banco, alias, titular, porcentaje } = req.body || {};
-    let pct;
-    if (porcentaje !== undefined) {
-      pct = Number(porcentaje);
-      if (!(pct > 0 && pct <= 100)) return res.status(400).json({ error: 'El porcentaje debe estar entre 0,01 y 100' });
-      const suma = await sumaActivos(req.user.id, Number(req.params.id));
-      if (suma + pct > 100.01) return res.status(400).json({ error: `La suma de porcentajes superaría 100% (otras cuentas ${suma}%, disponible ${Math.round((100 - suma) * 100) / 100}%)` });
-    }
-    const r = await query(
-      `UPDATE cbus SET banco=COALESCE($1,banco), alias=COALESCE($2,alias), titular=COALESCE($3,titular), porcentaje=COALESCE($4,porcentaje)
-         WHERE id=$5 AND empleado_id=$6 AND activo=true RETURNING id`,
-      [banco ?? null, alias ?? null, titular ?? null, pct ?? null, req.params.id, req.user.id]
-    );
-    if (!r.rowCount) return res.status(404).json({ error: 'CBU no encontrado o inactivo' });
-    await nov(req.user.id, 'edicion', 'Modificó datos/porcentaje de una cuenta');
-    res.json({ ok: true });
+    const cur = (await query(
+      `SELECT cbu, banco, alias, titular, porcentaje::float AS porcentaje
+         FROM cbus WHERE id=$1 AND empleado_id=$2 AND activo=true`,
+      [req.params.id, req.user.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'CBU no encontrado o inactivo' });
+
+    const nPct = porcentaje !== undefined ? Number(porcentaje) : Number(cur.porcentaje);
+    if (!(nPct > 0 && nPct <= 100)) return res.status(400).json({ error: 'El porcentaje debe estar entre 0,01 y 100' });
+    const suma = await sumaActivos(req.user.id, Number(req.params.id)); // resto de cuentas activas
+    if (suma + nPct > 100.01) return res.status(400).json({ error: `La suma de porcentajes superaría 100% (otras cuentas ${suma}%, disponible ${Math.round((100 - suma) * 100) / 100}%)` });
+
+    const nBanco = banco ?? cur.banco, nAlias = alias ?? cur.alias, nTitular = titular ?? cur.titular;
+    // ¿Cambió algo realmente? Si no, no genera versión.
+    const sinCambios = nPct === Number(cur.porcentaje) && (nBanco ?? null) === (cur.banco ?? null) && (nAlias ?? null) === (cur.alias ?? null) && (nTitular ?? null) === (cur.titular ?? null);
+    if (sinCambios) return res.json({ ok: true, sinCambios: true });
+
+    await query('UPDATE cbus SET activo=false, vigencia_hasta=now() WHERE id=$1 AND empleado_id=$2', [req.params.id, req.user.id]);
+    const ins = await query(
+      'INSERT INTO cbus (empleado_id, cbu, banco, alias, titular, porcentaje) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
+      [req.user.id, cur.cbu, nBanco, nAlias, nTitular, nPct]);
+    await nov(req.user.id, 'edicion', `Modificó la cuenta ****${String(cur.cbu).slice(-4)} (nuevo ${nPct}%)`);
+    res.json({ ok: true, id: ins.rows[0].id });
   } catch (e) { next(e); }
 });
 
