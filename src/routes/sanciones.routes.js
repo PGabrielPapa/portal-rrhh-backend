@@ -37,6 +37,11 @@ router.post('/', requireRole('manager', 'rrhh', 'admin'), async (req, res, next)
   try {
     const { empleadoId, tipo, falta, fecha, dias, descripcion, fechaNotificacion, fechaCumplimiento } = req.body || {};
     if (!empleadoId || !tipo || !fecha) return res.status(400).json({ error: 'empleado, tipo y fecha son obligatorios' });
+    // Un gerente solo sanciona a su equipo (organigrama). RR.HH./admin, a cualquiera.
+    if (req.user.role === 'manager') {
+      const ids = await idsEquipoDe(req.user.id);
+      if (!ids.has(Number(empleadoId))) return res.status(403).json({ error: 'Solo podés registrar sanciones de integrantes de tu equipo.' });
+    }
     const esManager = req.user.role === 'manager';
     const estado = esManager ? 'solicitada' : 'aplicada';
     // RR.HH./admin aplican directo y cargan notificación/cumplimiento; el gerente solo solicita.
