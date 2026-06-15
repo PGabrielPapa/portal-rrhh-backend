@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { query } from '../db.js';
+import { query, pool } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { validarCBU, bancoDesdeCBU } from '../lib/cbu.js';
 
@@ -107,6 +107,46 @@ router.delete('/:id', async (req, res, next) => {
     const r = await query('DELETE FROM cbus WHERE id=$1 AND empleado_id=$2 RETURNING id', [req.params.id, req.user.id]);
     if (!r.rowCount) return res.status(404).json({ error: 'CBU no encontrado' });
     await nov(req.user.id, 'baja', 'Quitó una cuenta');
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// PUT /api/cbus/distribucion — guarda TODA la distribución de cuentas de forma atómica.
+// Regla: las cuentas activas SIEMPRE deben sumar 100% (o quedar 0 cuentas). No persiste si no.
+router.put('/distribucion', async (req, res, next) => {
+  try {
+    const cuentas = Array.isArray((req.body || {}).cuentas) ? req.body.cuentas : [];
+    const norm = []; let suma = 0;
+    for (const c of cuentas) {
+      const v = validarCBU(c.cbu);
+      if (!v.ok) return res.status(400).json({ error: `CBU inválido: ${v.error}` });
+      const pct = Number(c.porcentaje);
+      if (!(pct > 0 && pct <= 100)) return res.status(400).json({ error: 'Cada cuenta debe tener un porcentaje entre 0,01 y 100' });
+      suma += pct;
+      norm.push({ id: c.id ? Number(c.id) : null, cbu: v.cbu, banco: c.banco || v.banco || null, alias: c.alias || null, titular: c.titular || null, pct });
+    }
+    suma = Math.round(suma * 100) / 100;
+    if (norm.length && Math.abs(suma - 100) > 0.01)
+      return res.status(400).json({ error: `La distribución debe sumar exactamente 100% (suma actual: ${suma}%).` });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const ids = norm.filter((n) => n.id).map((n) => n.id);
+      // Las activas que ya no están en la distribución pasan al historial.
+      await client.query(
+        `UPDATE cbus SET activo=false, vigencia_hasta=now() WHERE empleado_id=$1 AND activo=true AND ($2::int[] IS NULL OR NOT (id = ANY($2)))`,
+        [req.user.id, ids.length ? ids : null]);
+      for (const n of norm) {
+        if (n.id) await client.query(
+          `UPDATE cbus SET cbu=$1, banco=$2, alias=$3, titular=$4, porcentaje=$5, activo=true WHERE id=$6 AND empleado_id=$7`,
+          [n.cbu, n.banco, n.alias, n.titular, n.pct, n.id, req.user.id]);
+        else await client.query(
+          `INSERT INTO cbus (empleado_id, cbu, banco, alias, titular, porcentaje) VALUES ($1,$2,$3,$4,$5,$6)`,
+          [req.user.id, n.cbu, n.banco, n.alias, n.titular, n.pct]);
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+    await nov(req.user.id, 'edicion', `Actualizó la distribución de acreditación (${norm.length} cuenta/s, 100%)`);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
