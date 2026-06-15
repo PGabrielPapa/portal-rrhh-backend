@@ -259,6 +259,23 @@ export {
 
 // IDs de empleados a cargo de un gerente según el organigrama (su subárbol completo).
 // empleados: [{ id, nom, lugar, cat, empresa, validador?, areaOrg?, area? }]
+// IDs de los reportes DIRECTOS de un gerente (sus directos + sub-gerentes inmediatos),
+// SIN descender al resto del subárbol.
+export function idsDirectos(empleados, managerNom) {
+  const mi = String(managerNom || '').toUpperCase().trim();
+  if (!mi) return new Set();
+  const nomina = empleados.map((e) => ({ ...e, emp: e.empresa || e.emp }));
+  const { nodos } = construirOrganigrama(nomina);
+  const nodo = nodos[mi];
+  const ids = new Set();
+  if (!nodo) return ids;
+  const idPorNombre = {};
+  for (const e of empleados) idPorNombre[String(e.nom).toUpperCase().trim()] = e.id;
+  for (const d of nodo.directos) if (d.emp && d.emp.id != null) ids.add(d.emp.id);
+  for (const k of Object.keys(nodo.subManagers)) if (idPorNombre[k] != null) ids.add(idPorNombre[k]);
+  return ids;
+}
+
 export function idsACargo(empleados, managerNom) {
   const mi = String(managerNom || '').toUpperCase().trim();
   if (!mi) return new Set();

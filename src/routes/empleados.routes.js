@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { query, pool } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { makeUid, dniFromCuil } from '../lib/identity.js';
-import { idsEquipoDe } from '../lib/equipo.js';
+import { idsEquipoDe, idsDirectosDe } from '../lib/equipo.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -69,9 +69,10 @@ router.get('/mi-perfil', async (req, res, next) => {
 // (RR.HH./admin reciben todos los activos). Debe ir ANTES de /:id.
 router.get('/equipo', async (req, res, next) => {
   try {
-    // SIEMPRE el subárbol del organigrama del usuario actual (aunque sea rrhh/admin):
-    // esta ruta es para la vista "mi equipo", no para listados globales.
-    const ids = [...await idsEquipoDe(req.user.id)];
+    // SIEMPRE el equipo del usuario actual (aunque sea rrhh/admin): es la vista "mi equipo".
+    // ?directos=1 → solo reportes directos; por defecto, todo el subárbol.
+    const soloDirectos = req.query.directos === '1';
+    const ids = [...await (soloDirectos ? idsDirectosDe(req.user.id) : idsEquipoDe(req.user.id))];
     if (!ids.length) return res.json([]);
     const { rows } = await query(`${SELECT} WHERE e.id = ANY($1) AND e.activo = true ORDER BY e.nom`, [ids]);
     res.json(rows.map(mapRow));
