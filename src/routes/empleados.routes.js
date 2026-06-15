@@ -75,6 +75,8 @@ router.get('/cumpleanios', async (req, res, next) => {
     const out = [];
     for (const r of rows) {
       if (r.id === req.user.id) continue;
+      // En IDEE solo se muestran cumpleaños del personal mensualizado.
+      if (/\bIDEE\b/i.test(r.empresa) && !/mensual/i.test(String(r.data?.condicion || ''))) continue;
       const fn = String(r.data?.fecha_nac || '').trim();
       const m = fn.match(/^(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{2,4}))?$/);
       if (!m) continue;
