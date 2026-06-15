@@ -100,6 +100,9 @@ CREATE TABLE IF NOT EXISTS anticipos (
 );
 -- Período (YYYY-MM) de la primera cuota de descuento del anticipo.
 ALTER TABLE anticipos ADD COLUMN IF NOT EXISTS cuota_desde TEXT;
+ALTER TABLE anticipos ADD COLUMN IF NOT EXISTS recomendacion TEXT;       -- favorable | desfavorable (visto bueno del gerente)
+ALTER TABLE anticipos ADD COLUMN IF NOT EXISTS recomendado_por TEXT;
+ALTER TABLE anticipos ADD COLUMN IF NOT EXISTS recomendado_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_anticipos_empleado ON anticipos(empleado_id);
 CREATE INDEX IF NOT EXISTS idx_anticipos_estado ON anticipos(estado);
 

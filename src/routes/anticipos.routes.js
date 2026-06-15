@@ -88,18 +88,30 @@ function proxPeriodo() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-// PATCH /api/anticipos/:id — aprobar/rechazar; al aprobar RR.HH. define cuotas y período (manager/rrhh/admin)
-router.patch('/:id', requireRole('manager', 'rrhh', 'admin'), async (req, res, next) => {
+// PATCH /api/anticipos/:id/recomendacion — el GERENTE da su visto bueno sobre su equipo
+// (recomienda favorable/desfavorable). NO resuelve: la decisión final es de RR.HH.
+router.patch('/:id/recomendacion', requireRole('manager', 'rrhh', 'admin'), async (req, res, next) => {
   try {
-    const { estado, cuotas, cuotaDesde } = req.body || {};
-    if (!['aprobado', 'rechazado'].includes(estado)) return res.status(400).json({ error: 'Estado inválido' });
-    // P1 — Un gerente solo resuelve adelantos de SU equipo (organigrama). RR.HH./admin, cualquiera.
+    const rec = (req.body || {}).recomendacion;
+    if (!['favorable', 'desfavorable'].includes(rec)) return res.status(400).json({ error: 'Recomendación inválida' });
+    const cur = (await query('SELECT empleado_id, estado FROM anticipos WHERE id=$1', [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'El adelanto no existe' });
+    if (cur.estado !== 'pendiente') return res.status(409).json({ error: 'El adelanto ya fue resuelto por RR.HH.' });
     if (req.user.role === 'manager') {
-      const cur = (await query('SELECT empleado_id FROM anticipos WHERE id=$1', [req.params.id])).rows[0];
-      if (!cur) return res.status(404).json({ error: 'El adelanto no existe' });
       const ids = await idsEquipoDe(req.user.id);
       if (!ids.has(cur.empleado_id)) return res.status(403).json({ error: 'Ese adelanto no corresponde a tu equipo.' });
     }
+    await query('UPDATE anticipos SET recomendacion=$1, recomendado_por=$2, recomendado_at=now() WHERE id=$3',
+      [rec, req.user.dni, req.params.id]);
+    res.json({ ok: true, recomendacion: rec });
+  } catch (e) { next(e); }
+});
+
+// PATCH /api/anticipos/:id — OTORGAMIENTO/RECHAZO + cuotas. Decisión final: RR.HH. (admin como superusuario).
+router.patch('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { estado, cuotas, cuotaDesde } = req.body || {};
+    if (!['aprobado', 'rechazado'].includes(estado)) return res.status(400).json({ error: 'Estado inválido' });
     if (estado === 'rechazado') {
       const r = await query(`UPDATE anticipos SET estado='rechazado', resuelto_por=$1, resuelto_at=now() WHERE id=$2 AND estado='pendiente' RETURNING id`, [req.user.dni, req.params.id]);
       if (!r.rowCount) return res.status(409).json({ error: 'El adelanto no existe o ya fue resuelto' });
