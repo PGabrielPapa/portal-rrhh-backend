@@ -62,8 +62,10 @@ router.get('/:id/datos', async (req, res, next) => {
     const c = cr.rows[0];
     if (!c) return res.status(404).json({ error: 'No encontrado' });
     if (c.empleado_id !== req.user.id && !gestiona(req.user.role)) return res.status(403).json({ error: 'Sin permiso' });
+    const fr = await query("SELECT data->'firmante' AS firmante FROM parametros_liq WHERE id = 1");
     res.json({
       destinatario: c.destinatario, campos: c.campos, estado: c.estado,
+      firmante: fr.rows[0]?.firmante || null,
       empleado: {
         nom: c.nom, dni: c.dni, cuil: c.cuil, legNum: c.leg_num, empresa: c.empresa, cuit: c.cuit, logo: c.logo, firma: c.firma,
         ingreso: c.ingreso, cat: c.cat, tramo: c.tramo, bruto: Number(c.bruto),

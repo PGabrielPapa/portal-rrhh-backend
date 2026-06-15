@@ -58,6 +58,12 @@ async function main() {
         }
         console.log('[seed] firma RR.HH. en empresas: ok');
       }
+      // Datos del firmante (nombre/cargo) en parámetros globales, para los documentos.
+      if (firma.nombre) {
+        await client.query("UPDATE parametros_liq SET data = data || $1::jsonb WHERE id = 1",
+          [JSON.stringify({ firmante: { nombre: firma.nombre, cargo: firma.cargo || '' } })]);
+        console.log('[seed] firmante de documentos: ok');
+      }
     } catch (e) { console.warn('[seed] firmas:', e.message); }
 
 
