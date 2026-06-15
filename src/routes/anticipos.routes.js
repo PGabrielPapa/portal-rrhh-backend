@@ -22,7 +22,9 @@ router.get('/', async (req, res, next) => {
       const { rows } = await query(
         `SELECT a.*, COALESCE(cu.pagadas,0)::int AS cuotas_pagadas, COALESCE(cu.total_pagado,0)::float AS total_pagado,
                 e.nom, e.leg_num, em.nombre AS empresa, e.bruto::float AS bruto,
-                COALESCE((SELECT r.neto FROM recibos r WHERE r.empleado_id=a.empleado_id AND r.tipo IN ('mensual','quincenal_1','quincenal_2') ORDER BY r.anio DESC, r.mes DESC LIMIT 1), e.neto)::float AS ultimo_neto
+                COALESCE((SELECT (r.neto - COALESCE((SELECT SUM((h->>'monto')::numeric) FROM jsonb_array_elements(r.data->'haberes') h WHERE h->>'concepto' ILIKE '%SAC%'), 0))
+                            FROM recibos r WHERE r.empleado_id=a.empleado_id AND r.tipo IN ('mensual','quincenal_1','quincenal_2')
+                            ORDER BY r.anio DESC, r.mes DESC LIMIT 1), e.neto)::float AS ultimo_neto
            FROM anticipos a
            LEFT JOIN (SELECT anticipo_id, COUNT(*) AS pagadas, SUM(monto) AS total_pagado FROM anticipo_cuotas GROUP BY anticipo_id) cu ON cu.anticipo_id = a.id
            JOIN empleados e ON e.id = a.empleado_id
