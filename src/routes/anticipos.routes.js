@@ -11,6 +11,9 @@ const puedeAprobar = (role) => ['manager', 'rrhh', 'admin'].includes(role);
 router.get('/', async (req, res, next) => {
   try {
     if (puedeAprobar(req.user.role)) {
+      const cond = [], params = [];
+      if (req.user.role === 'manager') { params.push(req.user.empresa_id); cond.push(`e.empresa_id = $${params.length}`); }
+      const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
       const { rows } = await query(
         `SELECT a.*, COALESCE(cu.pagadas,0)::int AS cuotas_pagadas, COALESCE(cu.total_pagado,0)::float AS total_pagado,
                 e.nom, e.leg_num, em.nombre AS empresa, e.bruto::float AS bruto,
@@ -19,7 +22,8 @@ router.get('/', async (req, res, next) => {
            LEFT JOIN (SELECT anticipo_id, COUNT(*) AS pagadas, SUM(monto) AS total_pagado FROM anticipo_cuotas GROUP BY anticipo_id) cu ON cu.anticipo_id = a.id
            JOIN empleados e ON e.id = a.empleado_id
            JOIN empresas em ON em.id = e.empresa_id
-          ORDER BY (a.estado='pendiente') DESC, a.created_at DESC`
+          ${where}
+          ORDER BY (a.estado='pendiente') DESC, a.created_at DESC`, params
       );
       return res.json(rows);
     }
