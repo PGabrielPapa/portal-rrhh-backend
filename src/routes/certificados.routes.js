@@ -56,7 +56,7 @@ router.patch('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
 router.get('/:id/datos', async (req, res, next) => {
   try {
     const cr = await query(
-      `SELECT c.*, e.leg_num, e.dni, e.cuil, e.nom, e.email, e.cat, e.tramo, e.ingreso, e.bruto, e.data, em.nombre AS empresa, em.cuit, em.logo
+      `SELECT c.*, e.leg_num, e.dni, e.cuil, e.nom, e.email, e.cat, e.tramo, e.ingreso, e.bruto, e.data, em.nombre AS empresa, em.cuit, em.logo, em.firma
          FROM certificados c JOIN empleados e ON e.id = c.empleado_id JOIN empresas em ON em.id = e.empresa_id WHERE c.id = $1`,
       [req.params.id]);
     const c = cr.rows[0];
@@ -65,7 +65,7 @@ router.get('/:id/datos', async (req, res, next) => {
     res.json({
       destinatario: c.destinatario, campos: c.campos, estado: c.estado,
       empleado: {
-        nom: c.nom, dni: c.dni, cuil: c.cuil, legNum: c.leg_num, empresa: c.empresa, cuit: c.cuit, logo: c.logo,
+        nom: c.nom, dni: c.dni, cuil: c.cuil, legNum: c.leg_num, empresa: c.empresa, cuit: c.cuit, logo: c.logo, firma: c.firma,
         ingreso: c.ingreso, cat: c.cat, tramo: c.tramo, bruto: Number(c.bruto),
         condicion: c.data?.condicion || '', tarea: c.data?.tarea || '', lugar: c.data?.lugar || '',
       },
