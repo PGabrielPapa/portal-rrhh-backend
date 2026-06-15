@@ -489,3 +489,14 @@ CREATE TABLE IF NOT EXISTS banco_generaciones (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_banco_gen ON banco_generaciones(banco, created_at DESC);
+
+-- ── Plan de cuentas contables del asiento de sueldos (configurable) ──
+CREATE TABLE IF NOT EXISTS plan_cuentas (
+  id          SERIAL PRIMARY KEY,
+  numero      TEXT NOT NULL,
+  nombre      TEXT NOT NULL,
+  naturaleza  TEXT NOT NULL DEFAULT 'debe',          -- debe | haber
+  componentes JSONB NOT NULL DEFAULT '[]'::jsonb,     -- ['remun','contrib',...]
+  orden       INTEGER NOT NULL DEFAULT 0,
+  activo      BOOLEAN NOT NULL DEFAULT true
+);

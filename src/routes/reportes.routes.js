@@ -57,29 +57,94 @@ router.get('/f931', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Componentes de nómina agrupables en cuentas contables.
+const COMPONENTES = [
+  { key: 'remun', label: 'Haberes remunerativos' },
+  { key: 'norem', label: 'Haberes no remunerativos' },
+  { key: 'neto', label: 'Neto a pagar' },
+  { key: 'aporteJub', label: 'Aporte jubilatorio (trabajador)' },
+  { key: 'aporteOS', label: 'Aporte obra social / ANSSAL (trabajador)' },
+  { key: 'aportePami', label: 'Aporte INSSJP–PAMI (trabajador)' },
+  { key: 'aporteSind', label: 'Aporte sindical (trabajador)' },
+  { key: 'ganancias', label: 'Retención Impuesto a las Ganancias' },
+  { key: 'contrib', label: 'Contribuciones patronales' },
+];
+
+// Siembra el plan de cuentas por defecto la primera vez (replica el asiento clásico).
+async function ensurePlan() {
+  const c = await query('SELECT COUNT(*)::int AS n FROM plan_cuentas');
+  if (c.rows[0].n) return;
+  const def = [
+    ['410100', 'Sueldos y jornales', 'debe', ['remun'], 1],
+    ['410200', 'Sumas no remunerativas', 'debe', ['norem'], 2],
+    ['410300', 'Cargas sociales (contribuciones)', 'debe', ['contrib'], 3],
+    ['210100', 'Sueldos a pagar', 'haber', ['neto'], 4],
+    ['210200', 'Aportes y retenciones a depositar', 'haber', ['aporteJub', 'aporteOS', 'aportePami', 'aporteSind'], 5],
+    ['210300', 'Retención Impuesto a las Ganancias', 'haber', ['ganancias'], 6],
+    ['210400', 'Contribuciones a depositar', 'haber', ['contrib'], 7],
+  ];
+  for (const [numero, nombre, naturaleza, comps, orden] of def)
+    await query('INSERT INTO plan_cuentas (numero,nombre,naturaleza,componentes,orden) VALUES ($1,$2,$3,$4,$5)',
+      [numero, nombre, naturaleza, JSON.stringify(comps), orden]);
+}
+
+// GET /api/reportes/plan-cuentas — plan + catálogo de componentes
+router.get('/plan-cuentas', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    await ensurePlan();
+    const { rows } = await query('SELECT id, numero, nombre, naturaleza, componentes, orden, activo FROM plan_cuentas ORDER BY orden, numero');
+    res.json({ cuentas: rows, componentes: COMPONENTES });
+  } catch (e) { next(e); }
+});
+router.post('/plan-cuentas', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { numero, nombre, naturaleza, componentes, orden } = req.body || {};
+    if (!numero || !nombre || !['debe', 'haber'].includes(naturaleza)) return res.status(400).json({ error: 'Número, nombre y naturaleza (debe/haber) son obligatorios' });
+    const ins = await query('INSERT INTO plan_cuentas (numero,nombre,naturaleza,componentes,orden) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+      [String(numero), String(nombre), naturaleza, JSON.stringify(Array.isArray(componentes) ? componentes : []), Number(orden) || 0]);
+    res.status(201).json({ ok: true, id: ins.rows[0].id });
+  } catch (e) { next(e); }
+});
+router.put('/plan-cuentas/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { numero, nombre, naturaleza, componentes, orden, activo } = req.body || {};
+    const r = await query(
+      `UPDATE plan_cuentas SET numero=COALESCE($1,numero), nombre=COALESCE($2,nombre), naturaleza=COALESCE($3,naturaleza),
+              componentes=COALESCE($4,componentes), orden=COALESCE($5,orden), activo=COALESCE($6,activo) WHERE id=$7 RETURNING id`,
+      [numero ?? null, nombre ?? null, (naturaleza === 'debe' || naturaleza === 'haber') ? naturaleza : null,
+       componentes ? JSON.stringify(componentes) : null, orden != null ? Number(orden) : null, activo, req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Cuenta no encontrada' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+router.delete('/plan-cuentas/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM plan_cuentas WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Cuenta no encontrada' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 // GET /api/reportes/asiento  (asiento contable por empresa)
 router.get('/asiento', async (req, res, next) => {
   try {
     const rows = await recibosPeriodo(req.query.anio, req.query.mes, req.query.empresa);
+    await ensurePlan();
+    const plan = (await query('SELECT numero, nombre, naturaleza, componentes FROM plan_cuentas WHERE activo=true ORDER BY orden, numero')).rows;
     const porEmpresa = {};
     for (const r of rows) {
       const t = r.data?.totales || {}, d = r.data?.descuentos || [], ce = r.data?.costoEmpleador || {};
-      const e = porEmpresa[r.empresa] || (porEmpresa[r.empresa] = { remun: 0, noRem: 0, neto: 0, aportes: 0, contrib: 0, ganancias: 0 });
-      e.remun += Number(t.totalRemun || 0); e.noRem += Number(t.totalNoRem || 0); e.neto += Number(t.neto || 0);
-      e.aportes += aporteDe(d, /Jubilación|Obra Social|ANSSAL|INSSJP|Cuota sindical/i);
-      e.ganancias += aporteDe(d, /Ganancias/i);
-      e.contrib += Number(ce.totalContrib || 0);
+      const e = porEmpresa[r.empresa] || (porEmpresa[r.empresa] = { remun: 0, norem: 0, neto: 0, aporteJub: 0, aporteOS: 0, aportePami: 0, aporteSind: 0, ganancias: 0, contrib: 0 });
+      e.remun += Number(t.totalRemun || 0); e.norem += Number(t.totalNoRem || 0); e.neto += Number(t.neto || 0);
+      e.aporteJub += aporteDe(d, /Jubilación/i); e.aporteOS += aporteDe(d, /Obra Social|ANSSAL/i);
+      e.aportePami += aporteDe(d, /INSSJP|PAMI/i); e.aporteSind += aporteDe(d, /sindical/i);
+      e.ganancias += aporteDe(d, /Ganancias/i); e.contrib += Number(ce.totalContrib || 0);
     }
     const asientos = Object.entries(porEmpresa).map(([empresa, e]) => {
-      const lineas = [
-        { cuenta: 'Sueldos y jornales', debe: r2(e.remun), haber: 0 },
-        { cuenta: 'Sumas no remunerativas', debe: r2(e.noRem), haber: 0 },
-        { cuenta: 'Cargas sociales (contribuciones)', debe: r2(e.contrib), haber: 0 },
-        { cuenta: 'Sueldos a pagar', debe: 0, haber: r2(e.neto) },
-        { cuenta: 'Aportes y retenciones a depositar', debe: 0, haber: r2(e.aportes) },
-        { cuenta: 'Retención Impuesto a las Ganancias', debe: 0, haber: r2(e.ganancias) },
-        { cuenta: 'Contribuciones a depositar', debe: 0, haber: r2(e.contrib) },
-      ].filter((l) => l.debe !== 0 || l.haber !== 0);
+      const lineas = plan.map((c) => {
+        const monto = r2((c.componentes || []).reduce((s, k) => s + Number(e[k] || 0), 0));
+        return { numero: c.numero, cuenta: c.nombre, debe: c.naturaleza === 'debe' ? monto : 0, haber: c.naturaleza === 'haber' ? monto : 0 };
+      }).filter((l) => l.debe !== 0 || l.haber !== 0);
       const totalDebe = r2(lineas.reduce((s, l) => s + l.debe, 0));
       const totalHaber = r2(lineas.reduce((s, l) => s + l.haber, 0));
       return { empresa, lineas, totalDebe, totalHaber, balanceado: Math.abs(totalDebe - totalHaber) < 0.5 };
