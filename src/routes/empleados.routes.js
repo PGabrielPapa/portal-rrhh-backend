@@ -155,12 +155,17 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
 router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const b = req.body || {};
-    const fields = { nom: b.nom, email: b.email, cat: b.cat, tramo: b.tramo,
+    // Columnas núcleo editables (identidad empresa+legajo+dni NO se cambia acá).
+    const fields = { nom: b.nom, email: b.email, cat: b.cat, tramo: b.tramo, cuil: b.cuil,
       ingreso: b.ingreso, bruto: b.bruto, neto: b.neto };
     const sets = [], params = [];
     for (const [k, v] of Object.entries(fields)) {
-      if (v !== undefined) { params.push(k === 'nom' ? String(v).toUpperCase() : v); sets.push(`${k} = $${params.length}`); }
+      if (v !== undefined) { params.push(k === 'nom' ? String(v).toUpperCase() : (v === '' ? null : v)); sets.push(`${k} = $${params.length}`); }
     }
+    // Resto de campos (domicilio, tarea, sindicato, básico, etc.) → se mergean en data jsonb.
+    const exclude = ['empresa', 'legNum', 'leg', 'dni', 'cuil', 'nom', 'email', 'cat', 'tramo', 'ingreso', 'bruto', 'neto', 'role', 'id', 'uid', 'empresaId', 'activo', 'esAlta'];
+    const data = {}; for (const k of Object.keys(b)) if (!exclude.includes(k)) data[k] = b[k];
+    if (Object.keys(data).length) { params.push(JSON.stringify(data)); sets.push(`data = data || $${params.length}::jsonb`); }
     if (!sets.length) return res.status(400).json({ error: 'Nada para actualizar' });
     params.push(req.params.id);
     await query(`UPDATE empleados SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
