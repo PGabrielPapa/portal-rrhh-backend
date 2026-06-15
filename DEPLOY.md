@@ -5,7 +5,23 @@ Dos repos: `portal-rrhh-backend` (este) y `portal-rrhh-frontend`.
 
 ---
 
-## Opción A — Droplet con Docker (recomendada, todo en un servidor)
+## Opción A — Despliegue en UN comando (recomendada)
+
+Requisitos que hacés vos: un droplet **Ubuntu** con puertos **80/443** abiertos y un registro **DNS A** de tu dominio apuntando a la IP del droplet.
+
+Después, en el droplet (como root), un solo comando hace todo (instala Docker, clona, genera secretos y levanta con HTTPS):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PGabrielPapa/portal-rrhh-backend/main/deploy.sh | bash -s rrhh.tu-dominio.com
+```
+
+Cuando termina: `https://tu-dominio` (la 1ª carga tarda unos segundos mientras Caddy emite el certificado). Los secretos generados quedan en `~/portal-rrhh-backend/.env`.
+
+Para actualizar a una nueva versión, volvé a correr el mismo comando (respeta tu `.env` y los datos del volumen Postgres).
+
+---
+
+## Opción A (manual, paso a paso)
 
 1. **Crear el Droplet**: Ubuntu 22.04/24.04 (imagen "Docker" del Marketplace si está; si no, Ubuntu común e instalás Docker con `curl -fsSL https://get.docker.com | sh`). Mínimo 2 GB RAM.
 
