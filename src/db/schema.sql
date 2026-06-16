@@ -500,3 +500,43 @@ CREATE TABLE IF NOT EXISTS plan_cuentas (
   orden       INTEGER NOT NULL DEFAULT 0,
   activo      BOOLEAN NOT NULL DEFAULT true
 );
+
+-- ── Fichadas importadas desde Pro-Soft (Reporte Marcas Extendido) ──
+-- Novedades de asistencia consolidadas por empleado y período. El cruce con
+-- Pro-Soft es por legajo (allá sin ceros a la izquierda; acá leg_num zero-pad).
+-- En esta etapa las horas extra son INFORMATIVAS (no entran a la liquidación).
+CREATE TABLE IF NOT EXISTS fichadas_periodo (
+  id            SERIAL PRIMARY KEY,
+  empleado_id   INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  anio          INTEGER NOT NULL,
+  mes           INTEGER NOT NULL,
+  -- { diasTrabajados, horasExtra50Min, horasExtra100Min, tardanzasMin,
+  --   hsNetasMin, diasARevisar:[{fecha,motivo}], legajoProsoft, empresaProsoft }
+  data          JSONB NOT NULL DEFAULT '{}'::jsonb,
+  origen        TEXT NOT NULL DEFAULT 'prosoft-extendido',
+  importado_por TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_fichadas_emp_periodo UNIQUE (empleado_id, anio, mes)
+);
+CREATE INDEX IF NOT EXISTS idx_fichadas_periodo ON fichadas_periodo(anio, mes);
+
+DROP TRIGGER IF EXISTS trg_fichadas_updated ON fichadas_periodo;
+CREATE TRIGGER trg_fichadas_updated BEFORE UPDATE ON fichadas_periodo
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Log de cada importación (auditoría): cuántos cruzaron, sin match, a revisar.
+CREATE TABLE IF NOT EXISTS fichadas_importaciones (
+  id            SERIAL PRIMARY KEY,
+  anio          INTEGER NOT NULL,
+  mes           INTEGER NOT NULL,
+  archivo       TEXT,
+  filas         INTEGER NOT NULL DEFAULT 0,
+  legajos       INTEGER NOT NULL DEFAULT 0,
+  matcheados    INTEGER NOT NULL DEFAULT 0,
+  sin_match     INTEGER NOT NULL DEFAULT 0,
+  importado_por TEXT,
+  detalle       JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_fichadas_imp ON fichadas_importaciones(anio, mes, created_at DESC);
