@@ -58,6 +58,17 @@ async function main() {
         }
         console.log('[seed] firma RR.HH. en empresas: ok');
       }
+      // CUIT por empresa (idempotente: solo donde no haya CUIT, no pisa cargas manuales).
+      try {
+        const cuits = JSON.parse(fs.readFileSync(path.join(dataDir, 'empresas_cuit.seed.json'), 'utf8'));
+        const norm = (x) => String(x || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+        for (const [nombre, cuit] of Object.entries(cuits)) {
+          await client.query(
+            `UPDATE empresas SET cuit=$1 WHERE (cuit IS NULL OR cuit='') AND (upper(regexp_replace(nombre,'[^A-Za-z0-9]','','g'))=$2 OR ($3='IDEE' AND nombre ILIKE 'IDEE%'))`,
+            [cuit, norm(nombre), norm(nombre)]);
+        }
+        console.log('[seed] CUIT de empresas: ok');
+      } catch (e) { console.warn('[seed] cuit empresas:', e.message); }
       // Datos del firmante (nombre/cargo) en parámetros globales, para los documentos.
       if (firma.nombre) {
         await client.query("UPDATE parametros_liq SET data = data || $1::jsonb WHERE id = 1",
