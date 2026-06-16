@@ -23,7 +23,7 @@ router.get('/', async (req, res, next) => {
     if (estado) { params.push(estado); cond.push(`c.estado=$${params.length}`); }
     if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
-    const { rows } = await query(`SELECT c.*, e.nom, e.leg_num, em.nombre AS empresa FROM cambios_domicilio c JOIN empleados e ON e.id=c.empleado_id JOIN empresas em ON em.id=e.empresa_id ${where} ORDER BY (c.estado='pendiente') DESC, c.created_at DESC`, params);
+    const { rows } = await query(`SELECT c.*, e.nom, e.leg_num, em.nombre AS empresa FROM cambios_domicilio c JOIN empleados e ON e.id=c.empleado_id JOIN empresas em ON em.id=e.empresa_id ${where} ORDER BY COALESCE(c.resuelto_at, c.created_at) DESC`, params);
     res.json(rows);
   } catch (e) { next(e); }
 });
