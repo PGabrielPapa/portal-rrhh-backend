@@ -160,6 +160,39 @@ async function main() {
       console.log(`[seed] convenios: ${convs.length}`);
     } catch (e) { console.warn('[seed] convenios:', e.message); }
 
+    // Escalas a JUNIO 2026 (idempotente: solo crea la versión jun-2026 si no existe).
+    // Aplica el incremento sobre la escala vigente y CONSERVA los montos no remunerativos.
+    try {
+      const incJun2026 = { SEC: 1.5, UOCRA: 2.1, UECARA: 2.1, UOYEP: 1.0, UOM: 0 };
+      const notaJun = {
+        SEC: 'Junio 2026: +1,5% (escalonado abr–jun, hom. 27/04/2026). NR vigentes.',
+        UOCRA: 'Junio 2026: +2,1% s/básicos al 31/05 (acumulado 6,12% jun–ago). NR Zona A vigentes.',
+        UECARA: 'Junio 2026: +2,1% s/básicos al 31/05 (+ absorción parcial de NR de mayo).',
+        UOYEP: 'Junio 2026: +1% (tramo jun–ago del acuerdo mar–ago).',
+        UOM: 'Junio 2026: sin cambios (paritaria congelada por intervención judicial; se liquida igual que abril).',
+      };
+      for (const [codigo, pct] of Object.entries(incJun2026)) {
+        const ya = await client.query("SELECT 1 FROM convenio_versiones WHERE codigo=$1 AND vigencia='2026-06-01' LIMIT 1", [codigo]);
+        if (ya.rowCount) continue;
+        const cv = await client.query('SELECT data FROM convenios WHERE codigo=$1', [codigo]);
+        if (!cv.rows[0]) continue;
+        const d = cv.rows[0].data || {};
+        const factor = 1 + Number(pct) / 100;
+        const tablas = (d.tablas || []).map((t) => ({ ...t, cats: (t.cats || []).map((c) => {
+          const o = { ...c };
+          if (typeof c.basico === 'number') o.basico = Math.round(c.basico * factor);
+          if (typeof c.valorHora === 'number') o.valorHora = Math.round(c.valorHora * factor * 100) / 100;
+          return o;
+        }) }));
+        const data = { acuerdo: notaJun[codigo] || `Actualización junio 2026 (+${pct}%)`, mesLabel: 'Junio 2026', tablas, adicionales: d.adicionales || [], noRemunerativos: d.noRemunerativos || [] };
+        await client.query(
+          "INSERT INTO convenio_versiones (codigo, vigencia, mes_label, origen, porcentaje, comentario, data) VALUES ($1,'2026-06-01','Junio 2026','porcentaje',$2,$3,$4)",
+          [codigo, pct, `Escala junio 2026 (+${pct}% sobre la vigente)`, JSON.stringify(data)]);
+        await client.query("UPDATE convenios SET vigencia='2026-06-01', data=$2, updated_at=now() WHERE codigo=$1", [codigo, JSON.stringify(data)]);
+      }
+      console.log('[seed] escalas junio 2026: ok');
+    } catch (e) { console.warn('[seed] escalas jun 2026:', e.message); }
+
     // Parámetros de Ganancias — período inicial (solo si no hay ninguno)
     try {
       const gex = await client.query('SELECT 1 FROM ganancias_periodos LIMIT 1');
