@@ -270,6 +270,7 @@ CREATE TABLE IF NOT EXISTS elementos_trabajo (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_elem_empleado ON elementos_trabajo(empleado_id);
+ALTER TABLE elementos_trabajo ADD COLUMN IF NOT EXISTS data JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 -- ── Beneficios por empleado ──
 CREATE TABLE IF NOT EXISTS beneficios (

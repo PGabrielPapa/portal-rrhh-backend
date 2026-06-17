@@ -21,8 +21,9 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.empleadoId || !b.tipo) return res.status(400).json({ error: 'empleado y tipo son obligatorios' });
-    const r = await query('INSERT INTO elementos_trabajo (empleado_id,tipo,descripcion,identificador,estado,fecha_entrega,observaciones,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
-      [b.empleadoId, b.tipo, b.descripcion || null, b.identificador || null, 'entregado', b.fechaEntrega || null, b.observaciones || null, req.user.dni]);
+    const data = { numeroChip: b.numeroChip || null, empresaChip: b.empresaChip || null };
+    const r = await query('INSERT INTO elementos_trabajo (empleado_id,tipo,descripcion,identificador,estado,fecha_entrega,observaciones,created_by,data) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
+      [b.empleadoId, b.tipo, b.descripcion || null, b.identificador || null, 'entregado', b.fechaEntrega || null, b.observaciones || null, req.user.dni, JSON.stringify(data)]);
     res.status(201).json({ ok: true, id: r.rows[0].id });
   } catch (e) { next(e); }
 });
