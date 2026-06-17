@@ -155,24 +155,71 @@ router.get('/asiento', async (req, res, next) => {
 
 const contribDe = (cm, re) => (cm || []).filter((c) => re.test(c.concepto)).reduce((s, c) => s + Number(c.monto || 0), 0);
 
-// GET /api/reportes/ddjj-sindical?anio=&mes=&empresa=  (cuotas por sindicato)
+// Diseño de registro vigente (lazy v1) por sindicato + jurisdicción.
+async function ensureDdjjDiseno(sind, jur) {
+  let r = await query('SELECT id, version, actualizado_at, descripcion FROM ddjj_disenos WHERE sindicato=$1 AND jurisdiccion=$2', [sind, jur]);
+  if (!r.rows[0]) {
+    await query('INSERT INTO ddjj_disenos (sindicato, jurisdiccion, descripcion) VALUES ($1,$2,$3) ON CONFLICT (sindicato, jurisdiccion) DO NOTHING',
+      [sind, jur, `Diseño de registro inicial — ${sind} / ${jur}`]);
+    r = await query('SELECT id, version, actualizado_at, descripcion FROM ddjj_disenos WHERE sindicato=$1 AND jurisdiccion=$2', [sind, jur]);
+  }
+  return r.rows[0];
+}
+
+// GET /api/reportes/ddjj-sindical?anio=&mes=&empresa=  (cuotas por sindicato + jurisdicción, con diseño vigente)
 router.get('/ddjj-sindical', async (req, res, next) => {
   try {
     const rows = await recibosPeriodo(req.query.anio, req.query.mes, req.query.empresa);
     const grupos = {};
     for (const r of rows) {
       const sind = String(r.edata?.cod_sindicato || '').toUpperCase().trim() || 'SIN CONVENIO / FC';
+      const jur = String(r.edata?.lugar || '').trim() || 'Sin lugar declarado';
+      const key = sind + ' || ' + jur;
       const cuotaEmp = aporteDe(r.data?.descuentos, /Cuota sindical/i);
       const cuotaPat = contribDe(r.data?.costoEmpleador?.contribuciones, /sindical/i);
       const baseRem = Number(r.data?.totales?.totalRemun || 0);
-      const g = grupos[sind] || (grupos[sind] = { sindicato: sind, items: [], totales: { baseRem: 0, cuotaEmp: 0, cuotaPat: 0, total: 0 } });
+      const g = grupos[key] || (grupos[key] = { sindicato: sind, jurisdiccion: jur, items: [], totales: { baseRem: 0, cuotaEmp: 0, cuotaPat: 0, total: 0 } });
       g.items.push({ legNum: r.leg_num, nom: r.nom, cuil: r.cuil, empresa: r.empresa, baseRem: r2(baseRem), cuotaEmp: r2(cuotaEmp), cuotaPat: r2(cuotaPat), total: r2(cuotaEmp + cuotaPat) });
       g.totales.baseRem += baseRem; g.totales.cuotaEmp += cuotaEmp; g.totales.cuotaPat += cuotaPat; g.totales.total += cuotaEmp + cuotaPat;
     }
-    const out = Object.values(grupos).map((g) => ({ ...g, totales: { baseRem: r2(g.totales.baseRem), cuotaEmp: r2(g.totales.cuotaEmp), cuotaPat: r2(g.totales.cuotaPat), total: r2(g.totales.total) } }))
-      .sort((a, b) => a.sindicato.localeCompare(b.sindicato));
+    const out = [];
+    for (const g of Object.values(grupos)) {
+      const d = await ensureDdjjDiseno(g.sindicato, g.jurisdiccion);
+      const last = (await query('SELECT version_diseno, created_at FROM ddjj_generaciones WHERE sindicato=$1 AND jurisdiccion=$2 ORDER BY created_at DESC LIMIT 1', [g.sindicato, g.jurisdiccion])).rows[0] || null;
+      out.push({
+        ...g,
+        totales: { baseRem: r2(g.totales.baseRem), cuotaEmp: r2(g.totales.cuotaEmp), cuotaPat: r2(g.totales.cuotaPat), total: r2(g.totales.total) },
+        diseno: { id: d.id, version: d.version, actualizadoAt: d.actualizado_at, descripcion: d.descripcion,
+                  ultimaVersion: last ? last.version_diseno : null, ultimaFecha: last ? last.created_at : null,
+                  primeraVez: !last, actualizado: last ? (d.version > last.version_diseno) : false },
+      });
+    }
+    out.sort((a, b) => a.sindicato.localeCompare(b.sindicato) || a.jurisdiccion.localeCompare(b.jurisdiccion));
     const tot = out.reduce((a, g) => ({ cuotaEmp: a.cuotaEmp + g.totales.cuotaEmp, cuotaPat: a.cuotaPat + g.totales.cuotaPat, total: a.total + g.totales.total }), { cuotaEmp: 0, cuotaPat: 0, total: 0 });
     res.json({ grupos: out, totales: { cuotaEmp: r2(tot.cuotaEmp), cuotaPat: r2(tot.cuotaPat), total: r2(tot.total) } });
+  } catch (e) { next(e); }
+});
+
+// PATCH /api/reportes/ddjj-disenos/:id — registrar actualización del diseño (bump versión)
+router.patch('/ddjj-disenos/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { descripcion } = req.body || {};
+    const r = await query(`UPDATE ddjj_disenos SET descripcion=COALESCE($1,descripcion), version=version+1, actualizado_por=$2, actualizado_at=now() WHERE id=$3 RETURNING *`,
+      [descripcion || null, req.user.dni, req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Diseño no encontrado' });
+    res.json(r.rows[0]);
+  } catch (e) { next(e); }
+});
+
+// POST /api/reportes/ddjj-generar — registra que se generó la DDJJ/boleta con el diseño vigente
+router.post('/ddjj-generar', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { sindicato, jurisdiccion, anio, mes } = req.body || {};
+    if (!sindicato || !jurisdiccion) return res.status(400).json({ error: 'sindicato y jurisdicción son obligatorios' });
+    const d = await ensureDdjjDiseno(String(sindicato), String(jurisdiccion));
+    await query('INSERT INTO ddjj_generaciones (sindicato, jurisdiccion, version_diseno, anio, mes, created_by) VALUES ($1,$2,$3,$4,$5,$6)',
+      [sindicato, jurisdiccion, d.version, Number(anio) || null, Number(mes) || null, req.user.dni]);
+    res.json({ ok: true, version: d.version });
   } catch (e) { next(e); }
 });
 

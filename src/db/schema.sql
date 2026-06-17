@@ -540,3 +540,22 @@ CREATE TABLE IF NOT EXISTS fichadas_importaciones (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_fichadas_imp ON fichadas_importaciones(anio, mes, created_at DESC);
+
+-- ── DDJJ sindical: diseños de registro versionados por sindicato + jurisdicción ──
+CREATE TABLE IF NOT EXISTS ddjj_disenos (
+  id SERIAL PRIMARY KEY,
+  sindicato TEXT NOT NULL,
+  jurisdiccion TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  descripcion TEXT,
+  actualizado_por TEXT,
+  actualizado_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (sindicato, jurisdiccion)
+);
+CREATE TABLE IF NOT EXISTS ddjj_generaciones (
+  id SERIAL PRIMARY KEY,
+  sindicato TEXT NOT NULL, jurisdiccion TEXT NOT NULL,
+  version_diseno INTEGER NOT NULL, anio INTEGER, mes INTEGER,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_ddjj_gen ON ddjj_generaciones(sindicato, jurisdiccion, created_at DESC);
