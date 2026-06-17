@@ -163,13 +163,14 @@ async function main() {
     // Escalas a JUNIO 2026 (idempotente: solo crea la versión jun-2026 si no existe).
     // Aplica el incremento sobre la escala vigente y CONSERVA los montos no remunerativos.
     try {
-      const incJun2026 = { SEC: 1.5, UOCRA: 2.1, UECARA: 2.1, UOYEP: 1.0, UOM: 0 };
+      const incJun2026 = { SEC: 1.5, UOCRA: 2.1, UECARA: 2.1, UOYEP: 1.0, UOM: 0, ASIMRA: 0 };
       const notaJun = {
         SEC: 'Junio 2026: +1,5% (escalonado abr–jun, hom. 27/04/2026). NR vigentes.',
         UOCRA: 'Junio 2026: +2,1% s/básicos al 31/05 (acumulado 6,12% jun–ago). NR Zona A vigentes.',
         UECARA: 'Junio 2026: +2,1% s/básicos al 31/05 (+ absorción parcial de NR de mayo).',
         UOYEP: 'Junio 2026: +1% (tramo jun–ago del acuerdo mar–ago).',
         UOM: 'Junio 2026: sin cambios (paritaria congelada por intervención judicial; se liquida igual que abril).',
+        ASIMRA: 'Junio 2026: sin acuerdo confirmado (sector metalúrgico sin paritaria nueva). Sin cambios hasta nuevo acuerdo homologado.',
       };
       for (const [codigo, pct] of Object.entries(incJun2026)) {
         const ya = await client.query("SELECT 1 FROM convenio_versiones WHERE codigo=$1 AND vigencia='2026-06-01' LIMIT 1", [codigo]);
