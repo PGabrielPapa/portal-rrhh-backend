@@ -59,4 +59,48 @@ router.post('/', requireRole('manager', 'rrhh', 'admin'), async (req, res, next)
   } catch (e) { next(e); }
 });
 
+// ── Período anual de evaluación (lo abre RR.HH., típicamente en octubre) ──
+router.get('/periodo', async (req, res, next) => {
+  try { const { rows } = await query("SELECT anio, abierto, abierto_at, cerrado_at FROM evaluacion_periodos WHERE tipo='anual' ORDER BY anio DESC LIMIT 1"); res.json(rows[0] || null); }
+  catch (e) { next(e); }
+});
+router.post('/periodo', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const anio = Number((req.body || {}).anio) || new Date().getFullYear();
+    await query(`INSERT INTO evaluacion_periodos (anio, tipo, abierto, abierto_por, abierto_at) VALUES ($1,'anual',true,$2,now())
+       ON CONFLICT (anio) DO UPDATE SET abierto=true, abierto_por=$2, abierto_at=now(), cerrado_por=NULL, cerrado_at=NULL`, [anio, req.user.dni]);
+    res.json({ ok: true, anio, abierto: true });
+  } catch (e) { next(e); }
+});
+router.patch('/periodo/:anio/cerrar', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const r = await query("UPDATE evaluacion_periodos SET abierto=false, cerrado_por=$1, cerrado_at=now() WHERE anio=$2 RETURNING anio", [req.user.dni, req.params.anio]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Período no encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ── Pendientes del gerente: período anual abierto + recordatorios de período de prueba (60/120/170 días) ──
+router.get('/pendientes', requireRole('manager', 'rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const ids = [...await idsEquipoDe(req.user.id)];
+    const anual = (await query("SELECT anio, abierto FROM evaluacion_periodos WHERE tipo='anual' AND abierto=true ORDER BY anio DESC LIMIT 1")).rows[0] || null;
+    if (!ids.length) return res.json({ anual, equipoCount: 0, prueba: [] });
+    const emps = (await query("SELECT id, nom, leg_num, ingreso FROM empleados WHERE id = ANY($1) AND activo=true AND ingreso IS NOT NULL", [ids])).rows;
+    const evs = (await query("SELECT empleado_id, periodo FROM evaluaciones WHERE empleado_id = ANY($1) AND tipo ILIKE '%prueba%'", [ids])).rows;
+    const hoy = new Date(); const hitos = [60, 120, 170]; const prueba = [];
+    for (const e of emps) {
+      const dias = Math.floor((hoy - new Date(String(e.ingreso).slice(0, 10) + 'T00:00:00')) / 86400000);
+      for (const h of hitos) {
+        if (dias >= h) {
+          const evaluado = evs.some((v) => v.empleado_id === e.id && String(v.periodo || '').includes(String(h)));
+          if (!evaluado) prueba.push({ id: e.id, nom: e.nom, legNum: e.leg_num, ingreso: e.ingreso, dias, hito: h });
+        }
+      }
+    }
+    prueba.sort((a, b) => b.dias - a.dias);
+    res.json({ anual, equipoCount: emps.length, prueba });
+  } catch (e) { next(e); }
+});
+
 export default router;

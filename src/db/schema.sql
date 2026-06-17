@@ -560,3 +560,13 @@ CREATE TABLE IF NOT EXISTS ddjj_generaciones (
   created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_ddjj_gen ON ddjj_generaciones(sindicato, jurisdiccion, created_at DESC);
+
+-- ── Períodos de evaluación de desempeño (los abre RR.HH., típicamente en octubre) ──
+CREATE TABLE IF NOT EXISTS evaluacion_periodos (
+  id SERIAL PRIMARY KEY,
+  anio INTEGER NOT NULL UNIQUE,
+  tipo TEXT NOT NULL DEFAULT 'anual',
+  abierto BOOLEAN NOT NULL DEFAULT true,
+  abierto_por TEXT, abierto_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  cerrado_por TEXT, cerrado_at TIMESTAMPTZ
+);
