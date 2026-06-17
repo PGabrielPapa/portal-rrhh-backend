@@ -57,6 +57,44 @@ router.get('/f931', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── Diseño de registro SICOSS (F.931) versionado — verificación previa a generar ──
+async function ensureSicoss() {
+  await query(
+    `INSERT INTO sicoss_diseno (id, version, descripcion, url_arca) VALUES (1,1,$1,$2) ON CONFLICT (id) DO NOTHING`,
+    ['Diseño de registro SICOSS (ARCA/AFIP) — versión inicial', 'https://www.afip.gob.ar/aportes-y-contribuciones-de-seguridad-social/']);
+}
+// GET /api/reportes/sicoss-diseno — versión vigente + ¿cambió desde la última generación?
+router.get('/sicoss-diseno', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    await ensureSicoss();
+    const d = (await query('SELECT version, descripcion, url_arca, actualizado_at FROM sicoss_diseno WHERE id=1')).rows[0];
+    const last = (await query('SELECT version_diseno, created_at FROM sicoss_generaciones ORDER BY created_at DESC LIMIT 1')).rows[0] || null;
+    res.json({ version: d.version, descripcion: d.descripcion, urlArca: d.url_arca, actualizadoAt: d.actualizado_at,
+      ultimaVersion: last ? last.version_diseno : null, ultimaFecha: last ? last.created_at : null,
+      primeraVez: !last, actualizado: last ? (d.version > last.version_diseno) : false });
+  } catch (e) { next(e); }
+});
+// PATCH /api/reportes/sicoss-diseno — registrar nueva versión del diseño (cuando ARCA lo actualiza)
+router.patch('/sicoss-diseno', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    await ensureSicoss();
+    const { descripcion, urlArca } = req.body || {};
+    const r = await query(`UPDATE sicoss_diseno SET descripcion=COALESCE($1,descripcion), url_arca=COALESCE($2,url_arca), version=version+1, actualizado_por=$3, actualizado_at=now() WHERE id=1 RETURNING *`,
+      [descripcion || null, urlArca || null, req.user.dni]);
+    res.json(r.rows[0]);
+  } catch (e) { next(e); }
+});
+// POST /api/reportes/f931-generar — registra la generación con el diseño vigente
+router.post('/f931-generar', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    await ensureSicoss();
+    const d = (await query('SELECT version FROM sicoss_diseno WHERE id=1')).rows[0];
+    const { anio, mes } = req.body || {};
+    await query('INSERT INTO sicoss_generaciones (version_diseno, anio, mes, created_by) VALUES ($1,$2,$3,$4)', [d.version, Number(anio) || null, Number(mes) || null, req.user.dni]);
+    res.json({ ok: true, version: d.version });
+  } catch (e) { next(e); }
+});
+
 // Componentes de nómina agrupables en cuentas contables.
 const COMPONENTES = [
   { key: 'remun', label: 'Haberes remunerativos' },

@@ -570,3 +570,18 @@ CREATE TABLE IF NOT EXISTS evaluacion_periodos (
   abierto_por TEXT, abierto_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   cerrado_por TEXT, cerrado_at TIMESTAMPTZ
 );
+
+-- ── F.931 / SICOSS: diseño de registro versionado (ARCA) + log de generaciones ──
+CREATE TABLE IF NOT EXISTS sicoss_diseno (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1,
+  descripcion TEXT,
+  url_arca TEXT,
+  actualizado_por TEXT,
+  actualizado_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT sicoss_unica CHECK (id = 1)
+);
+CREATE TABLE IF NOT EXISTS sicoss_generaciones (
+  id SERIAL PRIMARY KEY, version_diseno INTEGER NOT NULL, anio INTEGER, mes INTEGER,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
