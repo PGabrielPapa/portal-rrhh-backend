@@ -1,0 +1,524 @@
+[
+ {
+  "codigo": "1",
+  "descripcion": "Sueldo",
+  "tipo": "remunerativo",
+  "formula": "sueldoBasico * (diasTrab/habiles) * factorPeriodo",
+  "base_legal": "Art. 103 LCT",
+  "categoria": "Sueldo básico",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "100",
+  "descripcion": "Antigüedad",
+  "tipo": "remunerativo",
+  "formula": "sueldoBasico × (años × pctAntigPorAnio%)",
+  "base_legal": "CCT — paritarias / Art. 245 LCT (cómputo)",
+  "categoria": "Adicionales",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "2",
+  "descripcion": "Horas Extras 50%",
+  "tipo": "remunerativo",
+  "formula": "(bruto / 173) × 1.5 × cantidad",
+  "base_legal": "Art. 201 LCT — decisión empresarial divisor 173",
+  "categoria": "Horas extras",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "3",
+  "descripcion": "Horas Extras 100%",
+  "tipo": "remunerativo",
+  "formula": "(bruto / 173) × 2.0 × cantidad",
+  "base_legal": "Art. 201 LCT — decisión empresarial divisor 173",
+  "categoria": "Horas extras",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "8000",
+  "descripcion": "Presentismo",
+  "tipo": "remunerativo",
+  "formula": "sueldoBasico × pctPresentismo% (si no hay ausencias/suspensión)",
+  "base_legal": "CCT — paritarias",
+  "categoria": "Adicionales",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "9100",
+  "descripcion": "SAC Proporcional",
+  "tipo": "remunerativo",
+  "formula": "sueldoMejor / 12 × proporciónSemestre",
+  "base_legal": "Art. 121-123 LCT — Ley 23.041",
+  "categoria": "SAC",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "6500",
+  "descripcion": "Feriados no trabajados (Art. 168 LCT)",
+  "tipo": "remunerativo",
+  "formula": "(bruto / 30) × feriadosNoTrabajados (calendario AR, excluye UOCRA)",
+  "base_legal": "Art. 168 LCT — Ley 27.399",
+  "categoria": "Feriados",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "5800",
+  "descripcion": "Vacaciones (Art. 155 LCT)",
+  "tipo": "remunerativo",
+  "formula": "valorDiaVacaciones × diasVac",
+  "base_legal": "Art. 155 LCT",
+  "categoria": "Vacaciones",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "5810",
+  "descripcion": "Lic. Matrimonio (Art. 158 LCT)",
+  "tipo": "remunerativo",
+  "formula": "valorDia × 10 días",
+  "base_legal": "Art. 158 LCT",
+  "categoria": "Licencias especiales",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "5820",
+  "descripcion": "Lic. Nacimiento Hijo (Art. 158 LCT)",
+  "tipo": "remunerativo",
+  "formula": "valorDia × 2 días",
+  "base_legal": "Art. 158 LCT",
+  "categoria": "Licencias especiales",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "5830",
+  "descripcion": "Lic. Fallecimiento (Art. 158 LCT)",
+  "tipo": "remunerativo",
+  "formula": "valorDia × 3 días (cónyuge/hijos/padres)",
+  "base_legal": "Art. 158 LCT",
+  "categoria": "Licencias especiales",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "5840",
+  "descripcion": "Lic. Examen (Art. 158 LCT)",
+  "tipo": "remunerativo",
+  "formula": "valorDia × 2 días por examen (máx. 10/año)",
+  "base_legal": "Art. 158 LCT",
+  "categoria": "Licencias especiales",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "5850",
+  "descripcion": "Otras licencias (día común)",
+  "tipo": "remunerativo",
+  "formula": "valorDia × diasOtrasLic",
+  "base_legal": "CCT — convenios particulares",
+  "categoria": "Licencias especiales",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "9500",
+  "descripcion": "Ajuste de sueldo",
+  "tipo": "remunerativo",
+  "formula": "monto manual",
+  "base_legal": "Acuerdos paritarios — ajustes retroactivos",
+  "categoria": "Ajustes",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "9900",
+  "descripcion": "Otros haberes remunerativos",
+  "tipo": "remunerativo",
+  "formula": "monto manual (genérico)",
+  "base_legal": "CCT",
+  "categoria": "Adicionales",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "58100",
+  "descripcion": "Horas Extras Exentas (Art. 82 LIG)",
+  "tipo": "no_remunerativo",
+  "formula": "monto manual",
+  "base_legal": "Art. 82 Ley Impuesto a las Ganancias",
+  "categoria": "Hs extras exentas",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "58200",
+  "descripcion": "Bono Productividad Exento",
+  "tipo": "no_remunerativo",
+  "formula": "monto manual",
+  "base_legal": "Ley 27.743 — Reforma Tributaria",
+  "categoria": "Bonos exentos",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "58300",
+  "descripcion": "Indemnización Art. 180 bis LCT",
+  "tipo": "no_remunerativo",
+  "formula": "monto manual (no afecta jub. ni gan.)",
+  "base_legal": "Art. 180 bis LCT",
+  "categoria": "Indemnizaciones",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "58400",
+  "descripcion": "Otros conceptos exentos",
+  "tipo": "no_remunerativo",
+  "formula": "monto manual genérico",
+  "base_legal": "Art. 103 bis LCT — beneficios sociales",
+  "categoria": "No remunerativos",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "58500",
+  "descripcion": "Asignación no remunerativa (Acuerdos paritarios)",
+  "tipo": "no_remunerativo",
+  "formula": "paritaria × (diasTrab/habiles) × factorPeriodo (por sindicato)",
+  "base_legal": "Art. 103 bis LCT — paritarias",
+  "categoria": "No remunerativos",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "58510",
+  "descripcion": "Antigüedad s/ No Remunerativo (SEC)",
+  "tipo": "no_remunerativo",
+  "formula": "mAsigNoRem × pctAntig% (solo SEC)",
+  "base_legal": "CCT 130/75 SEC — paritarias",
+  "categoria": "No remunerativos SEC",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "58520",
+  "descripcion": "Presentismo s/ No Remunerativo (SEC)",
+  "tipo": "no_remunerativo",
+  "formula": "(mAsigNoRem + mAntigSobreNoRem) × pctPres% (solo SEC, si tiene pres.)",
+  "base_legal": "CCT 130/75 SEC — paritarias",
+  "categoria": "No remunerativos SEC",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "20000",
+  "descripcion": "Jubilación",
+  "tipo": "aporte",
+  "formula": "baseAportes × 11% (con tope Art. 9 Ley 24241)",
+  "base_legal": "Ley 24.241 — SIPA",
+  "categoria": "Aportes seg. social",
+  "columna": "RETENCIONES"
+ },
+ {
+  "codigo": "20100",
+  "descripcion": "Ley 19032 (PAMI)",
+  "tipo": "aporte",
+  "formula": "baseAportes × 3% (con tope)",
+  "base_legal": "Ley 19.032 — INSSJyP",
+  "categoria": "Aportes seg. social",
+  "columna": "RETENCIONES"
+ },
+ {
+  "codigo": "20200",
+  "descripcion": "Obra Social",
+  "tipo": "aporte",
+  "formula": "baseAportes × 3% (+ 3% sobre No Rem si SEC)",
+  "base_legal": "Ley 23.660 — Obras Sociales",
+  "categoria": "Aportes seg. social",
+  "columna": "RETENCIONES"
+ },
+ {
+  "codigo": "20400",
+  "descripcion": "ANSSAL",
+  "tipo": "aporte",
+  "formula": "baseAportes × 0,5% (+ 0,5% sobre No Rem si SEC)",
+  "base_legal": "Ley 23.661 — ANSSAL",
+  "categoria": "Aportes seg. social",
+  "columna": "RETENCIONES"
+ },
+ {
+  "codigo": "20900",
+  "descripcion": "Sindicato (cuota gremial)",
+  "tipo": "aporte",
+  "formula": "totalHaberesRem × pctSindicato% (según código del empleado)",
+  "base_legal": "CCT — cuota sindical obligatoria",
+  "categoria": "Cuota sindical",
+  "columna": "RETENCIONES"
+ },
+ {
+  "codigo": "90000",
+  "descripcion": "Retención Imp. Ganancias",
+  "tipo": "descuento",
+  "formula": "monto manual calculado en F.572 web",
+  "base_legal": "Ley 27.617 — Ganancias 4ª Categoría",
+  "categoria": "Impuestos",
+  "columna": "RETENCIONES"
+ },
+ {
+  "codigo": "10500",
+  "descripcion": "Descuento anticipo haberes",
+  "tipo": "descuento",
+  "formula": "cuota mensual de anticipo aprobado",
+  "base_legal": "Art. 130 LCT — adelantos de haberes",
+  "categoria": "Anticipos",
+  "columna": "RETENCIONES"
+ },
+ {
+  "codigo": "10600",
+  "descripcion": "Embargo judicial",
+  "tipo": "descuento",
+  "formula": "según oficio judicial — array embargos[] (alimentos sin tope + comunes 20%)",
+  "base_legal": "Art. 147 LCT — Art. 132 bis LCT",
+  "categoria": "Embargos",
+  "columna": "RETENCIONES"
+ },
+ {
+  "codigo": "9901",
+  "descripcion": "Otros descuentos",
+  "tipo": "descuento",
+  "formula": "monto manual genérico (préstamos, mutual, etc.)",
+  "base_legal": "Art. 132 LCT — descuentos autorizados",
+  "categoria": "Otros",
+  "columna": "RETENCIONES"
+ },
+ {
+  "codigo": "80000",
+  "descripcion": "Aportes patronales SIPA (Ley 24.241)",
+  "tipo": "contribucion",
+  "formula": "totalHaberesRem × 10,17%",
+  "base_legal": "Ley 24.241 - Dec. 814/01",
+  "categoria": "Contrib. patronal",
+  "columna": "PATRONAL"
+ },
+ {
+  "codigo": "80200",
+  "descripcion": "Contribución Obra Social patronal",
+  "tipo": "contribucion",
+  "formula": "totalHaberesRem × 6% (+ 6% sobre No Rem si SEC)",
+  "base_legal": "Ley 23.660",
+  "categoria": "Contrib. patronal",
+  "columna": "PATRONAL"
+ },
+ {
+  "codigo": "80100",
+  "descripcion": "Contribución Ley 19.032 (PAMI)",
+  "tipo": "contribucion",
+  "formula": "totalHaberesRem × 1,5%",
+  "base_legal": "Ley 19.032",
+  "categoria": "Contrib. patronal",
+  "columna": "PATRONAL"
+ },
+ {
+  "codigo": "80300",
+  "descripcion": "Fondo Nacional de Empleo (Ley 24.013)",
+  "tipo": "contribucion",
+  "formula": "totalHaberesRem × 0,89%",
+  "base_legal": "Ley 24.013",
+  "categoria": "Contrib. patronal",
+  "columna": "PATRONAL"
+ },
+ {
+  "codigo": "80400",
+  "descripcion": "ART (Ley 24.557)",
+  "tipo": "contribucion",
+  "formula": "totalHaberesRem × 1,5% (alícuota por ART contratada)",
+  "base_legal": "Ley 24.557 — Riesgos del Trabajo",
+  "categoria": "Contrib. patronal",
+  "columna": "PATRONAL"
+ },
+ {
+  "codigo": "80900",
+  "descripcion": "Contribución Sindical Patronal",
+  "tipo": "contribucion",
+  "formula": "totalHaberesRem × pctSindicatoPatronal% (CCT)",
+  "base_legal": "CCT — contribución solidaria",
+  "categoria": "Contrib. patronal",
+  "columna": "PATRONAL"
+ },
+ {
+  "codigo": "80950",
+  "descripcion": "FCL (Fondo Cese Laboral) - UOCRA",
+  "tipo": "contribucion",
+  "formula": "totalHaberesRem × 12% (primer año) o 8% (después)",
+  "base_legal": "Art. 15 Ley 22.250",
+  "categoria": "UOCRA Ley 22.250",
+  "columna": "PATRONAL"
+ },
+ {
+  "codigo": "80960",
+  "descripcion": "IERIC",
+  "tipo": "contribucion",
+  "formula": "totalHaberesRem × 1%",
+  "base_legal": "Decreto 1342/03 — IERIC",
+  "categoria": "UOCRA Ley 22.250",
+  "columna": "PATRONAL"
+ },
+ {
+  "codigo": "80970",
+  "descripcion": "Fondo Sanidad - UOCRA",
+  "tipo": "contribucion",
+  "formula": "totalHaberesRem × 1,5%",
+  "base_legal": "Acuerdo paritario UOCRA",
+  "categoria": "UOCRA Ley 22.250",
+  "columna": "PATRONAL"
+ },
+ {
+  "codigo": "80980",
+  "descripcion": "CAR (Cuota Adicional UOCRA)",
+  "tipo": "contribucion",
+  "formula": "totalHaberesRem × 0,5%",
+  "base_legal": "Convenio colectivo UOCRA",
+  "categoria": "UOCRA Ley 22.250",
+  "columna": "PATRONAL"
+ },
+ {
+  "codigo": "80990",
+  "descripcion": "CESLU",
+  "tipo": "contribucion",
+  "formula": "totalHaberesRem × 0,4%",
+  "base_legal": "Convenio colectivo UOCRA",
+  "categoria": "UOCRA Ley 22.250",
+  "columna": "PATRONAL"
+ },
+ {
+  "codigo": "70100",
+  "descripcion": "Preaviso — indemnización sustitutiva",
+  "tipo": "remunerativo",
+  "formula": "<3 meses: 15 días; 3m-5 años: 1 mes; ≥5 años: 2 meses × bruto mensual",
+  "base_legal": "Art. 232 LCT",
+  "categoria": "Liq. final — Art. 232",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "70200",
+  "descripcion": "Integración mes de despido",
+  "tipo": "no_remunerativo",
+  "formula": "Días restantes hasta fin de mes × (bruto / 30). Exento Art. 26 LIG.",
+  "base_legal": "Art. 233 LCT",
+  "categoria": "Liq. final — Art. 233",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "70300",
+  "descripcion": "Indemnización por antigüedad (despido s/c)",
+  "tipo": "no_remunerativo",
+  "formula": "Mejor rem. mensual × años de servicio (fracción >3 meses = año). Mín. 1 sueldo. Tope: 3 × prom. CCT.",
+  "base_legal": "Art. 245 LCT · Art. 26 LIG",
+  "categoria": "Liq. final — Art. 245",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "70400",
+  "descripcion": "Indemnización fuerza mayor (50% Art. 245)",
+  "tipo": "no_remunerativo",
+  "formula": "50% de la base calculada con Art. 245. Requiere homologación MTSS.",
+  "base_legal": "Art. 247 LCT · Art. 26 LIG",
+  "categoria": "Liq. final — Art. 247",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "70500",
+  "descripcion": "Indemnización incapacidad absoluta",
+  "tipo": "no_remunerativo",
+  "formula": "Igual fórmula que Art. 245 (misma base y antigüedad). Sin preaviso.",
+  "base_legal": "Art. 213 LCT · Art. 26 LIG",
+  "categoria": "Liq. final — Art. 213",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "70550",
+  "descripcion": "Indemnización incapacidad parcial",
+  "tipo": "no_remunerativo",
+  "formula": "Si no se puede reasignar: igual Art. 245. Si sí: diferencia de salario durante 1 año.",
+  "base_legal": "Art. 212 LCT",
+  "categoria": "Liq. final — Art. 212",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "70600",
+  "descripcion": "Indemnización por embarazo/maternidad",
+  "tipo": "no_remunerativo",
+  "formula": "Art. 245 + 1 año de remuneraciones (12 × mejor rem.). Presunción 7½ meses antes/después del parto.",
+  "base_legal": "Art. 178 + 182 LCT · Art. 26 LIG",
+  "categoria": "Liq. final — Art. 178",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "70700",
+  "descripcion": "Indemnización por matrimonio",
+  "tipo": "no_remunerativo",
+  "formula": "Art. 245 + 1 año de remuneraciones (12 × mejor rem.). Presunción 3 meses antes / 6 después del matrimonio.",
+  "base_legal": "Art. 182 LCT · Art. 26 LIG",
+  "categoria": "Liq. final — Art. 182",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "70800",
+  "descripcion": "Indemnización por fallecimiento (50%)",
+  "tipo": "no_remunerativo",
+  "formula": "50% de la base Art. 245. Cobran causahabientes: cónyuge/conviviente/hijos.",
+  "base_legal": "Art. 248 LCT · Art. 26 LIG",
+  "categoria": "Liq. final — Art. 248",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "70900",
+  "descripcion": "Indemnización vencimiento contrato (50%)",
+  "tipo": "no_remunerativo",
+  "formula": "50% de la base Art. 245. Solo si el contrato superó 1 año de duración.",
+  "base_legal": "Art. 95/97 LCT",
+  "categoria": "Liq. final — Art. 97",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "70010",
+  "descripcion": "SAC proporcional al egreso",
+  "tipo": "remunerativo",
+  "formula": "Mejor rem / 2 × (días trabajados del semestre / 180). Remunerativo.",
+  "base_legal": "Art. 121 LCT",
+  "categoria": "Liq. final — Art. 121",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "70020",
+  "descripcion": "Vacaciones no gozadas al egreso",
+  "tipo": "no_remunerativo",
+  "formula": "Días proporcionales según antigüedad − días ya gozados × (sueldo / 25). Exento Art. 26 LIG.",
+  "base_legal": "Art. 156 LCT · Art. 26 LIG",
+  "categoria": "Liq. final — Art. 156",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "71000",
+  "descripcion": "Multa entrega tardía de certificados",
+  "tipo": "remunerativo",
+  "formula": "3 × mejor remuneración mensual normal y habitual. Si no se entregan en 30 días de intimación.",
+  "base_legal": "Art. 80 LCT — Ley 24.576",
+  "categoria": "Liq. final — Art. 80",
+  "columna": "HABERES"
+ },
+ {
+  "codigo": "71100",
+  "descripcion": "Doble indemnización — trabajo no registrado",
+  "tipo": "no_remunerativo",
+  "formula": "Duplica la indemnización Art. 245 si la relación fue clandestina o sub-registrada. Requiere reclamación fehaciente.",
+  "base_legal": "Ley 25323 Art. 1 · Art. 26 LIG",
+  "categoria": "Liq. final — Ley 25323",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "71200",
+  "descripcion": "Incremento 50% por mora en el pago",
+  "tipo": "no_remunerativo",
+  "formula": "50% sobre la suma de preaviso + integración mes despido + Art. 245. Si no paga en término tras intimación.",
+  "base_legal": "Ley 25323 Art. 2",
+  "categoria": "Liq. final — Ley 25323",
+  "columna": "ADICIONALES"
+ },
+ {
+  "codigo": "71300",
+  "descripcion": "Sanción retención de aportes",
+  "tipo": "remunerativo",
+  "formula": "1 remuneración mensual × cantidad de períodos en que se retuvo sin depositar en AFIP.",
+  "base_legal": "Art. 132 bis LCT",
+  "categoria": "Liq. final — Art. 132 bis",
+  "columna": "HABERES"
+ }
+]

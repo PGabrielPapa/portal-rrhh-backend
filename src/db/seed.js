@@ -107,28 +107,20 @@ async function main() {
     );
     console.log('[seed] parámetros de liquidación: ok');
 
-    // Catálogo de conceptos estándar (idempotente)
-    const conceptos = [
-      ['001', 'Sueldo básico', 'remunerativo', 'Art. 103 LCT'],
-      ['002', 'Antigüedad', 'remunerativo', 'CCT'],
-      ['003', 'Presentismo', 'remunerativo', 'CCT'],
-      ['010', 'SAC', 'remunerativo', 'Ley 23.041'],
-      ['020', 'Asignación no remunerativa', 'no_remunerativo', 'Art. 103 bis LCT'],
-      ['100', 'Jubilación', 'aporte', 'Ley 24.241'],
-      ['101', 'Obra Social', 'aporte', 'Ley 23.660'],
-      ['102', 'INSSJP (PAMI)', 'aporte', 'Ley 19.032'],
-      ['103', 'Cuota sindical', 'aporte', 'Ley 23.551'],
-      ['200', 'Anticipo de sueldo', 'descuento', 'Art. 130 LCT'],
-      ['300', 'Impuesto a las Ganancias 4ta', 'descuento', 'RG 4003/2017'],
-    ];
-    for (const [codigo, descripcion, tipo, base_legal] of conceptos) {
+    // Catálogo de conceptos COMPLETO (réplica de la vanilla). Idempotente.
+    const conceptos = JSON.parse(fs.readFileSync(path.join(dataDir, 'conceptos.seed.json'), 'utf8'));
+    const tieneNuevo = await client.query("SELECT 1 FROM conceptos WHERE codigo='20000' LIMIT 1");
+    if (!tieneNuevo.rowCount) {
+      await client.query("DELETE FROM conceptos WHERE codigo IN ('001','002','003','010','020','100','101','102','103','200','300')");
+    }
+    for (const c of conceptos) {
       await client.query(
-        `INSERT INTO conceptos (codigo, descripcion, tipo, base_legal) VALUES ($1,$2,$3,$4)
+        `INSERT INTO conceptos (codigo, descripcion, tipo, formula, base_legal, data) VALUES ($1,$2,$3,$4,$5,$6)
          ON CONFLICT (codigo) DO NOTHING`,
-        [codigo, descripcion, tipo, base_legal]
+        [c.codigo, c.descripcion, c.tipo, c.formula || null, c.base_legal || null, JSON.stringify({ categoria: c.categoria || null, columna: c.columna || null })]
       );
     }
-    console.log('[seed] conceptos: ok');
+    console.log(`[seed] conceptos: ${conceptos.length}`);
 
     // Escala salarial inicial (solo si no hay ninguna versión)
     try {
