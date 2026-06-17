@@ -412,7 +412,7 @@ export function calcularRecibo(emp, params, opts) {
   // Costo del empleador (contribuciones patronales + SCVO) — sobre remunerativos
   const contribuciones = [];
   const co = (pct) => round2(totalRemun * num(pct) / 100);
-  const cJub = co(p.pctJubPatronal), cOS = co(p.pctOsPatronal), cPami = co(p.pctPamiPatronal), cFne = co(p.pctDesempleo), cArt = co(p.pctArt), cSind = co(p.pctSindicatoPatronal);
+  const cJub = co(p.pctJubPatronal), cOS = co(p.pctOsPatronal), cPami = co(p.pctPamiPatronal), cFne = co(p.pctDesempleo), cArt = co(p.pctArt), cSind = esFC ? 0 : co(p.pctSindicatoPatronal);
   const scvo = round2(num(p.scvoPercapita));
   if (cJub > 0) contribuciones.push({ concepto: 'Jubilación patronal (SIPA)', monto: cJub });
   if (cOS > 0) contribuciones.push({ concepto: 'Obra Social patronal', monto: cOS });
