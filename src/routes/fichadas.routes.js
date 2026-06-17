@@ -27,10 +27,16 @@ function vista(a) {
     horasExtra100: minToHhmm(a.horasExtra100Min),
     horasExtra50Min: a.horasExtra50Min,
     horasExtra100Min: a.horasExtra100Min,
+    hsNetasMin: a.hsNetasMin,
+    horasExtraDescartada: minToHhmm(a.horasExtraDescartadaMin),
+    horasExtraDescartadaMin: a.horasExtraDescartadaMin,
+    bancoNeto: minToHhmm(a.bancoNetoMin),
+    bancoNetoMin: a.bancoNetoMin,
     tardanzas: minToHhmm(a.tardanzasMin),
     tardanzasMin: a.tardanzasMin,
     diasTardanza: a.diasTardanza,
     diasARevisar: a.diasARevisar,
+    dias: a.dias,
   };
 }
 
@@ -101,12 +107,15 @@ router.post('/importar', requireRole('rrhh', 'admin'), upload.single('archivo'),
         const data = {
           legajoProsoft: m.legajoProsoft,
           diasTrabajados: m.diasTrabajados,
-          hsNetasMin: 0,
+          hsNetasMin: m.hsNetasMin,
           horasExtra50Min: m.horasExtra50Min,
           horasExtra100Min: m.horasExtra100Min,
+          horasExtraDescartadaMin: m.horasExtraDescartadaMin,
+          bancoNetoMin: m.bancoNetoMin,
           tardanzasMin: m.tardanzasMin,
           diasTardanza: m.diasTardanza,
           diasARevisar: m.diasARevisar,
+          dias: m.dias,
         };
         await client.query(
           `INSERT INTO fichadas_periodo (empleado_id, anio, mes, data, origen, importado_por)

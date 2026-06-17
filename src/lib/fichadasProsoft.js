@@ -20,6 +20,10 @@ const COLS = {
   empresa: 'Empresa', comentarios: 'Comentarios',
 };
 
+// Umbral diario de hora extra (regla Leiten): el extra del día se paga solo
+// si alcanzó este mínimo; si no, no se computa. El cierre es POR DÍA.
+const UMBRAL_EXTRA_MIN = 30;
+
 const norm = (s) => String(s == null ? '' : s).trim();
 const normKey = (s) => norm(s).toLowerCase().replace(/\s+/g, ' ');
 
@@ -105,14 +109,18 @@ export function parseExtendido(rows) {
         hsNetasMin: 0,
         horasExtra50Min: 0,
         horasExtra100Min: 0,
+        horasExtraDescartadaMin: 0,
+        bancoNetoMin: 0,
         tardanzasMin: 0,
         diasTardanza: 0,
         diasARevisar: [],
+        dias: [],
       };
     }
     const a = acc[leg];
 
     const hsNetas = hhmmToMin(cell(r, 'hsNetas'));
+    const hsNormal = hhmmToMin(cell(r, 'hsNormal'));
     const e50 = hhmmToMin(cell(r, 'extra50'));
     const e100 = hhmmToMin(cell(r, 'extra100'));
     const tarde = hhmmToMin(cell(r, 'tarde'));
@@ -123,8 +131,19 @@ export function parseExtendido(rows) {
     const fecha = fechaISO(cell(r, 'fecha'));
 
     if (hsNetas > 0) { a.diasTrabajados++; a.hsNetasMin += hsNetas; }
-    if (e50 > 0) a.horasExtra50Min += e50;
-    if (e100 > 0) a.horasExtra100Min += e100;
+    // Banco de horas (saldo): solo días con marca completa. Hs Normal ya viene
+    // 0 en sábado/domingo/feriado (parametrización de Pro-Soft) → todo a favor.
+    if (marcaCompleta) a.bancoNetoMin += (hsNetas - hsNormal);
+
+    // Hora extra por DÍA: si el total extra del día (50+100) alcanzó el umbral,
+    // se paga completo; si no, se descarta (se guarda aparte, para control).
+    const extraDiaMin = e50 + e100;
+    if (extraDiaMin >= UMBRAL_EXTRA_MIN) {
+      a.horasExtra50Min += e50;
+      a.horasExtra100Min += e100;
+    } else if (extraDiaMin > 0) {
+      a.horasExtraDescartadaMin += extraDiaMin;
+    }
 
     if (tarde > 0) {
       if (marcaCompleta) {
@@ -137,6 +156,30 @@ export function parseExtendido(rows) {
     } else if (algunaMarca && hsNetas <= 0) {
       // Hay marca pero no se computaron horas netas (fichada incompleta).
       a.diasARevisar.push({ fecha, motivo: 'Marca incompleta (sin horas netas)' });
+    }
+
+    // Detalle diario (para auditar el cálculo). Guardamos solo días con actividad.
+    if (algunaMarca || hsNetas > 0 || tarde > 0) {
+      const entrada = norm(cell(r, 'e1')) || norm(cell(r, 'e2')) || norm(cell(r, 'e3')) || norm(cell(r, 'e4'));
+      const salida = norm(cell(r, 's4')) || norm(cell(r, 's3')) || norm(cell(r, 's2')) || norm(cell(r, 's1'));
+      let estado;
+      if (marcaCompleta && hsNormal === 0) estado = 'no-laborable';   // sábado/domingo/feriado: todo a favor
+      else if (marcaCompleta) estado = 'ok';
+      else estado = 'revisar';                                        // marca incompleta
+      a.dias.push({
+        fecha,
+        dia: norm(cell(r, 'dia')),
+        entrada, salida,
+        hsNetasMin: hsNetas,
+        hsNormalMin: hsNormal,
+        saldoMin: marcaCompleta ? (hsNetas - hsNormal) : null,
+        extra50Min: e50,
+        extra100Min: e100,
+        extraComputa: extraDiaMin >= UMBRAL_EXTRA_MIN,
+        tardeMin: tarde,
+        completa: marcaCompleta,
+        estado,
+      });
     }
   }
 
