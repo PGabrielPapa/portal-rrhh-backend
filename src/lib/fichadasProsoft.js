@@ -23,6 +23,9 @@ const COLS = {
 // Umbral diario de hora extra (regla Leiten): el extra del día se paga solo
 // si alcanzó este mínimo; si no, no se computa. El cierre es POR DÍA.
 const UMBRAL_EXTRA_MIN = 30;
+// Jornada diaria objetivo en días laborables (regla Leiten: 9h fijas).
+// En sábado/domingo/feriado Pro-Soft pone Hs Normal=0 → no se exige jornada.
+const JORNADA_MIN = 540;
 
 const norm = (s) => String(s == null ? '' : s).trim();
 const normKey = (s) => norm(s).toLowerCase().replace(/\s+/g, ' ');
@@ -114,6 +117,7 @@ export function parseExtendido(rows) {
         tardanzasMin: 0,
         diasTardanza: 0,
         diasARevisar: [],
+        licenciasProsoft: {},
         dias: [],
       };
     }
@@ -121,65 +125,77 @@ export function parseExtendido(rows) {
 
     const hsNetas = hhmmToMin(cell(r, 'hsNetas'));
     const hsNormal = hhmmToMin(cell(r, 'hsNormal'));
+    const esLaborable = hsNormal > 0;                 // Pro-Soft: 0 en finde/feriado
+    const jornadaDia = esLaborable ? JORNADA_MIN : 0; // 9h fijas en laborables, 0 si no
     const e50 = hhmmToMin(cell(r, 'extra50'));
     const e100 = hhmmToMin(cell(r, 'extra100'));
     const tarde = hhmmToMin(cell(r, 'tarde'));
-    const tieneEntrada = !!norm(cell(r, 'e1'));
-    const tieneSalida = !!norm(cell(r, 's1'));
+    const comentario = norm(cell(r, 'comentarios')); // Vacaciones, Licencia, ART, Estudio, Home Office...
+    const esHomeOffice = /home\s*office/i.test(comentario);  // trabajo remoto: cuenta como día trabajado
+    const esLicencia = comentario.length > 0 && !esHomeOffice;
     const algunaMarca = ['e1', 's1', 'e2', 's2', 'e3', 's3', 'e4', 's4'].some((k) => norm(cell(r, k)));
-    const marcaCompleta = tieneEntrada && tieneSalida && hsNetas > 0;
+    const marcaCompleta = !esLicencia && !!norm(cell(r, 'e1')) && !!norm(cell(r, 's1')) && hsNetas > 0;
     const fecha = fechaISO(cell(r, 'fecha'));
-
-    if (hsNetas > 0) { a.diasTrabajados++; a.hsNetasMin += hsNetas; }
-    // Banco de horas (saldo): solo días con marca completa. Hs Normal ya viene
-    // 0 en sábado/domingo/feriado (parametrización de Pro-Soft) → todo a favor.
-    if (marcaCompleta) a.bancoNetoMin += (hsNetas - hsNormal);
-
-    // Hora extra por DÍA: si el total extra del día (50+100) alcanzó el umbral,
-    // se paga completo; si no, se descarta (se guarda aparte, para control).
+    const entrada = norm(cell(r, 'e1')) || norm(cell(r, 'e2')) || norm(cell(r, 'e3')) || norm(cell(r, 'e4'));
+    const salida = norm(cell(r, 's4')) || norm(cell(r, 's3')) || norm(cell(r, 's2')) || norm(cell(r, 's1'));
     const extraDiaMin = e50 + e100;
-    if (extraDiaMin >= UMBRAL_EXTRA_MIN) {
-      a.horasExtra50Min += e50;
-      a.horasExtra100Min += e100;
-    } else if (extraDiaMin > 0) {
-      a.horasExtraDescartadaMin += extraDiaMin;
-    }
 
-    if (tarde > 0) {
-      if (marcaCompleta) {
-        a.tardanzasMin += tarde;
-        a.diasTardanza++;
-      } else {
-        // Tardanza con marca incompleta → no se descuenta, va a revisión.
-        a.diasARevisar.push({ fecha, motivo: 'Tardanza con marca incompleta', tarde: minToHhmm(tarde) });
-      }
-    } else if (algunaMarca && hsNetas <= 0) {
-      // Hay marca pero no se computaron horas netas (fichada incompleta).
-      a.diasARevisar.push({ fecha, motivo: 'Marca incompleta (sin horas netas)' });
-    }
-
-    // Detalle diario (para auditar el cálculo). Guardamos solo días con actividad.
-    if (algunaMarca || hsNetas > 0 || tarde > 0) {
-      const entrada = norm(cell(r, 'e1')) || norm(cell(r, 'e2')) || norm(cell(r, 'e3')) || norm(cell(r, 'e4'));
-      const salida = norm(cell(r, 's4')) || norm(cell(r, 's3')) || norm(cell(r, 's2')) || norm(cell(r, 's1'));
-      let estado;
-      if (marcaCompleta && hsNormal === 0) estado = 'no-laborable';   // sábado/domingo/feriado: todo a favor
-      else if (marcaCompleta) estado = 'ok';
-      else estado = 'revisar';                                        // marca incompleta
+    if (esHomeOffice) {
+      // Home Office: día de trabajo real (todavía no fichan desde casa, se carga
+      // como comentario). Cuenta como jornada cumplida → saldo 0 (ni suma ni resta).
+      a.diasTrabajados++;
+      a.hsNetasMin += jornadaDia;
       a.dias.push({
-        fecha,
-        dia: norm(cell(r, 'dia')),
-        entrada, salida,
-        hsNetasMin: hsNetas,
-        hsNormalMin: hsNormal,
-        saldoMin: marcaCompleta ? (hsNetas - hsNormal) : null,
-        extra50Min: e50,
-        extra100Min: e100,
-        extraComputa: extraDiaMin >= UMBRAL_EXTRA_MIN,
-        tardeMin: tarde,
-        completa: marcaCompleta,
-        estado,
+        fecha, dia: norm(cell(r, 'dia')), entrada: '', salida: '',
+        hsNetasMin: jornadaDia, hsNormalMin: jornadaDia, saldoMin: 0,
+        extra50Min: 0, extra100Min: 0, extraComputa: false, tardeMin: 0,
+        completa: false, estado: 'home-office', comentario,
       });
+    } else if (esLicencia) {
+      // Día justificado por novedad de Pro-Soft (Vacaciones, Licencia, ART, etc.).
+      // NO cuenta como trabajado/banco/extra: Pro-Soft rellena estos días con Hs
+      // Netas ficticias (p. ej. 17:00) que no son horas reales y hay que ignorar.
+      a.licenciasProsoft[comentario] = (a.licenciasProsoft[comentario] || 0) + 1;
+      a.dias.push({
+        fecha, dia: norm(cell(r, 'dia')), entrada: '', salida: '',
+        hsNetasMin: 0, hsNormalMin: jornadaDia, saldoMin: null,
+        extra50Min: 0, extra100Min: 0, extraComputa: false, tardeMin: 0,
+        completa: false, estado: 'licencia', comentario,
+      });
+    } else {
+      if (hsNetas > 0) { a.diasTrabajados++; a.hsNetasMin += hsNetas; }
+      // Banco de horas (saldo): solo días con marca completa. Jornada 9h en
+      // laborables; finde/feriado (jornadaDia=0) → todo lo trabajado a favor.
+      if (marcaCompleta) a.bancoNetoMin += (hsNetas - jornadaDia);
+
+      // Hora extra por DÍA: se paga si el extra del día superó el umbral (30 min).
+      if (extraDiaMin >= UMBRAL_EXTRA_MIN) { a.horasExtra50Min += e50; a.horasExtra100Min += e100; }
+      else if (extraDiaMin > 0) a.horasExtraDescartadaMin += extraDiaMin;
+
+      if (tarde > 0) {
+        if (marcaCompleta) { a.tardanzasMin += tarde; a.diasTardanza++; }
+        else a.diasARevisar.push({ fecha, motivo: 'Tardanza con marca incompleta', tarde: minToHhmm(tarde) });
+      } else if (algunaMarca && hsNetas <= 0) {
+        a.diasARevisar.push({ fecha, motivo: 'Marca incompleta (sin horas netas)' });
+      }
+
+      // Detalle diario: días con actividad, o días laborables sin marca (posible
+      // ausencia → la ruta lo cruza con licencias del portal para decidir).
+      const hayActividad = algunaMarca || hsNetas > 0 || tarde > 0;
+      if (hayActividad || esLaborable) {
+        let estado;
+        if (marcaCompleta && !esLaborable) estado = 'no-laborable';   // sábado/domingo/feriado
+        else if (marcaCompleta) estado = 'ok';
+        else if (hayActividad) estado = 'revisar';                    // marca incompleta
+        else estado = 'sin-marca';                                    // laborable sin marca
+        a.dias.push({
+          fecha, dia: norm(cell(r, 'dia')), entrada, salida,
+          hsNetasMin: hsNetas, hsNormalMin: jornadaDia,
+          saldoMin: marcaCompleta ? (hsNetas - jornadaDia) : null,
+          extra50Min: e50, extra100Min: e100, extraComputa: extraDiaMin >= UMBRAL_EXTRA_MIN,
+          tardeMin: tarde, completa: marcaCompleta, estado, comentario: '',
+        });
+      }
     }
   }
 

@@ -36,6 +36,8 @@ function vista(a) {
     tardanzasMin: a.tardanzasMin,
     diasTardanza: a.diasTardanza,
     diasARevisar: a.diasARevisar,
+    licenciasProsoft: a.licenciasProsoft,
+    diasLicencia: Object.values(a.licenciasProsoft || {}).reduce((t, n) => t + n, 0),
     dias: a.dias,
   };
 }
@@ -84,6 +86,46 @@ router.post('/importar', requireRole('rrhh', 'admin'), upload.single('archivo'),
     }
     matcheados.sort((x, y) => x.nom.localeCompare(y.nom));
     sinMatch.sort((x, y) => x.empleado.localeCompare(y.empleado));
+    // ── Cruce con licencias APROBADAS del portal ──
+    // Anota cada día con la licencia del portal que lo cubre. Un día laborable
+    // sin marca y sin licencia (ni en Pro-Soft ni en el portal) = injustificado.
+    const ids = matcheados.map((m) => m.empleadoId);
+    const licMap = new Map();
+    if (ids.length) {
+      const ultimo = new Date(anio, mes, 0).getDate();
+      const desdeP = `${anio}-${String(mes).padStart(2, '0')}-01`;
+      const hastaP = `${anio}-${String(mes).padStart(2, '0')}-${String(ultimo).padStart(2, '0')}`;
+      const { rows: lics } = await query(
+        `SELECT empleado_id, tipo, desde, hasta FROM licencias
+          WHERE estado = 'aprobada' AND empleado_id = ANY($1::int[]) AND desde <= $2 AND hasta >= $3`,
+        [ids, hastaP, desdeP]);
+      for (const l of lics) {
+        if (!licMap.has(l.empleado_id)) licMap.set(l.empleado_id, []);
+        licMap.get(l.empleado_id).push({ tipo: l.tipo, desde: String(l.desde).slice(0, 10), hasta: String(l.hasta).slice(0, 10) });
+      }
+    }
+    for (const m of matcheados) {
+      const ranges = licMap.get(m.empleadoId) || [];
+      let injust = 0, conflicto = 0;
+      for (const d of (m.dias || [])) {
+        const licP = ranges.find((r) => d.fecha >= r.desde && d.fecha <= r.hasta);
+        d.licenciaPortal = licP ? licP.tipo : null;
+        if (d.estado === 'sin-marca') {
+          d.estado = licP ? 'licencia-portal' : 'injustificado';
+          if (licP) d.licenciaSoloPortal = true;   // el portal tiene licencia; el reloj NO la registró
+        } else if (d.estado === 'licencia') {
+          d.sinLicenciaPortal = !licP;             // Pro-Soft marca licencia; el portal NO la tiene
+        } else if (licP) {
+          // Hay licencia aprobada en el portal PERO el reloj muestra trabajo/marcas
+          // ese día → informó una licencia y al final no la tomó (trabajó).
+          d.licenciaConflicto = true;
+        }
+        if (d.estado === 'injustificado') injust++;
+        if (d.licenciaConflicto) conflicto++;
+      }
+      m.diasInjustificados = injust;
+      m.diasLicenciaConflicto = conflicto;
+    }
     const conRevisar = matcheados.filter((m) => m.diasARevisar.length).length;
 
     const resumen = {
@@ -92,6 +134,8 @@ router.post('/importar', requireRole('rrhh', 'admin'), upload.single('archivo'),
       matcheados: matcheados.length,
       sinMatch: sinMatch.length,
       conRevisar,
+      conInjustificados: matcheados.filter((m) => m.diasInjustificados > 0).length,
+      conConflictoLicencia: matcheados.filter((m) => m.diasLicenciaConflicto > 0).length,
     };
 
     // Si no se confirma, devolvemos solo el preview (no se persiste).
@@ -115,6 +159,10 @@ router.post('/importar', requireRole('rrhh', 'admin'), upload.single('archivo'),
           tardanzasMin: m.tardanzasMin,
           diasTardanza: m.diasTardanza,
           diasARevisar: m.diasARevisar,
+          licenciasProsoft: m.licenciasProsoft,
+          diasLicencia: m.diasLicencia,
+          diasInjustificados: m.diasInjustificados,
+          diasLicenciaConflicto: m.diasLicenciaConflicto,
           dias: m.dias,
         };
         await client.query(
