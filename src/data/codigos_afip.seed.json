@@ -1,0 +1,284 @@
+{
+ "situacion": [
+  {
+   "codigo": 0,
+   "nombre": "Baja por fallecimiento"
+  },
+  {
+   "codigo": 1,
+   "nombre": "Activo"
+  },
+  {
+   "codigo": 2,
+   "nombre": "Bajas otras causales"
+  },
+  {
+   "codigo": 3,
+   "nombre": "Activo Decreto N° 796/97"
+  },
+  {
+   "codigo": 4,
+   "nombre": "Bajas otras causales Decreto N° 796/97"
+  },
+  {
+   "codigo": 5,
+   "nombre": "Licencia por maternidad"
+  },
+  {
+   "codigo": 6,
+   "nombre": "Suspensiones otras causales"
+  },
+  {
+   "codigo": 7,
+   "nombre": "Baja por despido"
+  },
+  {
+   "codigo": 8,
+   "nombre": "Baja por despido Decreto N° 796/97"
+  },
+  {
+   "codigo": 9,
+   "nombre": "Suspendido. Art. 223 bis de la Ley N° 20.744"
+  },
+  {
+   "codigo": 10,
+   "nombre": "Licencia por excedencia"
+  },
+  {
+   "codigo": 11,
+   "nombre": "Licencia por maternidad Down"
+  },
+  {
+   "codigo": 12,
+   "nombre": "Licencia por vacaciones"
+  },
+  {
+   "codigo": 13,
+   "nombre": "Licencia sin goce de haberes"
+  },
+  {
+   "codigo": 14,
+   "nombre": "Reserva de puesto"
+  },
+  {
+   "codigo": 15,
+   "nombre": "E.S.E. Cese transitorio de servicios (Art. 6° inc. 6 y 7 Dto. 342/92)"
+  },
+  {
+   "codigo": 16,
+   "nombre": "Personal siniestrado de terceros uso por la ART"
+  },
+  {
+   "codigo": 17,
+   "nombre": "Reingreso por disposición judicial"
+  },
+  {
+   "codigo": 18,
+   "nombre": "ILT (Incapacidad Laboral Transitoria) primeros 10 días"
+  },
+  {
+   "codigo": 19,
+   "nombre": "ILT (Incapacidad Laboral Transitoria) días 11 y siguientes"
+  },
+  {
+   "codigo": 20,
+   "nombre": "Trabajador siniestrado en nómina de A.R.T."
+  },
+  {
+   "codigo": 21,
+   "nombre": "Trabajador de temporada Reserva de puesto"
+  },
+  {
+   "codigo": 31,
+   "nombre": "Activo - Funciones en el exterior"
+  },
+  {
+   "codigo": 32,
+   "nombre": "Licencia por paternidad"
+  },
+  {
+   "codigo": 33,
+   "nombre": "Licencia por fuerza mayor (Art. 221 LCT)"
+  },
+  {
+   "codigo": 42,
+   "nombre": "Empleado eventual en empresa usuaria (uso de la E.S.E.)"
+  },
+  {
+   "codigo": 43,
+   "nombre": "Empleado eventual en EU (uso de la ESE) mes incompleto"
+  }
+ ],
+ "condicion": [
+  {
+   "codigo": 1,
+   "nombre": "Servicios comunes - mayor de 18 años"
+  },
+  {
+   "codigo": 2,
+   "nombre": "Jubilado"
+  },
+  {
+   "codigo": 3,
+   "nombre": "Menor (entre 16 y 18 años)"
+  },
+  {
+   "codigo": 4,
+   "nombre": "Servicios diferenciados - mayor de 18 años"
+  },
+  {
+   "codigo": 5,
+   "nombre": "Servicios diferenciados - menor de 18 años"
+  }
+ ],
+ "modalidad": [
+  {
+   "codigo": 0,
+   "nombre": "Contrato Modalidad Promovida. Reducción 0%"
+  },
+  {
+   "codigo": 1,
+   "nombre": "A tiempo parcial: indeterminado/permanente"
+  },
+  {
+   "codigo": 2,
+   "nombre": "Becarios - Residencias médicas Ley 22.127"
+  },
+  {
+   "codigo": 3,
+   "nombre": "De aprendizaje Ley 25.013"
+  },
+  {
+   "codigo": 4,
+   "nombre": "Especial de fomento del empleo Ley 24.465"
+  },
+  {
+   "codigo": 5,
+   "nombre": "Fomento del empleo Ley 24.013 y Ley 24.465"
+  },
+  {
+   "codigo": 6,
+   "nombre": "Lanzamiento nueva actividad (idem 005)"
+  },
+  {
+   "codigo": 7,
+   "nombre": "Período de prueba Ley 24.465 y Ley 25.013"
+  },
+  {
+   "codigo": 8,
+   "nombre": "A tiempo completo indeterminado / Trabajo permanente"
+  },
+  {
+   "codigo": 9,
+   "nombre": "Práctica laboral para jóvenes"
+  },
+  {
+   "codigo": 10,
+   "nombre": "Pasantías Ley 25.165 Dto. 340/92"
+  },
+  {
+   "codigo": 11,
+   "nombre": "Trabajo de temporada"
+  },
+  {
+   "codigo": 12,
+   "nombre": "Trabajo eventual"
+  },
+  {
+   "codigo": 13,
+   "nombre": "Trabajo formación"
+  },
+  {
+   "codigo": 14,
+   "nombre": "Nuevo período de prueba"
+  },
+  {
+   "codigo": 18,
+   "nombre": "Trabajador discapacitado Art. 34 Ley 24.147"
+  },
+  {
+   "codigo": 21,
+   "nombre": "A tiempo parcial determinado (contrato a plazo fijo)"
+  },
+  {
+   "codigo": 22,
+   "nombre": "A tiempo completo determinado (contrato a plazo fijo)"
+  },
+  {
+   "codigo": 23,
+   "nombre": "Personal no permanente Ley 22.248"
+  },
+  {
+   "codigo": 24,
+   "nombre": "Personal de la construcción Ley 22.250"
+  },
+  {
+   "codigo": 25,
+   "nombre": "Empleo público provincial"
+  },
+  {
+   "codigo": 27,
+   "nombre": "Pasantías Ley 26.427 (con obra social)"
+  },
+  {
+   "codigo": 32,
+   "nombre": "Período de prueba Art. 6° Ley 25.877"
+  },
+  {
+   "codigo": 49,
+   "nombre": "Directores - empleado SA con obra social y LRT"
+  },
+  {
+   "codigo": 50,
+   "nombre": "Contrato Modalidad Promovida. Reducción 50%"
+  },
+  {
+   "codigo": 99,
+   "nombre": "LRT (Directores SA, municipios, org. cent. y descent., etc.)"
+  },
+  {
+   "codigo": 100,
+   "nombre": "Contrato Modalidad Promovida. Reducción 100%"
+  },
+  {
+   "codigo": 110,
+   "nombre": "Trabajo permanente prestación continua Ley 26.727"
+  },
+  {
+   "codigo": 111,
+   "nombre": "Trabajo temporario Ley 26.727"
+  },
+  {
+   "codigo": 112,
+   "nombre": "Trabajo permanente discontinuo Ley 26.727"
+  },
+  {
+   "codigo": 113,
+   "nombre": "Trabajo por equipo o cuadrilla familiar Ley 26.727"
+  }
+ ],
+ "zona": [
+  {
+   "codigo": 0,
+   "nombre": "Sin discriminar / Resto del país"
+  },
+  {
+   "codigo": 1,
+   "nombre": "Zona patagónica (Ley 23.272)"
+  }
+ ],
+ "actividad": [
+  {
+   "codigo": 0,
+   "nombre": "Sin actividad diferencial"
+  },
+  {
+   "codigo": 16,
+   "nombre": "Trabajadores en relación de dependencia - general"
+  },
+  {
+   "codigo": 87,
+   "nombre": "Personal de la construcción"
+  }
+ ]
+}

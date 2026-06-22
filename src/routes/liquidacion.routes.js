@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
-import { calcularRecibo } from '../lib/liquidacion.js';
+import { calcularRecibo, factorNoHabitual, TIPOS_SAC, TIPOS_NO_HABITUAL_B } from '../lib/liquidacion.js';
 import { ganTablaParaFecha } from '../lib/gananciasParams.js';
 import { periodoCerrado } from './cierres.routes.js';
 import { idsEquipoDe } from '../lib/equipo.js';
@@ -24,22 +24,28 @@ async function registrarCuotas(cuotas, anio, mes, reciboId, corridaId) {
 // Acumulado de Ganancias enero→mes-1: remunerativo, aportes y retención ya practicada.
 async function acumGananciasDe(empleadoId, anio, mes) {
   const rows = (await query(
-    `SELECT data FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes < $3
-       AND tipo IN ('mensual','quincenal_1','quincenal_2','sac1','sac2','vacaciones')`,
+    `SELECT mes, tipo, data FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes < $3
+       AND tipo IN ('mensual','quincenal_1','quincenal_2','vacaciones','complementaria','sac1','sac2')`,
     [empleadoId, Number(anio), Number(mes)])).rows;
-  let remGravAcum = 0, aportesAcum = 0, retenidoAcum = 0;
-  for (const { data } of rows) {
-    const t = data?.totales || {};
-    remGravAcum += Number(t.totalRemun || 0);
-    // aportes = descuentos que no son Ganancias ni embargos/anticipos (aproximación: usar ganancias.aportesAcum del detalle si está)
-    const g = data?.ganancias;
-    if (g) { aportesAcum += 0; } // el acumulado de aportes se reconstruye abajo
+  // Componentes RG 4003 (Anexo II): A habitual, B no habituales, C SAC real.
+  const a = { habitual: 0, noHabPro: 0, noHabFull: 0, aporHabitual: 0, aporNoHabPro: 0,
+    aporNoHabFull: 0, sacReal: 0, aporSacReal: 0, retenidoAcum: 0 };
+  for (const row of rows) {
+    const data = row.data;
+    const remun = Number(data?.totales?.totalRemun || 0);
+    let aportes = 0;
     for (const d of (data?.descuentos || [])) {
-      if (/Ganancias/i.test(d.concepto)) retenidoAcum += Number(d.monto || 0);
-      else if (/Jubilación|Obra Social|ANSSAL|INSSJP|Cuota sindical/i.test(d.concepto)) aportesAcum += Number(d.monto || 0);
+      if (/Ganancias/i.test(d.concepto)) a.retenidoAcum += Number(d.monto || 0);
+      else if (/Jubilación|Obra Social|ANSSAL|INSSJP|Cuota sindical/i.test(d.concepto)) aportes += Number(d.monto || 0);
     }
+    if (TIPOS_SAC.includes(row.tipo)) { a.sacReal += remun; a.aporSacReal += aportes; }
+    else if (TIPOS_NO_HABITUAL_B.includes(row.tipo)) {
+      const f = factorNoHabitual(row.mes, Number(mes));
+      a.noHabPro += remun * f; a.noHabFull += remun; a.aporNoHabPro += aportes * f; a.aporNoHabFull += aportes;
+    } else { a.habitual += remun; a.aporHabitual += aportes; }
   }
-  return { remGravAcum: r2(remGravAcum), aportesAcum: r2(aportesAcum), retenidoAcum: r2(retenidoAcum) };
+  for (const k of Object.keys(a)) a[k] = r2(a[k]);
+  return a;
 }
 
 // Mapa de pres_base por código de sindicato (para la base del presentismo, como la vanilla).

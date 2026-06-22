@@ -585,3 +585,88 @@ CREATE TABLE IF NOT EXISTS sicoss_generaciones (
   id SERIAL PRIMARY KEY, version_diseno INTEGER NOT NULL, anio INTEGER, mes INTEGER,
   created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE sicoss_generaciones ADD COLUMN IF NOT EXISTS empresa TEXT;
+ALTER TABLE sicoss_generaciones ADD COLUMN IF NOT EXISTS cantidad INTEGER;
+ALTER TABLE sicoss_generaciones ADD COLUMN IF NOT EXISTS archivo BOOLEAN NOT NULL DEFAULT false;
+
+-- Tablas de codigos de ARCA/AFIP (desplegables del ABM y SICOSS)
+-- tipo: situacion | condicion | actividad | modalidad | zona
+CREATE TABLE IF NOT EXISTS codigos_afip (
+  tipo   TEXT NOT NULL,
+  codigo INTEGER NOT NULL,
+  nombre TEXT NOT NULL,
+  activo BOOLEAN NOT NULL DEFAULT true,
+  PRIMARY KEY (tipo, codigo)
+);
+CREATE INDEX IF NOT EXISTS idx_codigos_afip_tipo ON codigos_afip(tipo);
+
+-- Padron de obras sociales (RNOS).
+CREATE TABLE IF NOT EXISTS obras_sociales (
+  codigo        TEXT PRIMARY KEY,
+  codigo_sicoss TEXT,
+  nombre        TEXT NOT NULL,
+  activo        BOOLEAN NOT NULL DEFAULT true
+);
+
+CREATE TABLE IF NOT EXISTS arca_tablas_meta (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  ultimo_chequeo_at TIMESTAMPTZ,
+  detalle TEXT,
+  CONSTRAINT arca_meta_unica CHECK (id = 1)
+);
+
+-- Cambios de obra social del empleado (con historico, patron cambios_domicilio)
+CREATE TABLE IF NOT EXISTS cambios_obra_social (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  os_codigo TEXT, os_nombre TEXT,
+  os_anterior_codigo TEXT, os_anterior_nombre TEXT,
+  estado TEXT NOT NULL DEFAULT 'pendiente',
+  origen TEXT NOT NULL DEFAULT 'empleado',
+  resuelto_por TEXT, resuelto_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_camos_empleado ON cambios_obra_social(empleado_id);
+
+-- ── Higiene y Seguridad: catálogo editable + manuales/documentos ──
+-- tipo: capacitacion | epp | talle.  extra: { obligatorio, vigencia_meses, categoria }
+CREATE TABLE IF NOT EXISTS hys_catalogo (
+  tipo   TEXT NOT NULL,
+  codigo TEXT NOT NULL,
+  nombre TEXT NOT NULL,
+  extra  JSONB NOT NULL DEFAULT '{}'::jsonb,
+  activo BOOLEAN NOT NULL DEFAULT true,
+  PRIMARY KEY (tipo, codigo)
+);
+CREATE TABLE IF NOT EXISTS hys_manuales (
+  id SERIAL PRIMARY KEY,
+  titulo TEXT NOT NULL,
+  categoria TEXT,
+  descripcion TEXT,
+  archivo TEXT,                                  -- contenido base64
+  mime TEXT,
+  filename TEXT,
+  tamano INTEGER,
+  visible_empleado BOOLEAN NOT NULL DEFAULT false,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- tipo de documento: 'manual' | 'catalogo'
+ALTER TABLE hys_manuales ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'manual';
+-- Acuse de recibo / confirmación de lectura por empleado (constancia H&S).
+CREATE TABLE IF NOT EXISTS hys_manual_acuses (
+  manual_id   INTEGER NOT NULL REFERENCES hys_manuales(id) ON DELETE CASCADE,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  fecha       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (manual_id, empleado_id)
+);
+-- Histórico de cambios de talles del empleado.
+CREATE TABLE IF NOT EXISTS hys_talles_historial (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  anterior JSONB, nuevo JSONB, cambios TEXT,
+  origen TEXT NOT NULL DEFAULT 'empleado',
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_hys_talles_hist_emp ON hys_talles_historial(empleado_id);

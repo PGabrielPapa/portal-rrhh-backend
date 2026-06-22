@@ -41,7 +41,7 @@ function aniosAntiguedad(ingreso, anio, mes) {
 }
 
 // Impuesto anual según escala progresiva (Art. 94 LIG)
-function impuestoEscala(base, escala) {
+export function impuestoEscala(base, escala) {
   if (base <= 0 || !escala?.length) return 0;
   for (const t of escala) {
     const hasta = t.hasta == null ? Infinity : t.hasta;
@@ -49,6 +49,72 @@ function impuestoEscala(base, escala) {
   }
   const last = escala[escala.length - 1];
   return last.fijo + (base - last.desde) * last.alicuota / 100;
+}
+
+// RG 4003 (Anexo II, ap. B) — remuneraciones NO habituales (plus vacacional,
+// gratificaciones, ajustes de años anteriores; EXCEPTO SAC): se imputan en forma
+// proporcional al mes de pago y a los meses que restan hasta concluir el año fiscal.
+// Devuelve el factor [0..1] para el mes `mesActual` de un pago hecho en `mesPago`.
+export function factorNoHabitual(mesPago, mesActual) {
+  const k = Number(mesPago), m = Number(mesActual);
+  if (!k || k < 1 || k > 12) return 1;
+  const restantes = 13 - k;                                   // meses desde el pago hasta diciembre (inclusive)
+  const transcurridos = Math.min(restantes, Math.max(0, m - k + 1));
+  return restantes > 0 ? transcurridos / restantes : 1;
+}
+
+// Clasificación de tipos de liquidación para Ganancias 4ª (RG 4003 Anexo II):
+export const TIPOS_SAC = ['sac1', 'sac2'];                  // Apartado C - Sueldo Anual Complementario
+export const TIPOS_NO_HABITUAL_B = ['complementaria'];      // Apartado B - no habituales (ajustes/gratificaciones)
+// (mensual/quincenal/vacaciones = remuneración habitual, Apartado A)
+
+// Núcleo del cálculo acumulado de Ganancias 4ª conforme RG 4003 (Anexo II):
+//  A) remuneración habitual; B) no habituales imputadas en forma proporcional a fin
+//  de año (excepto SAC); C) SAC = una doceava parte (1/12) de (A+B) cada mes, con
+//  1/12 de las deducciones; el SAC realmente abonado se reconoce sólo en la
+//  liquidación anual/final (anualizada), sin computar el 1/12.
+export function calcularGananciasAcum(comp) {
+  const G = comp.ganTabla || {};
+  const anualizada = !!comp.anualizada;
+  const meses = anualizada ? 12 : Number(comp.mes);
+  const prop = anualizada ? 1 : Math.min(1, Math.max(0, meses / 12));
+
+  const gravadoBase = num(comp.habitual) + (anualizada ? num(comp.noHabFull) : num(comp.noHabPro));
+  const aportesBase = num(comp.aporHabitual) + (anualizada ? num(comp.aporNoHabFull) : num(comp.aporNoHabPro));
+
+  // Apartado C — SAC
+  let sacProv, sacDed;
+  if (anualizada) { sacProv = num(comp.sacReal); sacDed = num(comp.aporSacReal); }   // SAC realmente percibido
+  else { sacProv = gravadoBase / 12; sacDed = aportesBase / 12; }                     // 1/12 mensual
+  const gravadoTotal = gravadoBase + sacProv;
+  const aportesTotal = aportesBase + sacDed;
+
+  const cargasFamAnual = (comp.tieneConyuge ? num(G.cargaConyugeAnual) : 0)
+    + num(comp.nroHijosMenores) * num(G.cargaHijoAnual)
+    + num(comp.nroHijosIncapacitados) * num(G.cargaHijoIncAnual);
+  const mni = num(G.mniAnual) * prop;
+  const dedEsp = num(G.dedEspAnual) * prop;
+  const dedEsp2 = num(G.dedEsp2Anual) * prop;
+  const cargasDed = cargasFamAnual * prop;
+  const dedVol = num(comp.dedVoluntariasAnual) * prop;
+
+  const remSujeta = Math.max(0, gravadoTotal - aportesTotal - mni - dedEsp - dedEsp2 - cargasDed - dedVol);
+  const impDet = (prop > 0 && prop < 1)
+    ? round2(impuestoEscala(remSujeta / prop, G.escala) * prop)
+    : round2(impuestoEscala(remSujeta, G.escala));
+  const retenidoAnterior = num(comp.retenidoAcum);
+  const retencionPeriodo = round2(impDet - retenidoAnterior);
+
+  return {
+    mesesTranscurridos: meses, anualizada,
+    remGravAcum: round2(gravadoTotal),
+    gravadoBase: round2(gravadoBase), sacProvision: round2(sacProv), gravadoTotal: round2(gravadoTotal),
+    aportesAcum: round2(aportesTotal), aportesBase: round2(aportesBase), sacDeduccion: round2(sacDed),
+    mni: round2(mni), dedEspecial: round2(dedEsp), dedEspecial2: round2(dedEsp2),
+    cargasFamilia: round2(cargasDed), dedVoluntarias: round2(dedVol),
+    remSujeta: round2(remSujeta), impuestoDeterminado: round2(impDet),
+    retenidoAnterior: round2(retenidoAnterior), retencionPeriodo, periodo: G.periodo || null,
+  };
 }
 
 // ── F.1357: Liquidación del Impuesto a las Ganancias (estimación anualizada) ──
@@ -330,41 +396,51 @@ export function calcularRecibo(emp, params, opts) {
   const totalAportes = descuentos.reduce((s, x) => s + x.monto, 0);
   const netoAntesGan = totalHaberes - totalAportes;
 
-  // ── Impuesto a las Ganancias 4ª — modelo ACUMULADO (RG 4003/17) ──
-  // Impuesto sobre el acumulado del año menos lo ya retenido = retención del mes.
-  // Mensual/quincenal/SAC/vacaciones: deducciones personales proporcionales a los meses
-  // transcurridos. Final/anual: anualizadas (proporción completa).
-  const aplicaGan = ['mensual', 'quincenal_1', 'quincenal_2', 'sac1', 'sac2', 'vacaciones', 'final', 'anual'].includes(tipo);
+  // ── Impuesto a las Ganancias 4ª — RG 4003/17 (Anexo II) ──
+  // A) Remuneración habitual del mes. B) No habituales (ajustes/plus/gratificaciones,
+  //    EXCEPTO SAC): imputación proporcional del mes de pago a diciembre. C) SAC:
+  //    1/12 de (A+B) cada mes con 1/12 de las deducciones; el SAC realmente abonado
+  //    se ignora en el mes y se reconcilia en la liquidación anual/final.
+  const aplicaGan = ['mensual', 'quincenal_1', 'quincenal_2', 'sac1', 'sac2', 'vacaciones', 'complementaria', 'final', 'anual'].includes(tipo);
   let ganDetalle = null;
   if (aplicaGan && opts?.calcularGanancias !== false) {
-    const ac = opts?.acumGanancias || { remGravAcum: 0, aportesAcum: 0, retenidoAcum: 0 };
+    const ac = opts?.acumGanancias || {};
     const anualizada = esFinal || tipo === 'anual' || !!opts?.gananciasAnualizada;
-    const meses = anualizada ? 12 : Number(mes);
-    const prop = anualizada ? 1 : Math.min(1, Math.max(0, meses / 12));
-    const remAcum = num(ac.remGravAcum) + totalRemun;
-    const aportesAcum = num(ac.aportesAcum) + totalAportes;
-    const cargasFamAnual = (opts?.tieneConyuge ? num(G.cargaConyugeAnual) : 0)
-      + num(opts?.nroHijosMenores) * num(G.cargaHijoAnual)
-      + num(opts?.nroHijosIncapacitados) * num(G.cargaHijoIncAnual);
-    const mniProp = num(G.mniAnual) * prop;
-    const dedEspProp = num(G.dedEspAnual) * prop;
-    const dedEsp2Prop = num(G.dedEsp2Anual) * prop;
-    const cargasProp = cargasFamAnual * prop;
-    const dedVolProp = num(opts?.dedVoluntariasAnual) * prop;
-    const remSujeta = Math.max(0, remAcum - aportesAcum - mniProp - dedEspProp - dedEsp2Prop - cargasProp - dedVolProp);
-    const impDetAcum = impuestoEscala(remSujeta, G.escala);
-    let ganRet = round2(impDetAcum - num(ac.retenidoAcum)); // retención del período (negativo = devolución)
-    let ganTopeada = false;
-    if (ganRet > 0 && !anualizada) {
-      const topePct = (p.gan_topeRetencionPct != null ? num(p.gan_topeRetencionPct) : 35);
-      const tope = netoAntesGan * topePct / 100;
-      if (ganRet > tope) { ganRet = round2(tope); ganTopeada = true; }
+    const esSacPago = TIPOS_SAC.includes(tipo);
+    const esNoHabB = TIPOS_NO_HABITUAL_B.includes(tipo);
+    const esHabitualCur = !esSacPago && !esNoHabB;                       // mensual/quincenal/vacaciones/final
+    const fB = anualizada ? 1 : factorNoHabitual(Number(mes), Number(mes));
+    const comp = {
+      habitual: num(ac.habitual) + (esHabitualCur ? totalRemun : 0),
+      noHabPro: num(ac.noHabPro) + (esNoHabB ? totalRemun * fB : 0),
+      noHabFull: num(ac.noHabFull) + (esNoHabB ? totalRemun : 0),
+      aporHabitual: num(ac.aporHabitual) + (esHabitualCur ? totalAportes : 0),
+      aporNoHabPro: num(ac.aporNoHabPro) + (esNoHabB ? totalAportes * fB : 0),
+      aporNoHabFull: num(ac.aporNoHabFull) + (esNoHabB ? totalAportes : 0),
+      sacReal: num(ac.sacReal) + (esSacPago ? totalRemun : 0),
+      aporSacReal: num(ac.aporSacReal) + (esSacPago ? totalAportes : 0),
+      retenidoAcum: num(ac.retenidoAcum),
+      tieneConyuge: opts?.tieneConyuge, nroHijosMenores: opts?.nroHijosMenores,
+      nroHijosIncapacitados: opts?.nroHijosIncapacitados, dedVoluntariasAnual: opts?.dedVoluntariasAnual,
+      ganTabla: G, mes, anualizada,
+    };
+    const r = calcularGananciasAcum(comp);
+    // El recibo de SAC no genera retención propia en el mes: ya se retiene mes a mes
+    // mediante el 1/12 (RG 4003 ap. C). Sólo se reconcilia en la liquidación anual/final.
+    if (esSacPago && !anualizada) {
+      ganDetalle = { ...r, retencionPeriodo: 0, sacRecibo: true };
+    } else {
+      let ganRet = r.retencionPeriodo;
+      let ganTopeada = false;
+      if (ganRet > 0 && !anualizada) {
+        const topePct = (p.gan_topeRetencionPct != null ? num(p.gan_topeRetencionPct) : 35);
+        const tope = netoAntesGan * topePct / 100;
+        if (ganRet > tope) { ganRet = round2(tope); ganTopeada = true; }
+      }
+      if (ganRet > 0) descuentos.push({ concepto: 'Impuesto a las Ganancias 4ª' + (ganTopeada ? ` — tope ${(p.gan_topeRetencionPct != null ? num(p.gan_topeRetencionPct) : 35)}%` : ''), monto: ganRet });
+      else if (ganRet < 0) descuentos.push({ concepto: 'Devolución Impuesto a las Ganancias', monto: ganRet });
+      ganDetalle = { ...r, retencionPeriodo: ganRet };
     }
-    if (ganRet > 0) descuentos.push({ concepto: 'Impuesto a las Ganancias 4ª' + (ganTopeada ? ` — tope ${(p.gan_topeRetencionPct != null ? num(p.gan_topeRetencionPct) : 35)}%` : ''), monto: ganRet });
-    else if (ganRet < 0) descuentos.push({ concepto: 'Devolución Impuesto a las Ganancias', monto: ganRet });
-    ganDetalle = { remGravAcum: round2(remAcum), aportesAcum: round2(aportesAcum), mesesTranscurridos: meses, anualizada,
-      mni: round2(mniProp), dedEspecial: round2(dedEspProp), dedEspecial2: round2(dedEsp2Prop), cargasFamilia: round2(cargasProp), dedVoluntarias: round2(dedVolProp),
-      remSujeta: round2(remSujeta), impuestoDeterminado: round2(impDetAcum), retenidoAnterior: round2(num(ac.retenidoAcum)), retencionPeriodo: ganRet, periodo: G.periodo || null };
   }
 
   // Descuento del anticipo de ajuste de sueldo abonado durante el mes (regularización).

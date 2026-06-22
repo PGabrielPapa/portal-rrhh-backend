@@ -196,19 +196,21 @@ async function main() {
 
     // Parámetros de Ganancias — período inicial (solo si no hay ninguno)
     try {
-      const gex = await client.query('SELECT 1 FROM ganancias_periodos LIMIT 1');
-      if (!gex.rowCount) {
-        const gan = JSON.parse(fs.readFileSync(path.join(dataDir, 'ganancias.seed.json'), 'utf8'));
-        const vig = /(\d{4})-S([12])/.exec(gan.periodo || '');
-        const vigenciaDesde = vig ? `${vig[1]}-${vig[2] === '1' ? '01' : '07'}-01` : '2026-01-01';
-        await client.query(
-          `INSERT INTO ganancias_periodos (periodo, vigencia_desde, mni_anual, ded_esp_anual, ded_esp2_anual, carga_conyuge_anual, carga_hijo_anual, carga_hijo_inc_anual, escala)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-          [gan.periodo || '2026-S1', vigenciaDesde, gan.mniAnual || 0, gan.dedEspAnual || 0, gan.dedEsp2Anual || 0,
-           gan.cargaConyugeAnual || 0, gan.cargaHijoAnual || 0, gan.cargaHijoIncAnual || 0, JSON.stringify(gan.escala || [])]
-        );
-        console.log('[seed] ganancias período inicial: ok');
-      }
+      const gan = JSON.parse(fs.readFileSync(path.join(dataDir, 'ganancias.seed.json'), 'utf8'));
+      const vig = /(\d{4})-S([12])/.exec(gan.periodo || '');
+      const vigenciaDesde = vig ? `${vig[1]}-${vig[2] === '1' ? '01' : '07'}-01` : '2026-01-01';
+      // UPSERT por período: corrige los valores si la fila ya existe (tablas vigentes ARCA).
+      await client.query(
+        `INSERT INTO ganancias_periodos (periodo, vigencia_desde, rg, mni_anual, ded_esp_anual, ded_esp2_anual, carga_conyuge_anual, carga_hijo_anual, carga_hijo_inc_anual, escala)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         ON CONFLICT (periodo) DO UPDATE SET vigencia_desde=EXCLUDED.vigencia_desde, rg=EXCLUDED.rg,
+           mni_anual=EXCLUDED.mni_anual, ded_esp_anual=EXCLUDED.ded_esp_anual, ded_esp2_anual=EXCLUDED.ded_esp2_anual,
+           carga_conyuge_anual=EXCLUDED.carga_conyuge_anual, carga_hijo_anual=EXCLUDED.carga_hijo_anual,
+           carga_hijo_inc_anual=EXCLUDED.carga_hijo_inc_anual, escala=EXCLUDED.escala, updated_at=now()`,
+        [gan.periodo || '2026-S1', vigenciaDesde, gan.rg || null, gan.mniAnual || 0, gan.dedEspAnual || 0, gan.dedEsp2Anual || 0,
+         gan.cargaConyugeAnual || 0, gan.cargaHijoAnual || 0, gan.cargaHijoIncAnual || 0, JSON.stringify(gan.escala || [])]
+      );
+      console.log('[seed] ganancias período (upsert): ok');
     } catch (e) { console.warn('[seed] ganancias:', e.message); }
 
     // Catálogo de sindicatos (idempotente)
@@ -253,6 +255,41 @@ async function main() {
         console.log('[seed] reglamento: ok');
       }
     } catch (e) { console.warn('[seed] reglamento:', e.message); }
+
+    // Tablas de codigos de ARCA/AFIP (desplegables del ABM y SICOSS) - idempotente.
+    try {
+      const codigos = JSON.parse(fs.readFileSync(path.join(dataDir, 'codigos_afip.seed.json'), 'utf8'));
+      let nCod = 0;
+      for (const [tipo, lista] of Object.entries(codigos)) {
+        for (const it of lista) {
+          await client.query(
+            `INSERT INTO codigos_afip (tipo, codigo, nombre) VALUES ($1,$2,$3)
+             ON CONFLICT (tipo, codigo) DO UPDATE SET nombre = EXCLUDED.nombre`,
+            [tipo, it.codigo, it.nombre]);
+          nCod++;
+        }
+      }
+      console.log(`[seed] codigos AFIP: ${nCod}`);
+    } catch (e) { console.warn('[seed] codigos AFIP:', e.message); }
+
+    // Padron de obras sociales (RNOS) - idempotente. codigo_sicoss = digitos del RNOS (6).
+    try {
+      const oss = JSON.parse(fs.readFileSync(path.join(dataDir, 'obras_sociales.seed.json'), 'utf8'));
+      let nOs = 0;
+      for (const os of oss) {
+        const sic = String(os.codigo || '').replace(/\D/g, '').padStart(6, '0').slice(-6);
+        await client.query(
+          `INSERT INTO obras_sociales (codigo, codigo_sicoss, nombre) VALUES ($1,$2,$3)
+           ON CONFLICT (codigo) DO UPDATE SET nombre = EXCLUDED.nombre, codigo_sicoss = EXCLUDED.codigo_sicoss`,
+          [os.codigo, sic, os.nombre]);
+        nOs++;
+      }
+      await client.query(
+        `INSERT INTO arca_tablas_meta (id, ultimo_chequeo_at, detalle) VALUES (1, now(), $1)
+         ON CONFLICT (id) DO UPDATE SET ultimo_chequeo_at = now(), detalle = EXCLUDED.detalle`,
+        [`seed inicial: ${nOs} obras sociales`]);
+      console.log(`[seed] obras sociales (RNOS): ${nOs}`);
+    } catch (e) { console.warn('[seed] obras sociales:', e.message); }
 
     await client.query('COMMIT');
     console.log(`[seed] empleados cargados: ${ok} · omitidos: ${skip}`);

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { calcularRecibo } from '../lib/liquidacion.js';
+import { calcularRecibo, factorNoHabitual, TIPOS_SAC, TIPOS_NO_HABITUAL_B, calcularGananciasAcum } from '../lib/liquidacion.js';
 import { ganTablaParaFecha, mapGanRow } from '../lib/gananciasParams.js';
 import { requireRole } from '../middleware/auth.js';
 
@@ -15,18 +15,31 @@ const hoy = () => { const d = new Date(); return { anio: d.getFullYear(), mes: d
 // Acumula remunerativo y aportes por categoría + retención, de enero a mes-1.
 async function acumular(empleadoId, anio, mes) {
   const rows = (await query(
-    `SELECT data FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes < $3
-       AND tipo IN ('mensual','quincenal_1','quincenal_2','sac1','sac2','vacaciones')`,
+    `SELECT mes, tipo, data FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes < $3
+       AND tipo IN ('mensual','quincenal_1','quincenal_2','vacaciones','complementaria','sac1','sac2')`,
     [empleadoId, Number(anio), Number(mes)])).rows;
-  const a = { remun: 0, jub: 0, os: 0, sind: 0, retenido: 0 };
-  for (const { data } of rows) {
-    a.remun += Number(data?.totales?.totalRemun || 0);
+  // Componentes RG 4003: A (habitual), B (no habituales, prorrateadas y totales),
+  // C (SAC realmente percibido). jub/os/sind sólo de la parte habitual (para mostrar).
+  const a = { habitual: 0, noHabPro: 0, noHabFull: 0, aporHabitual: 0, aporNoHabPro: 0,
+    aporNoHabFull: 0, sacReal: 0, aporSacReal: 0, retenidoAcum: 0, jub: 0, os: 0, sind: 0 };
+  for (const row of rows) {
+    const data = row.data;
+    const remun = Number(data?.totales?.totalRemun || 0);
+    let aportes = 0, jub = 0, os = 0, sind = 0;
     for (const d of (data?.descuentos || [])) {
       const c = d.concepto || '';
-      if (/Ganancias/i.test(c)) a.retenido += Number(d.monto || 0);
-      else if (/Jubilación/i.test(c)) a.jub += Number(d.monto || 0);
-      else if (/Obra Social|ANSSAL|INSSJP/i.test(c)) a.os += Number(d.monto || 0);
-      else if (/Cuota sindical/i.test(c)) a.sind += Number(d.monto || 0);
+      if (/Ganancias/i.test(c)) a.retenidoAcum += Number(d.monto || 0);
+      else if (/Jubilación/i.test(c)) { jub += Number(d.monto || 0); aportes += Number(d.monto || 0); }
+      else if (/Obra Social|ANSSAL|INSSJP/i.test(c)) { os += Number(d.monto || 0); aportes += Number(d.monto || 0); }
+      else if (/Cuota sindical/i.test(c)) { sind += Number(d.monto || 0); aportes += Number(d.monto || 0); }
+    }
+    if (TIPOS_SAC.includes(row.tipo)) {
+      a.sacReal += remun; a.aporSacReal += aportes;
+    } else if (TIPOS_NO_HABITUAL_B.includes(row.tipo)) {
+      const f = factorNoHabitual(row.mes, Number(mes));
+      a.noHabPro += remun * f; a.noHabFull += remun; a.aporNoHabPro += aportes * f; a.aporNoHabFull += aportes;
+    } else {
+      a.habitual += remun; a.aporHabitual += aportes; a.jub += jub; a.os += os; a.sind += sind;
     }
   }
   return a;
@@ -55,12 +68,10 @@ async function f1357For(empleadoId, anio, mes, anualizada) {
     [empleadoId, Number(anio), Number(mes)])).rows[0]?.data;
   const rec = guardado || calcularRecibo(emp, params, {
     anio: Number(anio), mes: Number(mes), tipo: anualizada ? 'anual' : 'mensual',
-    fechaPago: fechaRef, ganTabla,
-    acumGanancias: { remGravAcum: ac.remun, aportesAcum: ac.jub + ac.os + ac.sind, retenidoAcum: ac.retenido },
+    fechaPago: fechaRef, ganTabla, acumGanancias: ac,
     tieneConyuge, nroHijosMenores, nroHijosIncapacitados, gananciasAnualizada: anualizada,
   });
-  const g = rec.ganancias || {};
-  // Aportes acumulados por categoría = previos + mes corriente
+  // Aportes habituales del MES corriente (mensual).
   let curJub = 0, curOS = 0, curSind = 0;
   for (const d of (rec.descuentos || [])) {
     const c = d.concepto || '';
@@ -68,26 +79,38 @@ async function f1357For(empleadoId, anio, mes, anualizada) {
     else if (/Obra Social|ANSSAL|INSSJP/i.test(c)) curOS += Number(d.monto || 0);
     else if (/Cuota sindical/i.test(c)) curSind += Number(d.monto || 0);
   }
+  const curRemun = Number(rec.totales?.totalRemun || 0);
   const jub = r2(ac.jub + curJub), os = r2(ac.os + curOS), sind = r2(ac.sind + curSind);
-  const ret = Number(g.retencionPeriodo || 0);
+
+  // F.1357 SIEMPRE recalculado con el núcleo RG 4003 (A + B + SAC 1/12).
+  const comp = {
+    habitual: Number(ac.habitual || 0) + curRemun,
+    noHabPro: Number(ac.noHabPro || 0), noHabFull: Number(ac.noHabFull || 0),
+    aporHabitual: Number(ac.aporHabitual || 0) + (curJub + curOS + curSind),
+    aporNoHabPro: Number(ac.aporNoHabPro || 0), aporNoHabFull: Number(ac.aporNoHabFull || 0),
+    sacReal: Number(ac.sacReal || 0), aporSacReal: Number(ac.aporSacReal || 0),
+    retenidoAcum: Number(ac.retenidoAcum || 0),
+    tieneConyuge, nroHijosMenores, nroHijosIncapacitados,
+    ganTabla, mes: Number(mes), anualizada,
+  };
+  const gan = calcularGananciasAcum(comp);
 
   return {
     empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, cuil: emp.cuil, cat: emp.cat },
-    periodo: { anio: Number(anio), mes: Number(mes), periodoLabel: `${String(mes).padStart(2, '0')}/${anio}`, tablas: g.periodo || '', anualizada: !!g.anualizada, mesesTranscurridos: g.mesesTranscurridos || mes },
-    gravadas: { remBrutaNoHab: r2(g.remGravAcum || 0), sac: 0, totalGravada: r2(g.remGravAcum || 0) },
-    dedGenerales: { jubilacion: jub, obraSocial: os, cuotaSindical: sind, total: r2(g.aportesAcum || (jub + os + sind)) },
+    periodo: { anio: Number(anio), mes: Number(mes), periodoLabel: `${String(mes).padStart(2, '0')}/${anio}`, tablas: ganTabla?.periodo || '', anualizada: !!anualizada, mesesTranscurridos: gan.mesesTranscurridos },
+    gravadas: { remBrutaNoHab: gan.gravadoBase, sac: gan.sacProvision, totalGravada: gan.gravadoTotal },
+    dedGenerales: { jubilacion: jub, obraSocial: os, cuotaSindical: sind, sacDeduccion: gan.sacDeduccion, total: gan.aportesAcum },
     dedPersonales: {
-      mni: r2(g.mni || 0),
-      cargasFamilia: { total: r2(g.cargasFamilia || 0), tieneConyuge, nHijos: nroHijosMenores, nHijosInc: nroHijosIncapacitados },
-      dedEspecial: r2(g.dedEspecial || 0), dedEspecial2: r2(g.dedEspecial2 || 0), dedVoluntarias: r2(g.dedVoluntarias || 0),
-      total: r2((g.mni || 0) + (g.cargasFamilia || 0) + (g.dedEspecial || 0) + (g.dedEspecial2 || 0) + (g.dedVoluntarias || 0)),
+      mni: gan.mni,
+      cargasFamilia: { total: gan.cargasFamilia, tieneConyuge, nHijos: nroHijosMenores, nHijosInc: nroHijosIncapacitados },
+      dedEspecial: gan.dedEspecial, dedEspecial2: gan.dedEspecial2, dedVoluntarias: gan.dedVoluntarias,
+      total: r2(gan.mni + gan.cargasFamilia + gan.dedEspecial + gan.dedEspecial2 + gan.dedVoluntarias),
     },
     determinacion: {
-      remSujeta: r2(g.remSujeta || 0), impuestoDeterminado: r2(g.impuestoDeterminado || 0),
-      retenidoAnterior: r2(g.retenidoAnterior || ac.retenido),
-      impuestoARetener: r2(Math.max(0, ret)), devolucion: r2(Math.max(0, -ret)),
+      remSujeta: gan.remSujeta, impuestoDeterminado: gan.impuestoDeterminado,
+      retenidoAnterior: gan.retenidoAnterior, impuestoARetener: r2(Math.max(0, gan.retencionPeriodo)), devolucion: r2(Math.max(0, -gan.retencionPeriodo)),
     },
-    nota: 'Cálculo acumulado (RG 4003/17). Montos de Ganancias según parámetros vigentes cargados.',
+    nota: 'RG 4003 (Anexo II): A) habitual; B) no habituales devengadas a diciembre; C) SAC = 1/12 mensual (reconcilia en la liquidación anual). Deducciones (art. 30) y escala (art. 94) vigentes del período.',
   };
 }
 
@@ -207,6 +230,161 @@ router.get('/anual', async (req, res, next) => {
     items.sort((a, b) => a.empresa.localeCompare(b.empresa) || String(a.legNum).localeCompare(String(b.legNum)));
     const tot = items.reduce((a, x) => ({ retener: a.retener + Math.max(0, x.diferencia), devolver: a.devolver + Math.max(0, -x.diferencia) }), { retener: 0, devolver: 0 });
     res.json({ anio, tablaPeriodo: ganTabla.periodo || '', items, totales: { cant: items.length, aRetener: r2(tot.retener), aDevolver: r2(tot.devolver) } });
+  } catch (e) { next(e); }
+});
+
+// GET /api/ganancias/verificacion?anio=&mes=  — chequeo previo a la liquidación:
+// confirma que la tabla de Ganancias vigente corresponde al semestre del período
+// (S1 ene-jun / S2 jul-dic) y devuelve los valores para que RR.HH. los controle.
+router.get('/verificacion', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const d = hoy();
+    const anio = Number(req.query.anio) || d.anio;
+    const mes = Number(req.query.mes) || d.mes;
+    const sem = mes <= 6 ? 1 : 2;
+    const periodoEsperado = `${anio}-S${sem}`;
+    const fechaRef = `${anio}-${String(mes).padStart(2, '0')}-15`;
+    const g = await ganTablaParaFecha(fechaRef);
+    const escala = Array.isArray(g && g.escala) ? g.escala : [];
+    const semOk = !!g && String(g.periodo) === periodoEsperado;          // semestre correcto
+    const dedOk = !!g && Number(g.mniAnual) > 0 && Number(g.dedEspAnual) > 0; // tabla de deducciones (art. 30)
+    const escOk = escala.length >= 2 && escala.some((t) => Number(t.alicuota) > 0); // escala del impuesto (art. 94)
+    const ok = semOk && dedOk && escOk;
+    const ult = escala[escala.length - 1] || {};
+    const faltan = [];
+    if (!dedOk) faltan.push('deducciones (art. 30)');
+    if (!escOk) faltan.push('escala del impuesto (art. 94)');
+    const lbl = `${String(mes).padStart(2, '0')}/${anio}`;
+    let mensaje;
+    if (!g) mensaje = 'No hay tabla de Ganancias cargada. Cargá deducciones (art. 30) y escala (art. 94) antes de liquidar.';
+    else if (!semOk) mensaje = `Atención: la tabla vigente (${g.periodo}) no corresponde al semestre del período (${periodoEsperado}). Actualizá deducciones y escala (RG 4003) antes de liquidar.`;
+    else if (faltan.length) mensaje = `La tabla ${g.periodo} está incompleta: faltan ${faltan.join(' y ')}.`;
+    else mensaje = `Deducciones (art. 30) y escala (art. 94) vigentes ${g.periodo} — correctas para el período ${lbl}.`;
+    res.json({
+      ok, semOk, dedOk, escOk,
+      anio, mes, periodoEsperado,
+      periodoVigente: g ? g.periodo : null,
+      vigenciaDesde: g ? g.vigenciaDesde : null,
+      rg: g ? g.rg : null,
+      valores: g ? {
+        mni: r2(g.mniAnual), dedEsp: r2(g.dedEspAnual), dedEsp2: r2(g.dedEsp2Anual),
+        conyuge: r2(g.cargaConyugeAnual), hijo: r2(g.cargaHijoAnual), hijoInc: r2(g.cargaHijoIncAnual),
+      } : null,
+      escala: g ? {
+        tramos: escala.length,
+        primerTramoHasta: escala[0] ? escala[0].hasta : null,
+        alicuotaMax: ult.alicuota != null ? ult.alicuota : null,
+        fijoMax: ult.fijo != null ? r2(ult.fijo) : null,
+        excedenteMax: ult.desde != null ? r2(ult.desde) : null,
+      } : null,
+      mensaje,
+    });
+  } catch (e) { next(e); }
+});
+
+// POST /api/ganancias/simular — simulador de Ganancias 4ª (RG 4003).
+// modo: 'mensual' (retención de un mes) | 'anual' (proyección 12 meses + liq. anual) |
+//       'final' (liquidación final por egreso). Caso hipotético; no liquida ni persiste.
+router.post('/simular', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const modo = ['mensual', 'anual', 'final'].includes(b.modo) ? b.modo : 'anual';
+    const anio = Number(b.anio) || hoy().anio;
+    const remBruto = Number(b.remBruto) || 0;
+    const tieneConyuge = !!b.tieneConyuge;
+    const nroHijosMenores = Number(b.hijos) || 0;
+    const nroHijosIncapacitados = Number(b.hijosInc) || 0;
+    const noHabMonto = Number(b.noHabMonto) || 0;          // Apartado B (gratificación/ajuste)
+    const noHabMes = Number(b.noHabMes) || 0;              // mes de pago (1-12); 0 = sin no habitual
+    const dedVoluntariasAnual = Number(b.dedVoluntariasAnual) || 0;
+
+    const params = (await query('SELECT data FROM parametros_liq WHERE id=1')).rows[0]?.data || {};
+    const pctAportes = (Number(params.pctJubilacion) || 0) + (Number(params.pctObraSocial) || 0)
+      + (Number(params.pctAnssal) || 0) + (Number(params.pctPamiEmp) || 0);
+    const aporMes = remBruto * pctAportes / 100;
+    const aporNoHab = noHabMonto * pctAportes / 100;
+
+    // Construye el comp acumulado del mes m (remuneración constante) con SAC 1/12 y B prorrateado.
+    async function compMes(m, retAcum) {
+      const ganTabla = await ganTablaParaFecha(`${anio}-${String(m).padStart(2, '0')}-15`);
+      const pagada = noHabMes && m >= noHabMes;
+      const fB = pagada ? factorNoHabitual(noHabMes, m) : 0;
+      return {
+        habitual: remBruto * m,
+        noHabPro: noHabMonto * fB, noHabFull: pagada ? noHabMonto : 0,
+        aporHabitual: aporMes * m,
+        aporNoHabPro: aporNoHab * fB, aporNoHabFull: pagada ? aporNoHab : 0,
+        sacReal: 0, aporSacReal: 0, retenidoAcum: retAcum,
+        tieneConyuge, nroHijosMenores, nroHijosIncapacitados, dedVoluntariasAnual,
+        ganTabla, mes: m, anualizada: false,
+      };
+    }
+
+    // ── Liquidación final (egreso) ──
+    if (modo === 'final') {
+      const ingreso = b.ingreso || `${anio - 3}-01-01`;
+      const fechaEgreso = b.fechaEgreso || `${anio}-${String(hoy().mes).padStart(2, '0')}-28`;
+      const mesEgreso = Number(String(fechaEgreso).slice(5, 7)) || hoy().mes;
+      const ganTabla = await ganTablaParaFecha(`${anio}-12-15`);
+      // Retención ya practicada en los meses previos al egreso (remuneración constante).
+      let retPrev = 0;
+      for (let m = 1; m < mesEgreso; m++) { const g = calcularGananciasAcum(await compMes(m, retPrev)); retPrev += g.retencionPeriodo; }
+      const mPrev = Math.max(0, mesEgreso - 1);
+      const acum = {
+        habitual: remBruto * mPrev, noHabPro: 0, noHabFull: 0, aporHabitual: aporMes * mPrev,
+        aporNoHabPro: 0, aporNoHabFull: 0, sacReal: 0, aporSacReal: 0, retenidoAcum: r2(retPrev),
+      };
+      const emp = { nom: '(simulación)', legNum: '—', empresa: '—', cuil: '', ingreso, bruto: remBruto, cat: 'FC', data: { basico: remBruto, cod_sindicato: 'FC' } };
+      const rec = calcularRecibo(emp, params, {
+        anio, mes: mesEgreso, tipo: 'final', fechaEgreso, motivoBaja: b.motivoBaja || 'sin_causa',
+        mejorRem: remBruto, diasVacNoGozadas: Number(b.diasVacNoGozadas) || 0, ganTabla, acumGanancias: acum,
+        tieneConyuge, nroHijosMenores, nroHijosIncapacitados,
+      });
+      return res.json({
+        modo: 'final', anio, remBruto, fechaEgreso, ingreso, motivoBaja: b.motivoBaja || 'sin_causa',
+        mesEgreso, retenidoPrevio: r2(retPrev), tablaPeriodo: ganTabla ? ganTabla.periodo : null,
+        recibo: { haberes: rec.haberes, descuentos: rec.descuentos, totales: rec.totales, ganancias: rec.ganancias, detalle: rec.detalle },
+      });
+    }
+
+    // ── Mensual / Anual ──
+    const hasta = modo === 'mensual' ? Math.min(12, Math.max(1, Number(b.mes) || hoy().mes)) : 12;
+    const meses = [];
+    let retAcum = 0, detalleMes = null;
+    for (let m = 1; m <= hasta; m++) {
+      const comp = await compMes(m, retAcum);
+      const g = calcularGananciasAcum(comp);
+      meses.push({ mes: m, gravadoBase: g.gravadoBase, sacProvision: g.sacProvision, gravadoTotal: g.gravadoTotal,
+        aportes: g.aportesAcum, deducciones: r2(g.mni + g.dedEspecial + g.dedEspecial2 + g.cargasFamilia),
+        remSujeta: g.remSujeta, impuestoDeterminado: g.impuestoDeterminado, retencionMes: r2(g.retencionPeriodo) });
+      if (modo === 'mensual' && m === hasta) {
+        detalleMes = { mes: m, gravadoBase: g.gravadoBase, sacProvision: g.sacProvision, gravadoTotal: g.gravadoTotal,
+          aportesBase: g.aportesBase, sacDeduccion: g.sacDeduccion, aportes: g.aportesAcum,
+          mni: g.mni, dedEspecial: g.dedEspecial, dedEspecial2: g.dedEspecial2, cargasFamilia: g.cargasFamilia,
+          remSujeta: g.remSujeta, impuestoDeterminado: g.impuestoDeterminado, retenidoAnterior: g.retenidoAnterior, retencionMes: r2(g.retencionPeriodo) };
+      }
+      retAcum += g.retencionPeriodo;
+    }
+
+    if (modo === 'mensual') {
+      const tabla = await ganTablaParaFecha(`${anio}-${String(hasta).padStart(2, '0')}-15`);
+      return res.json({ modo: 'mensual', anio, mes: hasta, remBruto, pctAportes, aporMes: r2(aporMes), tablaPeriodo: tabla ? tabla.periodo : null, detalle: detalleMes });
+    }
+
+    // Anual: liquidación anual (SAC real ≈ una remuneración; no habituales en su totalidad).
+    const ganTablaDic = await ganTablaParaFecha(`${anio}-12-15`);
+    const ga = calcularGananciasAcum({
+      habitual: remBruto * 12, noHabPro: 0, noHabFull: noHabMonto, aporHabitual: aporMes * 12,
+      aporNoHabPro: 0, aporNoHabFull: aporNoHab, sacReal: remBruto, aporSacReal: aporMes,
+      retenidoAcum: retAcum, tieneConyuge, nroHijosMenores, nroHijosIncapacitados, dedVoluntariasAnual,
+      ganTabla: ganTablaDic, mes: 12, anualizada: true,
+    });
+    res.json({
+      modo: 'anual', anio, remBruto, pctAportes, aporMes: r2(aporMes), tablaPeriodo: ganTablaDic ? ganTablaDic.periodo : null,
+      meses, totalRetenidoMensual: r2(retAcum),
+      anual: { gravadoTotal: ga.gravadoTotal, impuestoDeterminado: ga.impuestoDeterminado,
+        retenidoEnElAnio: r2(retAcum), ajusteFinal: ga.retencionPeriodo, sacReal: remBruto },
+    });
   } catch (e) { next(e); }
 });
 

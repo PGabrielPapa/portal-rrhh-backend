@@ -1,65 +1,66 @@
 {
-  "mniAnual": 20607210,
-  "dedEspAnual": 98914608.12,
-  "dedEsp2Anual": 9960151.51,
+  "mniAnual": 5151802.5,
+  "dedEspAnual": 24728652.02,
+  "dedEsp2Anual": 0,
   "escala": [
     {
       "desde": 0,
-      "hasta": 4495920,
+      "hasta": 2000030.09,
       "fijo": 0,
       "alicuota": 5
     },
     {
-      "desde": 4495920,
-      "hasta": 8991840,
-      "fijo": 224796,
+      "desde": 2000030.09,
+      "hasta": 4000060.17,
+      "fijo": 100001.5,
       "alicuota": 9
     },
     {
-      "desde": 8991840,
-      "hasta": 17983680,
-      "fijo": 629428.8,
+      "desde": 4000060.17,
+      "hasta": 6000090.26,
+      "fijo": 280004.21,
       "alicuota": 12
     },
     {
-      "desde": 17983680,
-      "hasta": 29972800,
-      "fijo": 1708449.6,
+      "desde": 6000090.26,
+      "hasta": 9000135.4,
+      "fijo": 520007.82,
       "alicuota": 15
     },
     {
-      "desde": 29972800,
-      "hasta": 59945600,
-      "fijo": 3506817.6,
+      "desde": 9000135.4,
+      "hasta": 18000270.8,
+      "fijo": 970014.59,
       "alicuota": 19
     },
     {
-      "desde": 59945600,
-      "hasta": 119891200,
-      "fijo": 9201649.6,
+      "desde": 18000270.8,
+      "hasta": 27000406.2,
+      "fijo": 2680040.32,
       "alicuota": 23
     },
     {
-      "desde": 119891200,
-      "hasta": 179836800,
-      "fijo": 22989137.6,
+      "desde": 27000406.2,
+      "hasta": 40500609.3,
+      "fijo": 4750071.46,
       "alicuota": 27
     },
     {
-      "desde": 179836800,
-      "hasta": 269755200,
-      "fijo": 39174449.6,
+      "desde": 40500609.3,
+      "hasta": 60750913.96,
+      "fijo": 8395126.3,
       "alicuota": 31
     },
     {
-      "desde": 269755200,
+      "desde": 60750913.96,
       "hasta": null,
-      "fijo": 67049153.6,
+      "fijo": 14672720.74,
       "alicuota": 35
     }
   ],
   "periodo": "2026-S1",
-  "cargaConyugeAnual": 19196335.4,
-  "cargaHijoAnual": 9681111.2,
-  "cargaHijoIncAnual": 19362222.4
+  "rg": "RG 4003 (AFIP/ARCA) — deducciones art. 30 y escala art. 94, enero-junio 2026",
+  "cargaConyugeAnual": 4851964.66,
+  "cargaHijoAnual": 2446863.48,
+  "cargaHijoIncAnual": 4893726.96
 }
