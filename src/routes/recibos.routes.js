@@ -100,4 +100,42 @@ router.get('/:id/vistas', requireRole('rrhh', 'admin'), async (req, res, next) =
   } catch (e) { next(e); }
 });
 
+// Recalcula totales de una corrida tras borrar recibos; si queda vacía, la elimina.
+async function reconciliarCorrida(id) {
+  if (!id) return;
+  const r = await query('SELECT COALESCE(SUM(neto),0) AS total, COUNT(*)::int AS cant FROM recibos WHERE corrida_id=$1', [id]);
+  if (Number(r.rows[0].cant) === 0) await query('DELETE FROM corridas WHERE id=$1', [id]);
+  else await query('UPDATE corridas SET total_neto=$1, cant=$2 WHERE id=$3', [r.rows[0].total, r.rows[0].cant, id]);
+}
+// DELETE /api/recibos/:id — RR.HH./admin elimina un recibo (para re-liquidar el período)
+router.delete('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const row = (await query('SELECT corrida_id FROM recibos WHERE id=$1', [req.params.id])).rows[0];
+    if (!row) return res.status(404).json({ error: 'Recibo no encontrado' });
+    await query('DELETE FROM anticipo_cuotas WHERE recibo_id=$1', [req.params.id]);
+    await query('DELETE FROM recibos WHERE id=$1', [req.params.id]);
+    await reconciliarCorrida(row.corrida_id);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// POST /api/recibos/eliminar-lote { anio, mes, empresa? } — elimina todos los recibos del período (re-liquidar)
+router.post('/eliminar-lote', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { anio, mes, empresa } = req.body || {};
+    if (!anio || !mes) return res.status(400).json({ error: 'anio y mes son obligatorios para el borrado en lote' });
+    const cond = ['r.anio=$1', 'r.mes=$2'], params = [Number(anio), Number(mes)];
+    if (empresa) { params.push(empresa); cond.push(`em.nombre=$${params.length}`); }
+    const recs = (await query(`SELECT r.id, r.corrida_id FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')}`, params)).rows;
+    const ids = recs.map((x) => x.id);
+    const corridaIds = [...new Set(recs.map((x) => x.corrida_id).filter(Boolean))];
+    if (ids.length) {
+      await query('DELETE FROM anticipo_cuotas WHERE recibo_id = ANY($1)', [ids]);
+      await query('DELETE FROM recibos WHERE id = ANY($1)', [ids]);
+      for (const cid of corridaIds) await reconciliarCorrida(cid);
+    }
+    res.json({ ok: true, eliminados: ids.length });
+  } catch (e) { next(e); }
+});
+
 export default router;
