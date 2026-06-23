@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import * as sicoss from '../lib/sicoss.js';
+import * as lsd from '../lib/lsd.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -154,6 +155,119 @@ router.get('/sicoss-archivo', requireRole('rrhh', 'admin'), async (req, res, nex
   } catch (e) { next(e); }
 });
 
+
+// ── Libro de Sueldos Digital (LSD): diseño de registro versionado + verificación ──
+async function ensureLsd() {
+  await query(
+    `INSERT INTO lsd_diseno (id, version, descripcion, url_arca) VALUES (1,1,$1,$2) ON CONFLICT (id) DO NOTHING`,
+    [`Diseño de interfaz - liquidación LSD (ARCA) ${lsd.DISENO.version}`, lsd.DISENO.url]);
+}
+// GET /api/reportes/lsd-diseno — versión vigente + ¿cambió desde la última generación?
+router.get('/lsd-diseno', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    await ensureLsd();
+    const d = (await query('SELECT version, descripcion, url_arca, actualizado_at FROM lsd_diseno WHERE id=1')).rows[0];
+    const last = (await query('SELECT version_diseno, created_at FROM lsd_generaciones ORDER BY created_at DESC LIMIT 1')).rows[0] || null;
+    res.json({ version: d.version, descripcion: d.descripcion, urlArca: d.url_arca, actualizadoAt: d.actualizado_at,
+      disenoLib: lsd.DISENO.version, fuente: lsd.DISENO.fuente,
+      ultimaVersion: last ? last.version_diseno : null, ultimaFecha: last ? last.created_at : null,
+      primeraVez: !last, actualizado: last ? (d.version > last.version_diseno) : false });
+  } catch (e) { next(e); }
+});
+// PATCH /api/reportes/lsd-diseno — registrar nueva versión del diseño (cuando ARCA lo actualiza)
+router.patch('/lsd-diseno', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    await ensureLsd();
+    const { descripcion, urlArca } = req.body || {};
+    const r = await query(`UPDATE lsd_diseno SET descripcion=COALESCE($1,descripcion), url_arca=COALESCE($2,url_arca), version=version+1, actualizado_por=$3, actualizado_at=now() WHERE id=1 RETURNING *`,
+      [descripcion || null, urlArca || null, req.user.dni]);
+    res.json(r.rows[0]);
+  } catch (e) { next(e); }
+});
+
+// GET /api/reportes/lsd-archivo?anio=&mes=&empresa=&nroLiq=&tipoLiq=&fechaPago=&fechaRubrica=
+//   -> archivo .txt del Libro de Sueldos Digital (registros 01/02/03/04) para importar en ARCA.
+router.get('/lsd-archivo', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { anio, mes, empresa } = req.query;
+    if (!anio || !mes) return res.status(400).json({ error: 'anio y mes son obligatorios' });
+    const periodo = `${anio}${String(mes).padStart(2, '0')}`;
+    const tipoLiq = (req.query.tipoLiq || 'M').toString().toUpperCase();
+    const nroLiq = Number(req.query.nroLiq) || 1;
+    const ultimoDia = new Date(Number(anio), Number(mes), 0).getDate();
+    const fechaPago = (req.query.fechaPago || `${periodo}${String(ultimoDia).padStart(2, '0')}`).toString().replace(/\D/g, '');
+    const fechaRubrica = (req.query.fechaRubrica || fechaPago).toString().replace(/\D/g, '');
+
+    // Filas + CUIT de la empresa (reg 01 es por CUIT del empleador).
+    const cond = ['r.anio = $1', 'r.mes = $2'], pr = [Number(anio), Number(mes)];
+    if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
+    const { rows } = await query(
+      `SELECT r.data, r.tipo, e.nom, e.leg_num, e.cuil, e.data AS edata, em.nombre AS empresa, em.cuit AS empcuit
+         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
+        WHERE ${cond.join(' AND ')} ORDER BY em.nombre, e.nom`, pr);
+    if (!rows.length) return res.status(404).json({ error: 'no hay liquidaciones para el periodo/empresa' });
+
+    // Agrupar por empresa (CUIT). ARCA importa por CUIT empleador.
+    const grupos = new Map();
+    for (const r of rows) {
+      const k = r.empresa || '';
+      if (!grupos.has(k)) grupos.set(k, { cuit: r.empcuit, rows: [] });
+      grupos.get(k).rows.push(r);
+    }
+
+    const ctx = { periodo, fechaPago, fechaRubrica, formaPago: '1' };
+    const registros = [];
+    for (const [, g] of grupos) {
+      registros.push(lsd.reg01({ cuit: g.cuit, periodo, tipoLiq, nroLiq, cantTrab: g.rows.length }));
+      for (const r of g.rows) {
+        const ed = r.edata || {};
+        const t = r.data?.totales || {};
+        const haberes = r.data?.haberes || [];
+        const descuentos = r.data?.descuentos || [];
+        const emp = {
+          ...sicoss.DEFAULTS_SICOSS,
+          ...ed,
+          cuil: String(r.cuil || ed.cuil || '').replace(/\D/g, ''),
+          nombre: r.nom,
+          legajo: r.leg_num,
+          codigoObraSocial: ed.codigoObraSocial != null
+            ? String(ed.codigoObraSocial).replace(/\D/g, '').slice(-6)
+            : (ed.os_codigo ? String(ed.os_codigo).replace(/\D/g, '').slice(-6) : 0),
+        };
+        const liq = {
+          remunerativo: t.totalRemun || 0,
+          noRemunerativo: t.totalNoRem || 0,
+          sac: haberDe(haberes, /SAC|aguinaldo/i),
+          horasExtras: haberDe(haberes, /hora.?\s*extra/i),
+          vacaciones: haberDe(haberes, /vacacion/i),
+          zonaDesfavorable: haberDe(haberes, /zona/i),
+          asigFamiliares: haberDe(haberes, /asignaci[óo]n(es)? familiar/i),
+        };
+        const s = sicoss.mapEmpleado(emp, liq, {});
+        registros.push(lsd.reg02(emp, ctx));
+        for (const x of lsd.regs03(emp, { haberes, descuentos }, ctx)) registros.push(x);
+        registros.push(lsd.reg04(emp, s));
+      }
+    }
+
+    const contenido = lsd.buildFile(registros);
+
+    try {
+      await ensureLsd();
+      const dv = (await query('SELECT version FROM lsd_diseno WHERE id=1')).rows[0];
+      const trabajadores = registros.filter((x) => x.tipo === '04').length;
+      await query(
+        `INSERT INTO lsd_generaciones (version_diseno, anio, mes, empresa, cantidad, archivo, created_by)
+         VALUES ($1,$2,$3,$4,$5,true,$6)`,
+        [dv?.version || null, Number(anio), Number(mes), empresa || null, trabajadores, req.user.dni]);
+    } catch (logErr) { console.warn('[lsd-archivo] log:', logErr.message); }
+
+    const fname = `LSD_${periodo}${empresa ? '_' + String(empresa).replace(/\W+/g, '') : ''}.txt`;
+    res.setHeader('Content-Type', 'text/plain; charset=latin1');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    res.send(Buffer.from(contenido, 'latin1'));
+  } catch (e) { next(e); }
+});
 
 // Componentes de nómina agrupables en cuentas contables.
 const COMPONENTES = [

@@ -107,4 +107,22 @@ router.post('/difundir', requireRole('rrhh', 'admin'), async (req, res, next) =>
   } catch (e) { next(e); }
 });
 
+// POST /api/mensajes/:id/responder — RR.HH. responde al empleado y deja el original en 'respondido'
+router.post('/:id/responder', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const texto = String(req.body?.cuerpo || '').trim();
+    if (!texto) return res.status(400).json({ error: 'Escribi una respuesta' });
+    if (texto.length > 1000) return res.status(400).json({ error: 'La respuesta no puede superar los 1000 caracteres' });
+    const orig = (await query(`SELECT remitente_id FROM mensajes WHERE id=$1 AND direccion='a_rrhh'`, [req.params.id])).rows[0];
+    if (!orig) return res.status(404).json({ error: 'Mensaje no encontrado' });
+    await query(
+      `INSERT INTO mensajes (empleado_id, titulo, cuerpo, autor, direccion, estado)
+       VALUES ($1,'Respuesta de RR.HH.',$2,$3,'a_empleado','nuevo')`,
+      [orig.remitente_id, texto, req.user.dni]
+    );
+    await query(`UPDATE mensajes SET estado='respondido' WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true, estado: 'respondido' });
+  } catch (e) { next(e); }
+});
+
 export default router;

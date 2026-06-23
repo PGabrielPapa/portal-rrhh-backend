@@ -417,6 +417,26 @@ CREATE TABLE IF NOT EXISTS ganancias_periodos (
   updated_by           TEXT,
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- ── Histórico de cambios de parámetros de Ganancias (para re-liquidar) ──
+CREATE TABLE IF NOT EXISTS ganancias_periodos_hist (
+  id                   SERIAL PRIMARY KEY,
+  periodo_id           INTEGER,
+  periodo              TEXT,
+  vigencia_desde       DATE,
+  rg                   TEXT,
+  mni_anual            NUMERIC(16,2),
+  ded_esp_anual        NUMERIC(16,2),
+  ded_esp2_anual       NUMERIC(16,2),
+  carga_conyuge_anual  NUMERIC(16,2),
+  carga_hijo_anual     NUMERIC(16,2),
+  carga_hijo_inc_anual NUMERIC(16,2),
+  escala               JSONB,
+  updated_by           TEXT,
+  updated_at           TIMESTAMPTZ,
+  snapshot_by          TEXT,
+  snapshot_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_gan_hist_periodo ON ganancias_periodos_hist(periodo_id);
 -- ── Catálogo de sindicatos (parámetros de aportes) ──
 CREATE TABLE IF NOT EXISTS sindicatos (
   id                    SERIAL PRIMARY KEY,
@@ -452,6 +472,15 @@ CREATE TABLE IF NOT EXISTS reglamento (
   data JSONB NOT NULL DEFAULT '{}'::jsonb,
   updated_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT reglamento_singleton CHECK (id = 1)
+);
+-- ── Histórico de cambios del reglamento / licencias ──
+CREATE TABLE IF NOT EXISTS reglamento_hist (
+  id          SERIAL PRIMARY KEY,
+  data        JSONB,
+  updated_by  TEXT,
+  updated_at  TIMESTAMPTZ,
+  snapshot_by TEXT,
+  snapshot_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- ── Cierre de períodos (bloqueo de liquidación por empresa + período) ──
 CREATE TABLE IF NOT EXISTS cierres_periodo (
@@ -588,6 +617,23 @@ CREATE TABLE IF NOT EXISTS sicoss_generaciones (
 ALTER TABLE sicoss_generaciones ADD COLUMN IF NOT EXISTS empresa TEXT;
 ALTER TABLE sicoss_generaciones ADD COLUMN IF NOT EXISTS cantidad INTEGER;
 ALTER TABLE sicoss_generaciones ADD COLUMN IF NOT EXISTS archivo BOOLEAN NOT NULL DEFAULT false;
+
+-- ── Libro de Sueldos Digital (LSD): diseño de registro versionado (ARCA) + log ──
+CREATE TABLE IF NOT EXISTS lsd_diseno (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1,
+  descripcion TEXT,
+  url_arca TEXT,
+  actualizado_por TEXT,
+  actualizado_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT lsd_unica CHECK (id = 1)
+);
+CREATE TABLE IF NOT EXISTS lsd_generaciones (
+  id SERIAL PRIMARY KEY, version_diseno INTEGER NOT NULL, anio INTEGER, mes INTEGER,
+  empresa TEXT, cantidad INTEGER, archivo BOOLEAN NOT NULL DEFAULT false,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -- Tablas de codigos de ARCA/AFIP (desplegables del ABM y SICOSS)
 -- tipo: situacion | condicion | actividad | modalidad | zona

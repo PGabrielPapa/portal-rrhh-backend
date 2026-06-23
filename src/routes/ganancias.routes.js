@@ -143,6 +143,11 @@ router.post('/periodos', requireRole('rrhh', 'admin'), async (req, res, next) =>
   try {
     const b = req.body || {};
     if (!b.periodo || !b.vigenciaDesde) return res.status(400).json({ error: 'Período y vigencia desde son obligatorios' });
+    await query(
+      `INSERT INTO ganancias_periodos_hist (periodo_id, periodo, vigencia_desde, rg, mni_anual, ded_esp_anual, ded_esp2_anual, carga_conyuge_anual, carga_hijo_anual, carga_hijo_inc_anual, escala, updated_by, updated_at, snapshot_by)
+       SELECT id, periodo, vigencia_desde, rg, mni_anual, ded_esp_anual, ded_esp2_anual, carga_conyuge_anual, carga_hijo_anual, carga_hijo_inc_anual, escala, updated_by, updated_at, $2 FROM ganancias_periodos WHERE periodo=$1`,
+      [b.periodo, req.user.dni]
+    );
     const ins = await query(
       `INSERT INTO ganancias_periodos (periodo, vigencia_desde, rg, mni_anual, ded_esp_anual, ded_esp2_anual, carga_conyuge_anual, carga_hijo_anual, carga_hijo_inc_anual, escala, updated_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -160,6 +165,11 @@ router.post('/periodos', requireRole('rrhh', 'admin'), async (req, res, next) =>
 router.put('/periodos/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const b = req.body || {};
+    await query(
+      `INSERT INTO ganancias_periodos_hist (periodo_id, periodo, vigencia_desde, rg, mni_anual, ded_esp_anual, ded_esp2_anual, carga_conyuge_anual, carga_hijo_anual, carga_hijo_inc_anual, escala, updated_by, updated_at, snapshot_by)
+       SELECT id, periodo, vigencia_desde, rg, mni_anual, ded_esp_anual, ded_esp2_anual, carga_conyuge_anual, carga_hijo_anual, carga_hijo_inc_anual, escala, updated_by, updated_at, $2 FROM ganancias_periodos WHERE id=$1`,
+      [req.params.id, req.user.dni]
+    );
     const r = await query(
       `UPDATE ganancias_periodos SET periodo=$1, vigencia_desde=$2, rg=$3, mni_anual=$4, ded_esp_anual=$5, ded_esp2_anual=$6,
          carga_conyuge_anual=$7, carga_hijo_anual=$8, carga_hijo_inc_anual=$9, escala=$10, updated_by=$11, updated_at=now()
@@ -175,6 +185,19 @@ router.put('/periodos/:id', requireRole('rrhh', 'admin'), async (req, res, next)
 router.delete('/periodos/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try { const r = await query('DELETE FROM ganancias_periodos WHERE id=$1 RETURNING id', [req.params.id]); if (!r.rowCount) return res.status(404).json({ error: 'No encontrado' }); res.json({ ok: true }); }
   catch (e) { next(e); }
+});
+
+// GET /api/ganancias/periodos/:id/historial — versiones previas de los parámetros (para re-liquidar)
+router.get('/periodos/:id/historial', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT * FROM ganancias_periodos_hist WHERE periodo_id=$1 ORDER BY snapshot_at DESC', [req.params.id]);
+    res.json(rows.map((r) => ({
+      id: r.periodo_id, histId: r.id, periodo: r.periodo, vigenciaDesde: r.vigencia_desde, rg: r.rg,
+      mniAnual: Number(r.mni_anual), dedEspAnual: Number(r.ded_esp_anual), dedEsp2Anual: Number(r.ded_esp2_anual),
+      cargaConyugeAnual: Number(r.carga_conyuge_anual), cargaHijoAnual: Number(r.carga_hijo_anual), cargaHijoIncAnual: Number(r.carga_hijo_inc_anual),
+      escala: r.escala || [], updatedBy: r.updated_by, updatedAt: r.updated_at, snapshotBy: r.snapshot_by, snapshotAt: r.snapshot_at,
+    })));
+  } catch (e) { next(e); }
 });
 
 // Impuesto anual según escala progresiva (Art. 94).

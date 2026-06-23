@@ -117,9 +117,41 @@ Resumen de lo agregado en esta sesión, sobre los repos `portal-rrhh-backend` y
 - Vigencia de EPP por defecto 12 meses (configurable por tipo más adelante). Los archivos se
   guardan en la base (base64) vía `multer`.
 
+## 8) Libro de Sueldos Digital (LSD) — exportación del .txt para ARCA
+
+- `backend/src/lib/lsd.js` (NUEVO): generador posicional del archivo de importación
+  del **Libro de Sueldos Digital** (interfaz "Liquidación de SyJ - DJ F931").
+  Multi-registro, una línea por registro (CRLF):
+  - `01` Datos referenciales del envío — **35** caracteres (1 por CUIT empleador).
+  - `02` Datos referenciales del trabajador — **115** caracteres.
+  - `03` Detalle de conceptos liquidados — **51** caracteres (1 por concepto).
+  - `04` Datos del trabajador para la DJ F931 — **370** caracteres.
+  Importes **sin separador** (13 enteros + 2 decimales = 15 dígitos; los 2 últimos
+  son centavos). El módulo **autoverifica** posiciones/longitudes al cargarse.
+  Incluye `CONCEPTOS_LSD` (clasificador concepto -> código del empleador, C/D) y
+  arma el reg `04` con los mismos datos del F.931/SICOSS (bases imponibles).
+- `backend/src/routes/reportes.routes.js` (MOD): endpoint
+  `GET /api/reportes/lsd-archivo?anio=&mes=&empresa=&nroLiq=&tipoLiq=&fechaPago=&fechaRubrica=`
+  -> descarga el `.txt` (agrupa por CUIT de empresa: una cabecera `01` por empleador).
+  Más diseño versionado: `GET/PATCH /api/reportes/lsd-diseno` (verificación previa).
+- `backend/src/db/schema.sql` (MOD): tablas `lsd_diseno` (diseño vigente versionado)
+  y `lsd_generaciones` (log de generaciones).
+- `frontend/src/pages/LibroSueldos.tsx` (MOD): botón **"⬇ Generar Libro de Sueldos
+  Digital (.txt)"**, banner de versión del diseño (link a ARCA + "Registrar
+  actualización") y verificación previa a generar.
+- **Tarea programada mensual** (día 3) que verifica en ARCA si cambió el diseño LSD
+  y avisa para adecuar `lsd.js`. Editable desde "Scheduled" en Cowork.
+
+> Diseño tomado de ARCA -> LSD -> Ayuda -> Diseños ("Diseño de interfaz - liquidación"
+> y "- conceptos"). **Importante:** los códigos de concepto del reg `03` deben estar
+> dados de alta y relacionados al código ARCA en el servicio LSD (interfaz de
+> conceptos). Forma de pago por defecto `1` (efectivo). **Validar** importando un
+> período de prueba en el servicio LSD antes de presentar; período y N° de
+> liquidación del `.txt` deben coincidir con los del servicio.
+
 ## Archivos a commitear
 
-**Backend** — nuevos: `src/lib/sicoss.js`, `src/routes/arca.routes.js`,
+**Backend** — nuevos: `src/lib/sicoss.js`, `src/lib/lsd.js`, `src/routes/arca.routes.js`,
 `src/routes/obraSocial.routes.js`, `src/data/codigos_afip.seed.json`,
 `src/data/obras_sociales.seed.json`, `INTEGRACION-ARCA-SICOSS.md`.
 Modificados: `src/app.js`, `src/db/schema.sql`, `src/db/seed.js`,
@@ -130,7 +162,7 @@ Modificados: `src/app.js`, `src/db/schema.sql`, `src/db/seed.js`,
 **Frontend** — nuevos: `src/lib/arca.ts`, `src/components/GananciasCheck.tsx`,
 `src/pages/SimuladorGanancias.tsx`, `src/pages/MisHys.tsx`. Modificados: `src/pages/F931.tsx`,
 `src/pages/MisDatos.tsx`, `src/pages/Empleados.tsx`, `src/pages/Liquidacion.tsx`,
-`src/pages/GeneradorReportes.tsx`, `src/pages/Hys.tsx`, `src/lib/sections.ts`,
+`src/pages/GeneradorReportes.tsx`, `src/pages/Hys.tsx`, `src/pages/LibroSueldos.tsx`, `src/lib/sections.ts`,
 `src/components/SectionView.tsx`, `src/lib/meta.ts`.
 
 ### Comandos (desde Windows, donde el EOL no genera ruido)
@@ -138,22 +170,22 @@ Modificados: `src/app.js`, `src/db/schema.sql`, `src/db/seed.js`,
 ```bash
 # Backend
 cd portal-rrhh-backend
-git add src/lib/sicoss.js src/lib/liquidacion.js \
+git add src/lib/sicoss.js src/lib/lsd.js src/lib/liquidacion.js \
         src/routes/arca.routes.js src/routes/obraSocial.routes.js \
         src/routes/reportes.routes.js src/routes/ganancias.routes.js src/routes/liquidacion.routes.js src/routes/hys.routes.js \
         src/data/codigos_afip.seed.json src/data/obras_sociales.seed.json src/data/ganancias.seed.json \
         src/app.js src/db/schema.sql src/db/seed.js \
         INTEGRACION-ARCA-SICOSS.md
-git commit -m "feat(rrhh): SICOSS v42, tablas ARCA + obra social con historico, Ganancias RG 4003 (F.1357, SAC 1/12, simulador), generador de reportes (datasets + periodo + campos calculados) e Higiene y Seguridad (catalogos, manuales, alertas, acuses)"
+git commit -m "feat(rrhh): SICOSS v42, tablas ARCA + obra social con historico, Ganancias RG 4003 (F.1357, SAC 1/12, simulador), generador de reportes (datasets + periodo + campos calculados), Higiene y Seguridad (catalogos, manuales, alertas, acuses) y Libro de Sueldos Digital (.txt LSD)"
 git push
 
 # Frontend
 cd ../portal-rrhh-frontend
 git add src/lib/arca.ts src/components/GananciasCheck.tsx src/pages/SimuladorGanancias.tsx src/pages/MisHys.tsx \
         src/pages/F931.tsx src/pages/MisDatos.tsx src/pages/Empleados.tsx \
-        src/pages/Liquidacion.tsx src/pages/GeneradorReportes.tsx src/pages/Hys.tsx \
+        src/pages/Liquidacion.tsx src/pages/GeneradorReportes.tsx src/pages/Hys.tsx src/pages/LibroSueldos.tsx \
         src/lib/sections.ts src/components/SectionView.tsx src/lib/meta.ts
-git commit -m "feat(rrhh): SICOSS .txt + ARCA + obra social, Ganancias (verificacion + simulador), reportes (genericos + periodo + campos calculados) e Higiene y Seguridad (RRHH + modulo empleado con acuses)"
+git commit -m "feat(rrhh): SICOSS .txt + ARCA + obra social, Ganancias (verificacion + simulador), reportes (genericos + periodo + campos calculados), Higiene y Seguridad (RRHH + modulo empleado con acuses) y Libro de Sueldos Digital (.txt LSD)"
 git push
 ```
 
@@ -166,6 +198,8 @@ git push
 - `tsc --noEmit` OK en el frontend.
 - Smoke test del generador: registro de 499 caracteres, posiciones y formatos
   correctos.
+- Smoke test del generador LSD: registros 01/02/03/04 de 35/115/51/370
+  caracteres exactos; importes sin separador; layout autoverificado.
 - No se pudo correr Postgres en este entorno (sin permisos); el SQL replica
   patrones ya en producción (`CREATE TABLE/INDEX IF NOT EXISTS`, `ALTER ADD
   COLUMN IF NOT EXISTS`). Conviene una corrida de `migrate`+`seed` en staging.
@@ -177,3 +211,4 @@ git push
 - Diseño SICOSS v42 (499): https://blogdelcontador.com.ar/news-26983-sicoss-version-42-diseno-de-registro
 - Layout SICOSS por posición: https://documentacion.siu.edu.ar/wiki/SIU-Mapuche/Version3.28.2/Documentacion_de_las_operaciones/comunicacion/afip/sicoss
 - Padrón RNOS (obras sociales): https://www.sssalud.gob.ar/?page=listRnosc&tipo=7
+- Diseños LSD (ARCA): https://www.afip.gob.ar/LibrodeSueldosDigital/ayuda/disenios.asp
