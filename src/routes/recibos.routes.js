@@ -2,10 +2,12 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { idsEquipoDe } from '../lib/equipo.js';
+import { periodoCerrado } from './cierres.routes.js';
 
 const router = Router();
 router.use(requireAuth);
 const esGlobal = (role) => ['rrhh', 'admin'].includes(role); // ven cualquier recibo
+function logAudit(actor, accion, detalle, target) { query('INSERT INTO audit_log (actor_dni, accion, detalle, target) VALUES ($1,$2,$3,$4)', [actor, accion, detalle || null, target || null]).catch(() => {}); }
 // Un gerente solo ve recibos de su equipo (organigrama). Devuelve true si target es de su equipo.
 async function gerenteVe(req, targetId) {
   if (req.user.role !== 'manager') return false;
@@ -110,11 +112,16 @@ async function reconciliarCorrida(id) {
 // DELETE /api/recibos/:id — RR.HH./admin elimina un recibo (para re-liquidar el período)
 router.delete('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
-    const row = (await query('SELECT corrida_id FROM recibos WHERE id=$1', [req.params.id])).rows[0];
+    const row = (await query(
+      `SELECT r.corrida_id, r.anio, r.mes, r.tipo, r.neto, e.nom, e.leg_num, em.nombre AS empresa
+         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
+        WHERE r.id=$1`, [req.params.id])).rows[0];
     if (!row) return res.status(404).json({ error: 'Recibo no encontrado' });
+    if (await periodoCerrado(row.empresa, row.anio, row.mes)) return res.status(409).json({ error: `El período ${String(row.mes).padStart(2, '0')}/${row.anio} de ${row.empresa} está cerrado. Reabrilo para borrar.` });
     await query('DELETE FROM anticipo_cuotas WHERE recibo_id=$1', [req.params.id]);
     await query('DELETE FROM recibos WHERE id=$1', [req.params.id]);
     await reconciliarCorrida(row.corrida_id);
+    logAudit(req.user.dni, 'recibo_eliminado', `${row.nom} (${row.leg_num}) · ${row.empresa} · ${String(row.mes).padStart(2, '0')}/${row.anio} · ${row.tipo} · neto ${row.neto}`, String(req.params.id));
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -127,13 +134,18 @@ router.post('/eliminar-lote', requireRole('rrhh', 'admin'), async (req, res, nex
     const cond = ['r.anio=$1', 'r.mes=$2'], params = [Number(anio), Number(mes)];
     if (empresa) { params.push(empresa); cond.push(`em.nombre=$${params.length}`); }
     if (tipo) { params.push(tipo); cond.push(`r.tipo=$${params.length}`); }
-    const recs = (await query(`SELECT r.id, r.corrida_id FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')}`, params)).rows;
+    const recs = (await query(`SELECT r.id, r.corrida_id, em.nombre AS empresa FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')}`, params)).rows;
     const ids = recs.map((x) => x.id);
     const corridaIds = [...new Set(recs.map((x) => x.corrida_id).filter(Boolean))];
+    const empresasAfectadas = [...new Set(recs.map((x) => x.empresa))];
+    for (const emp of empresasAfectadas) {
+      if (await periodoCerrado(emp, anio, mes)) return res.status(409).json({ error: `El período ${String(mes).padStart(2, '0')}/${anio} de ${emp} está cerrado. Reabrilo para borrar.` });
+    }
     if (ids.length) {
       await query('DELETE FROM anticipo_cuotas WHERE recibo_id = ANY($1)', [ids]);
       await query('DELETE FROM recibos WHERE id = ANY($1)', [ids]);
       for (const cid of corridaIds) await reconciliarCorrida(cid);
+      logAudit(req.user.dni, 'recibos_eliminados_lote', `${ids.length} recibos · ${empresa || 'todas las empresas'} · ${String(mes).padStart(2, '0')}/${anio}${tipo ? ' · ' + tipo : ''}`, null);
     }
     res.json({ ok: true, eliminados: ids.length });
   } catch (e) { next(e); }
