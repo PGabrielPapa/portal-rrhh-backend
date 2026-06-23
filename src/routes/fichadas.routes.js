@@ -191,6 +191,14 @@ router.post('/importar', requireRole('rrhh', 'admin'), upload.single('archivo'),
   } catch (e) { next(e); }
 });
 
+// GET /api/fichadas/importaciones/log — historial de importaciones. (Debe ir ANTES de /:anio/:mes)
+router.get('/importaciones/log', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { rows } = await query(`SELECT * FROM fichadas_importaciones ORDER BY created_at DESC LIMIT 50`);
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+
 // GET /api/fichadas/:anio/:mes — novedades importadas del período.
 router.get('/:anio/:mes', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
@@ -204,14 +212,6 @@ router.get('/:anio/:mes', requireRole('rrhh', 'admin'), async (req, res, next) =
         ORDER BY e.nom`,
       [anio, mes]
     );
-    res.json(rows);
-  } catch (e) { next(e); }
-});
-
-// GET /api/fichadas/importaciones/log — historial de importaciones.
-router.get('/importaciones/log', requireRole('rrhh', 'admin'), async (req, res, next) => {
-  try {
-    const { rows } = await query(`SELECT * FROM fichadas_importaciones ORDER BY created_at DESC LIMIT 50`);
     res.json(rows);
   } catch (e) { next(e); }
 });

@@ -213,6 +213,7 @@ router.get('/mis', async (req, res, next) => {
 // ── Talles del empleado (guardados en empleado.data.talles) ──
 router.get('/talles/:empleadoId', async (req, res, next) => {
   try {
+    if (Number(req.params.empleadoId) !== req.user.id && !['rrhh', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'No autorizado' });
     const r = await query('SELECT data FROM empleados WHERE id=$1', [req.params.empleadoId]);
     res.json((r.rows[0]?.data || {}).talles || {});
   } catch (e) { next(e); }

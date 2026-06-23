@@ -164,8 +164,10 @@ router.get('/:id/comprobante', async (req, res, next) => {
       'SELECT empleado_id, comprobante_nombre, comprobante_mime, comprobante_data FROM licencias WHERE id=$1', [req.params.id]);
     const lic = rows[0];
     if (!lic || !lic.comprobante_data) return res.status(404).json({ error: 'No hay comprobante para esta licencia' });
-    const esGestor = gestiona(req.user.role);
-    if (!esGestor && lic.empleado_id !== req.user.id) return res.status(403).json({ error: 'No autorizado' });
+    const esGlobal = req.user.role === 'rrhh' || req.user.role === 'admin';
+    let ok = esGlobal || lic.empleado_id === req.user.id;
+    if (!ok && req.user.role === 'manager') ok = (await idsEquipoDe(req.user.id)).has(lic.empleado_id);
+    if (!ok) return res.status(403).json({ error: 'No autorizado' });
     const buf = Buffer.from(lic.comprobante_data, 'base64');
     res.setHeader('Content-Type', lic.comprobante_mime || 'application/octet-stream');
     res.setHeader('Content-Disposition', `inline; filename="${(lic.comprobante_nombre || 'comprobante').replace(/[^\w.\- ]/g, '_')}"`);

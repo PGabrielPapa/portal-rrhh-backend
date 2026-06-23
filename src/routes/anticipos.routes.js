@@ -134,7 +134,10 @@ router.get('/:id/cuotas', async (req, res, next) => {
   try {
     const a = (await query('SELECT empleado_id FROM anticipos WHERE id=$1', [req.params.id])).rows[0];
     if (!a) return res.status(404).json({ error: 'Adelanto no encontrado' });
-    if (a.empleado_id !== req.user.id && !puedeAprobar(req.user.role)) return res.status(403).json({ error: 'Sin permiso' });
+    const esGlobal = req.user.role === 'rrhh' || req.user.role === 'admin';
+    let ok = esGlobal || a.empleado_id === req.user.id;
+    if (!ok && req.user.role === 'manager') ok = (await idsEquipoDe(req.user.id)).has(a.empleado_id);
+    if (!ok) return res.status(403).json({ error: 'Sin permiso' });
     const { rows } = await query('SELECT nro, anio, mes, monto, created_at FROM anticipo_cuotas WHERE anticipo_id=$1 ORDER BY anio, mes', [req.params.id]);
     res.json(rows);
   } catch (e) { next(e); }
