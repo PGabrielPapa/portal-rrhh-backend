@@ -122,10 +122,11 @@ router.delete('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
 // POST /api/recibos/eliminar-lote { anio, mes, empresa? } — elimina todos los recibos del período (re-liquidar)
 router.post('/eliminar-lote', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
-    const { anio, mes, empresa } = req.body || {};
+    const { anio, mes, empresa, tipo } = req.body || {};
     if (!anio || !mes) return res.status(400).json({ error: 'anio y mes son obligatorios para el borrado en lote' });
     const cond = ['r.anio=$1', 'r.mes=$2'], params = [Number(anio), Number(mes)];
     if (empresa) { params.push(empresa); cond.push(`em.nombre=$${params.length}`); }
+    if (tipo) { params.push(tipo); cond.push(`r.tipo=$${params.length}`); }
     const recs = (await query(`SELECT r.id, r.corrida_id FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')}`, params)).rows;
     const ids = recs.map((x) => x.id);
     const corridaIds = [...new Set(recs.map((x) => x.corrida_id).filter(Boolean))];
