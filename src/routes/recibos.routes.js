@@ -51,7 +51,8 @@ router.get('/gestion', requireRole('rrhh', 'admin'), async (req, res, next) => {
     if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const { rows } = await query(
-      `SELECT r.id, r.anio, r.mes, r.tipo, r.neto, r.created_at, r.created_by,
+      `SELECT r.id, r.anio, r.mes, r.tipo, r.neto, r.created_at, r.created_by, r.publicado, r.pagado,
+              EXISTS (SELECT 1 FROM recibo_vistas v WHERE v.recibo_id = r.id) AS visto,
               e.nom, e.leg_num, em.nombre AS empresa
          FROM recibos r JOIN empleados e ON e.id = r.empleado_id
          JOIN empresas em ON em.id = e.empresa_id
@@ -109,6 +110,30 @@ async function reconciliarCorrida(id) {
   if (Number(r.rows[0].cant) === 0) await query('DELETE FROM corridas WHERE id=$1', [id]);
   else await query('UPDATE corridas SET total_neto=$1, cant=$2 WHERE id=$3', [r.rows[0].total, r.rows[0].cant, id]);
 }
+// PATCH /api/recibos/:id/pagar { pagado } — marca/desmarca como pagado
+router.patch('/:id/pagar', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const pagado = !!(req.body && req.body.pagado);
+    const r = await query('UPDATE recibos SET pagado=$1, pagado_at=$2, pagado_por=$3 WHERE id=$4 RETURNING id',
+      [pagado, pagado ? new Date() : null, pagado ? req.user.dni : null, req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Recibo no encontrado' });
+    res.json({ ok: true, pagado });
+  } catch (e) { next(e); }
+});
+
+// POST /api/recibos/:id/avisar — notifica al empleado que su recibo está disponible
+router.post('/:id/avisar', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const row = (await query('SELECT empleado_id, anio, mes, tipo, publicado FROM recibos WHERE id=$1', [req.params.id])).rows[0];
+    if (!row) return res.status(404).json({ error: 'Recibo no encontrado' });
+    if (!row.publicado) return res.status(409).json({ error: 'El recibo no está publicado todavía' });
+    const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    const cuerpo = `Tu recibo de ${MESES[row.mes - 1]} ${row.anio} (${row.tipo}) está disponible en "Mis recibos".`;
+    await query(`INSERT INTO mensajes (empleado_id, titulo, cuerpo, autor, direccion, estado) VALUES ($1,$2,$3,$4,'a_empleado','nuevo')`,
+      [row.empleado_id, 'Recibo disponible', cuerpo, req.user.dni]);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
 // DELETE /api/recibos/:id — RR.HH./admin elimina un recibo (para re-liquidar el período)
 router.delete('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {

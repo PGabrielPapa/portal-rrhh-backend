@@ -148,6 +148,9 @@ CREATE TABLE IF NOT EXISTS recibos (
 );
 ALTER TABLE recibos ADD COLUMN IF NOT EXISTS corrida_id INTEGER;
 ALTER TABLE recibos ADD COLUMN IF NOT EXISTS publicado  BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE recibos ADD COLUMN IF NOT EXISTS pagado     BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE recibos ADD COLUMN IF NOT EXISTS pagado_at  TIMESTAMPTZ;
+ALTER TABLE recibos ADD COLUMN IF NOT EXISTS pagado_por TEXT;
 
 -- ── Corridas de liquidación (planilla por período/tipo con estados) ──
 CREATE TABLE IF NOT EXISTS corridas (
