@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import multer from 'multer';
+import { idsEquipoDe } from '../lib/equipo.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -195,6 +196,7 @@ router.put('/mis/talles', async (req, res, next) => {
 // Histórico de cambios de talle (RR.HH./Admin/Gerente)
 router.get('/talles-historial/:empleadoId', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
   try {
+    if (req.user.role === 'manager' && !(await idsEquipoDe(req.user.id)).has(Number(req.params.empleadoId))) return res.status(403).json({ error: 'Ese empleado no es de tu equipo.' });
     const { rows } = await query('SELECT id, cambios, origen, created_by, created_at FROM hys_talles_historial WHERE empleado_id=$1 ORDER BY created_at DESC', [req.params.empleadoId]);
     res.json(rows);
   } catch (e) { next(e); }
@@ -317,6 +319,7 @@ router.get('/capacitaciones', async (req, res, next) => {
   try {
     if (gestor(req.user.role)) {
       const cond = [], pr = [];
+      if (req.user.role === 'manager') { const team = [...await idsEquipoDe(req.user.id)]; pr.push(team.length ? team : [0]); cond.push(`c.empleado_id = ANY($${pr.length})`); }
       if (req.query.empleadoId) { pr.push(req.query.empleadoId); cond.push(`c.empleado_id=$${pr.length}`); }
       const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
       const { rows } = await query(`SELECT c.*, e.nom, e.leg_num, em.nombre AS empresa FROM hys_capacitaciones c JOIN empleados e ON e.id=c.empleado_id JOIN empresas em ON em.id=e.empresa_id ${where} ORDER BY c.fecha DESC`, pr);
@@ -344,6 +347,7 @@ router.get('/epp', async (req, res, next) => {
   try {
     if (gestor(req.user.role)) {
       const cond = [], pr = [];
+      if (req.user.role === 'manager') { const team = [...await idsEquipoDe(req.user.id)]; pr.push(team.length ? team : [0]); cond.push(`x.empleado_id = ANY($${pr.length})`); }
       if (req.query.empleadoId) { pr.push(req.query.empleadoId); cond.push(`x.empleado_id=$${pr.length}`); }
       const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
       const { rows } = await query(`SELECT x.*, e.nom, e.leg_num, em.nombre AS empresa FROM hys_epp_entregas x JOIN empleados e ON e.id=x.empleado_id JOIN empresas em ON em.id=e.empresa_id ${where} ORDER BY x.fecha DESC`, pr);
