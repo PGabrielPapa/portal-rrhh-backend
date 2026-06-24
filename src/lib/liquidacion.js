@@ -295,8 +295,8 @@ export function calcularRecibo(emp, params, opts) {
     // Indemnizaciones según el supuesto legal de la baja.
     const motivo = opts?.motivoBaja || 'renuncia';
     const conIndemPlena = motivo === 'sin_causa';
-    const conMediaIndem = motivo === 'mutuo' || motivo === 'fallecimiento'; // Art. 241 / 248: 50%
-    const conPreaviso = motivo === 'sin_causa';
+    const conMediaIndem = motivo === 'mutuo' || motivo === 'fallecimiento' || motivo === 'fuerza_mayor'; // Art. 241 / 248 / 247: 50%
+    const conPreaviso = motivo === 'sin_causa' || motivo === 'fuerza_mayor'; // 245 y 247 requieren preaviso
     const conPreavisoPrueba = motivo === 'prueba'; // Art. 92 bis: 15 días
     if (conIndemPlena || conMediaIndem || conPreaviso || conPreavisoPrueba) {
       const ind = calcIndemAntiguedad(emp.ingreso, fEg, mejorRem, opts?.topeCCT);
@@ -318,7 +318,8 @@ export function calcularRecibo(emp, params, opts) {
         detalle.indemnizacion = { ...(detalle.indemnizacion || {}), art245: round2(ind.monto), anios: ind.anios };
       } else if (conMediaIndem) {
         const m = round2(ind.monto * 0.5);
-        haberes.push({ concepto: `Indemnización ${motivo === 'mutuo' ? 'Art. 241 (mutuo acuerdo)' : 'Art. 248 (fallecimiento)'} — 50% del Art. 245`, tipo: 'exento', monto: m });
+        const lblMedia = motivo === 'mutuo' ? 'Art. 241 (mutuo acuerdo)' : motivo === 'fuerza_mayor' ? 'Art. 247 (fuerza mayor / falta de trabajo)' : 'Art. 248 (fallecimiento)';
+        haberes.push({ concepto: `Indemnización ${lblMedia} — 50% del Art. 245`, tipo: 'exento', monto: m });
         detalle.indemnizacion = { ...(detalle.indemnizacion || {}), art245Media: m, anios: ind.anios };
       }
     }
