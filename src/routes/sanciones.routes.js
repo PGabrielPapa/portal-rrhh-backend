@@ -49,7 +49,6 @@ router.post('/', requireRole('manager', 'rrhh', 'admin'), async (req, res, next)
     // En una solicitud, la notificación/cumplimiento los carga RR.HH. al aplicarla.
     const fNotif = esSolicitud ? null : (fechaNotificacion || null);
     const fCumpl = esSolicitud ? null : (fechaCumplimiento || null);
-    if (!esSolicitud && !fNotif) return res.status(400).json({ error: 'La fecha de notificación es obligatoria' });
     const r = await query(
       'INSERT INTO sanciones (empleado_id, tipo, falta, fecha, dias, descripcion, estado, fecha_notificacion, fecha_cumplimiento, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
       [empleadoId, tipo, falta || null, fecha, parseInt(dias, 10) || 0, descripcion || null, estado, fNotif, fCumpl, req.user.dni]);
