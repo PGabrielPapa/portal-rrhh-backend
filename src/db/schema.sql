@@ -206,6 +206,22 @@ CREATE TABLE IF NOT EXISTS sanciones (
 );
 CREATE INDEX IF NOT EXISTS idx_sanciones_empleado ON sanciones(empleado_id);
 
+-- ── Bajas de empleados (datos del cese para la liquidación final) ──
+CREATE TABLE IF NOT EXISTS bajas (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  fecha_baja DATE NOT NULL,
+  causa TEXT NOT NULL,
+  fecha_notificacion DATE,
+  preaviso_override TEXT,
+  gratificacion NUMERIC(14,2) NOT NULL DEFAULT 0,
+  gratif_cuotas JSONB NOT NULL DEFAULT '[]'::jsonb,
+  observaciones TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_bajas_empleado ON bajas(empleado_id);
+
 -- ── Evaluaciones de desempeño ──
 CREATE TABLE IF NOT EXISTS evaluaciones (
   id SERIAL PRIMARY KEY,

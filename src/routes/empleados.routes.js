@@ -204,6 +204,43 @@ router.patch('/:id/activo', requireRole('rrhh', 'admin'), async (req, res, next)
   } catch (e) { next(e); }
 });
 
+// POST /api/empleados/:id/baja (rrhh/admin) — registra el cese y deja inactivo al empleado
+router.post('/:id/baja', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!b.fechaBaja || !b.causa) return res.status(400).json({ error: 'Fecha de baja y causa son obligatorias' });
+    await query(
+      `INSERT INTO bajas (empleado_id, fecha_baja, causa, fecha_notificacion, preaviso_override, gratificacion, gratif_cuotas, observaciones, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [req.params.id, b.fechaBaja, b.causa, b.fechaNotificacion || null, b.preavisoOverride || null,
+       Number(b.gratificacion) || 0, JSON.stringify(b.gratifCuotas || []), b.observaciones || null, req.user.dni]);
+    await query('UPDATE empleados SET activo = false WHERE id = $1', [req.params.id]);
+    res.status(201).json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// GET /api/empleados/:id/baja — datos del cese (último), para prefill de la liquidación final
+router.get('/:id/baja', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT * FROM bajas WHERE empleado_id=$1 ORDER BY created_at DESC LIMIT 1', [req.params.id]);
+    res.json(rows[0] || null);
+  } catch (e) { next(e); }
+});
+
+// PUT /api/empleados/:id/baja — editar el cese (p.ej. actualizar cuotas de la gratificación)
+router.put('/:id/baja', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const cur = (await query('SELECT id FROM bajas WHERE empleado_id=$1 ORDER BY created_at DESC LIMIT 1', [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'No hay baja registrada' });
+    await query(
+      `UPDATE bajas SET fecha_baja=$1, causa=$2, fecha_notificacion=$3, preaviso_override=$4, gratificacion=$5, gratif_cuotas=$6, observaciones=$7 WHERE id=$8`,
+      [b.fechaBaja, b.causa, b.fechaNotificacion || null, b.preavisoOverride || null,
+       Number(b.gratificacion) || 0, JSON.stringify(b.gratifCuotas || []), b.observaciones || null, cur.id]);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 // POST /api/empleados/import  (rrhh/admin) — alta masiva
 // body: { rows: [{ Legajo, DNI, CUIL, "Apellido y Nombre", Empresa, "Fecha Ingreso", ... }] }
 router.post('/import', requireRole('rrhh', 'admin'), async (req, res, next) => {

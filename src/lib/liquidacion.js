@@ -294,9 +294,19 @@ export function calcularRecibo(emp, params, opts) {
     detalle.sacProporcional = { monto: round2(sacP.monto), dias: sacP.dias };
     // Indemnizaciones según el supuesto legal de la baja.
     const motivo = opts?.motivoBaja || 'renuncia';
-    const conIndemPlena = motivo === 'sin_causa';
-    const conMediaIndem = motivo === 'mutuo' || motivo === 'fallecimiento' || motivo === 'fuerza_mayor'; // Art. 241 / 248 / 247: 50%
-    const conPreaviso = motivo === 'sin_causa' || motivo === 'fuerza_mayor'; // 245 y 247 requieren preaviso
+    const conIndemPlena = ['sin_causa', 'despido_indirecto', 'incapacidad'].includes(motivo); // Art. 245 / 246 / 212
+    const conMediaIndem = ['fallecimiento', 'fuerza_mayor'].includes(motivo); // Art. 248 / 247: 50%
+    const debePreaviso = ['sin_causa', 'fuerza_mayor', 'despido_indirecto'].includes(motivo);
+    let pagarPreaviso = true;
+    if (opts?.pagarPreaviso === true || opts?.pagarPreaviso === false) pagarPreaviso = opts.pagarPreaviso;
+    else if (opts?.fechaNotificacion && fEg) {
+      const aniosAnt = (parseDate(fEg) - parseDate(emp.ingreso)) / (365.25 * 86400000);
+      const plazoMeses = aniosAnt > 5 ? 2 : 1;
+      const servido = parseDate(opts.fechaNotificacion); servido.setMonth(servido.getMonth() + plazoMeses);
+      pagarPreaviso = parseDate(fEg) < servido; // si egresó antes de cumplir el plazo legal, se paga la sustitutiva
+    }
+    const conPreaviso = debePreaviso && pagarPreaviso;
+    if (debePreaviso) detalle.preavisoPagado = pagarPreaviso;
     const conPreavisoPrueba = motivo === 'prueba'; // Art. 92 bis: 15 días
     if (conIndemPlena || conMediaIndem || conPreaviso || conPreavisoPrueba) {
       const ind = calcIndemAntiguedad(emp.ingreso, fEg, mejorRem, opts?.topeCCT);
@@ -323,6 +333,8 @@ export function calcularRecibo(emp, params, opts) {
         detalle.indemnizacion = { ...(detalle.indemnizacion || {}), art245Media: m, anios: ind.anios };
       }
     }
+    const grat = num(opts?.gratificacion);
+    if (grat > 0) { haberes.push({ concepto: 'Gratificación por cese (acuerdo / retiro voluntario)', tipo: 'exento', monto: round2(grat) }); detalle.gratificacion = round2(grat); }
   } else if (esAnticipo) {
     // Anticipo de haberes: pago a cuenta de la remuneración futura. No tributa aportes/Ganancias ahora;
     // se descuenta en la liquidación regular posterior (módulo Adelantos).
