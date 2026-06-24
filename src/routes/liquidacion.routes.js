@@ -511,4 +511,32 @@ router.post('/simular-final', requireRole('rrhh', 'admin'), async (req, res, nex
   } catch (e) { next(e); }
 });
 
+// POST /api/liquidacion/simular-final-masivo { empresa?, fechaEgreso, diasVacNoGozadas? }
+// Liquidación final de TODO el plantel (o de una empresa) comparando los 7 supuestos de baja.
+router.post('/simular-final-masivo', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { empresa, fechaEgreso, diasVacNoGozadas } = req.body || {};
+    if (!fechaEgreso) return res.status(400).json({ error: 'fechaEgreso es obligatoria' });
+    const cond = ['e.activo = true'], pr = [];
+    if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
+    const emps = (await query(`SELECT e.*, em.nombre AS empresa_nombre FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')} ORDER BY em.nombre, e.leg_num`, pr)).rows;
+    const params = await getParams();
+    const fe = new Date(fechaEgreso + 'T12:00:00');
+    const dvac = Number(diasVacNoGozadas) || 0;
+    const r2n = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+    const tot = {}; SUPUESTOS_BAJA.forEach((sp) => { tot[sp.v] = 0; });
+    const items = emps.map((r) => {
+      const base = { legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} };
+      const netos = {};
+      for (const sp of SUPUESTOS_BAJA) {
+        const rec = calcularRecibo(base, params, { anio: fe.getFullYear(), mes: fe.getMonth() + 1, tipo: 'final', fechaEgreso, motivoBaja: sp.v, diasVacNoGozadas: dvac });
+        netos[sp.v] = r2n(rec.totales.neto); tot[sp.v] += rec.totales.neto;
+      }
+      return { legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, ingreso: r.ingreso, netos };
+    });
+    Object.keys(tot).forEach((k) => { tot[k] = r2n(tot[k]); });
+    res.json({ supuestos: SUPUESTOS_BAJA, cant: items.length, items, totales: tot });
+  } catch (e) { next(e); }
+});
+
 export default router;
