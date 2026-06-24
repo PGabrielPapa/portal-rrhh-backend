@@ -149,6 +149,78 @@ Resumen de lo agregado en esta sesión, sobre los repos `portal-rrhh-backend` y
 > período de prueba en el servicio LSD antes de presentar; período y N° de
 > liquidación del `.txt` deben coincidir con los del servicio.
 
+## 9) Recibos (gestión) — reorganización + acciones
+
+- `frontend/src/pages/RecibosGestion.tsx` (MOD): vista en **árbol Empresa → Empleado
+  (alfabético) → recibos (período + tipo)**, colapsable. Totalizadores de neto por
+  empresa y total general. Filtros: empresa, mes, año, tipo, buscador, y toggles
+  **"Pendientes de pago"** y **"No vistos"**.
+- **Borrado de recibos** (para re-liquidar): individual (✕), por **empresa + período**,
+  por **empresa + período + tipo**, y **período global** (todas las empresas). Backend
+  `DELETE /api/recibos/:id` y `POST /api/recibos/eliminar-lote { anio, mes, empresa?, tipo? }`.
+  Al borrar se limpian las `anticipo_cuotas` y se **reconcilia la corrida** (recalcula
+  totales o la elimina si queda vacía).
+- **Cierre de período**: usa `cierres_periodo`. Admin **cierra/reabre** por empresa+período
+  desde Recibos; con período cerrado se **bloquea** borrar y re-liquidar (409) hasta reabrir.
+- **Auditoría de borrados**: cada eliminación queda en `audit_log` (visible en Auditoría).
+- **Marcar como pagado**: `PATCH /api/recibos/:id/pagar`; columnas `pagado/pagado_at/pagado_por`
+  (`schema.sql`). Badge + filtro de pendientes.
+- **Avisar al empleado**: `POST /api/recibos/:id/avisar` (manda mensaje al empleado);
+  `/recibos/gestion` devuelve `visto` (desde `recibo_vistas`) para el filtro "no vistos".
+- **Impresión masiva** por empresa (`frontend/src/lib/reciboPrint.ts` → `imprimirVarios`)
+  y **export CSV** de la grilla.
+- **Re-liquidar (atajo)**: botón ↻ navega a Liquidación → Individual con empleado/período/tipo
+  precargados (`frontend/src/pages/Liquidacion.tsx` lee `reLeg/reEmp/anio/mes/tipo`).
+
+## 10) Liquidación — fixes y rediseño de la corrida
+
+- `frontend/src/pages/Liquidacion.tsx` (MOD): en Individual, **Enter** selecciona el empleado
+  del buscador (antes el botón quedaba deshabilitado y "no dejaba calcular") + ayuda visible.
+- Planilla de **Corrida** rediseñada: lista de corridas como tarjetas arriba, planilla a ancho
+  completo, **buscador por legajo/nombre**, expandir/contraer todos, **subtotales por empresa**
+  y **totalizadores** (neto, contribuciones, costo total). Feedback al aprobar/publicar y
+  guía del flujo borrador → aprobar → publicar.
+
+## 11) Mensajes — respuesta de RR.HH.
+
+- `backend/src/routes/mensajes.routes.js` (MOD): `POST /api/mensajes/:id/responder` — RR.HH.
+  responde al empleado (mensaje `a_empleado`) y el original pasa a estado **`respondido`**.
+- `frontend/src/pages/MensajesRRHH.tsx` (MOD): botón **Responder** con caja de texto, badges
+  Nuevo/Leído/Respondido y filtro "Respondidos".
+
+## 12) Históricos editables (Ganancias y Reglamento)
+
+- `backend/src/db/schema.sql` (MOD): tablas `ganancias_periodos_hist` y `reglamento_hist`.
+- `backend/src/routes/ganancias.routes.js` (MOD): snapshot de la versión previa en cada
+  alta/edición + `GET /ganancias/periodos/:id/historial`.
+- `backend/src/routes/reglamento.routes.js` (MOD): snapshot en cada guardado +
+  `GET /reglamento/historial`.
+- `frontend/src/pages/GananciasParams.tsx` (MOD): filas expandibles con **todos** los
+  parámetros + escala; botón **🕘 Histórico** con "Cargar en editor" para re-liquidar.
+- `frontend/src/pages/Reglamento.tsx` (MOD): botón **🕘 Histórico** con versiones y
+  "Cargar en editor" (restaurar).
+
+## 13) Integración ProSoft (pendiente) — ver `PROSOFT-API.md`
+
+- Mapeo completo de la API de control horario "Gestión de Personal Pro-Soft"
+  (login por cookie, `/api/resumen/GetValue` con polling, etc.) documentado en
+  `backend/PROSOFT-API.md` para retomar la descarga de fichadas más adelante.
+
+## 14) Auditoría de seguridad y bugs (correcciones)
+
+- **Backend (seguridad):** scope por equipo para gerentes en `licencias.routes.js`
+  (descarga de comprobante), `anticipos.routes.js` (detalle de cuotas) y `hys.routes.js`
+  (capacitaciones / EPP / historial de talles); IDOR corregido en `GET /hys/talles/:id`
+  (exige ser el propio empleado o gestor); orden de rutas en `fichadas.routes.js`
+  (`/importaciones/log` antes de `/:anio/:mes`).
+- **Frontend (UX/robustez):** `Empleados.tsx` — el campo `F` se movió a nivel de módulo
+  (el ABM perdía el foco a cada tecla); **confirmaciones** en borrados destructivos
+  (Ganancias, corrida, sindicatos, ART, plan de cuentas, escalas/convenios, H&S,
+  reapertura de período) y en la publicación de recibos; `try/catch` con aviso en los
+  borrados de H&S.
+- Verificado sin hallazgos: sin inyección SQL (todo parametrizado), endpoints/métodos/shapes
+  front↔back consistentes, handlers con try/catch.
+
 ## Archivos a commitear
 
 **Backend** — nuevos: `src/lib/sicoss.js`, `src/lib/lsd.js`, `src/routes/arca.routes.js`,
@@ -164,6 +236,15 @@ Modificados: `src/app.js`, `src/db/schema.sql`, `src/db/seed.js`,
 `src/pages/MisDatos.tsx`, `src/pages/Empleados.tsx`, `src/pages/Liquidacion.tsx`,
 `src/pages/GeneradorReportes.tsx`, `src/pages/Hys.tsx`, `src/pages/LibroSueldos.tsx`, `src/lib/sections.ts`,
 `src/components/SectionView.tsx`, `src/lib/meta.ts`.
+
+**Sesión recibos/históricos/auditoría (secciones 9–14)** — Backend nuevos: `PROSOFT-API.md`.
+Backend modificados: `src/db/schema.sql`, `src/routes/recibos.routes.js`, `src/routes/mensajes.routes.js`,
+`src/routes/ganancias.routes.js`, `src/routes/reglamento.routes.js`, `src/routes/cierres.routes.js` (usado),
+`src/routes/licencias.routes.js`, `src/routes/anticipos.routes.js`, `src/routes/fichadas.routes.js`,
+`src/routes/hys.routes.js`. Frontend modificados: `src/pages/RecibosGestion.tsx`, `src/pages/Liquidacion.tsx`,
+`src/pages/GananciasParams.tsx`, `src/pages/Reglamento.tsx`, `src/pages/MensajesRRHH.tsx`,
+`src/pages/Empleados.tsx`, `src/pages/Asiento.tsx`, `src/pages/Sindicatos.tsx`, `src/pages/ArtEmpresas.tsx`,
+`src/pages/CierrePeriodos.tsx`, `src/pages/Escalas.tsx`, `src/lib/reciboPrint.ts`.
 
 ### Comandos (desde Windows, donde el EOL no genera ruido)
 
@@ -200,6 +281,7 @@ git push
   correctos.
 - Smoke test del generador LSD: registros 01/02/03/04 de 35/115/51/370
   caracteres exactos; importes sin separador; layout autoverificado.
+- Auditoría de seguridad/bugs (sección 14): backend `node --check` OK; frontend `tsc` OK.
 - No se pudo correr Postgres en este entorno (sin permisos); el SQL replica
   patrones ya en producción (`CREATE TABLE/INDEX IF NOT EXISTS`, `ALTER ADD
   COLUMN IF NOT EXISTS`). Conviene una corrida de `migrate`+`seed` en staging.
