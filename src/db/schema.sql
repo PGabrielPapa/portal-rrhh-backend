@@ -228,6 +228,9 @@ ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS resuelto_por TEXT;
 
 ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS fecha_notificacion DATE;
 ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS fecha_cumplimiento DATE;
+ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS notif_nombre TEXT;
+ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS notif_mime   TEXT;
+ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS notif_data   TEXT;
 
 -- ── Certificados de trabajo (solicitud → generación RR.HH.) ──
 CREATE TABLE IF NOT EXISTS certificados (
