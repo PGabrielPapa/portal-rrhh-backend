@@ -469,10 +469,14 @@ CREATE TABLE IF NOT EXISTS sindicatos (
   pct_antig_por_anio    NUMERIC(6,2) NOT NULL DEFAULT 1,
   nota                  TEXT,
   tiene_adicional_titulo BOOLEAN NOT NULL DEFAULT false,
+  titulo_secundario     NUMERIC(12,2) NOT NULL DEFAULT 0,
+  titulo_universitario  NUMERIC(12,2) NOT NULL DEFAULT 0,
   pres_base             TEXT NOT NULL DEFAULT 'basico',
   updated_by            TEXT,
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE sindicatos ADD COLUMN IF NOT EXISTS titulo_secundario    NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE sindicatos ADD COLUMN IF NOT EXISTS titulo_universitario NUMERIC(12,2) NOT NULL DEFAULT 0;
 -- ── Higiene y Seguridad: capacitaciones y entregas de EPP ──
 CREATE TABLE IF NOT EXISTS hys_capacitaciones (
   id SERIAL PRIMARY KEY,

@@ -117,7 +117,7 @@ async function main() {
       await client.query(
         `INSERT INTO conceptos (codigo, descripcion, tipo, formula, base_legal, data) VALUES ($1,$2,$3,$4,$5,$6)
          ON CONFLICT (codigo) DO NOTHING`,
-        [c.codigo, c.descripcion, c.tipo, c.formula || null, c.base_legal || null, JSON.stringify({ categoria: c.categoria || null, columna: c.columna || null })]
+        [c.codigo, c.descripcion, c.tipo, c.formula || null, c.base_legal || null, JSON.stringify({ categoria: c.categoria || null, columna: c.columna || null, ...(c.data || {}) })]
       );
     }
     console.log(`[seed] conceptos: ${conceptos.length}`);
