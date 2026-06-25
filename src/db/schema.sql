@@ -477,6 +477,7 @@ CREATE TABLE IF NOT EXISTS sindicatos (
 );
 ALTER TABLE sindicatos ADD COLUMN IF NOT EXISTS titulo_secundario    NUMERIC(12,2) NOT NULL DEFAULT 0;
 ALTER TABLE sindicatos ADD COLUMN IF NOT EXISTS titulo_universitario NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE sindicatos ADD COLUMN IF NOT EXISTS pct_presentismo      NUMERIC(6,2) NOT NULL DEFAULT 0;
 -- ── Higiene y Seguridad: capacitaciones y entregas de EPP ──
 CREATE TABLE IF NOT EXISTS hys_capacitaciones (
   id SERIAL PRIMARY KEY,
