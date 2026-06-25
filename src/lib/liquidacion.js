@@ -241,15 +241,26 @@ export function calcularRecibo(emp, params, opts) {
 
   const basico = num(d.basico) || num(d.sueldo) || num(emp.bruto);
   const anios = aniosAntiguedad(emp.ingreso, anio, mes);
-  const antiguedad = esFC ? 0 : basico * anios * num(p.pctAntiguedadPorAnio) / 100;
+  const sind = opts?.sind || null;
+  const pctAntig = (sind && Number(sind.pctAntigPorAnio) > 0) ? Number(sind.pctAntigPorAnio) : num(p.pctAntiguedadPorAnio);
+  const antiguedad = esFC ? 0 : basico * anios * pctAntig / 100;
   const pierdePresentismo = num(opts?.diasSuspension) > 0 || num(opts?.ausenciasInjustificadas) > 0;
-  // Base del presentismo según el CCT del empleado (pres_base del sindicato): 'basico' | 'basico+antig' | 'basico+antig+titulo'.
+  // Adicional por título según el nivel del empleado (data.nivelTitulo) y los montos del CCT (sindicato).
+  const nivelTit = String(d.nivelTitulo || '').toLowerCase();
+  const tituloAdic = (esFC || !sind) ? 0 : (nivelTit === 'universitario' ? num(sind.tituloUniversitario) : nivelTit === 'secundario' ? num(sind.tituloSecundario) : 0);
+  // Base del presentismo según el CCT (pres_base): básico [+ antig] [+ título] [+ a cuenta de futuros aumentos].
   const presBase = opts?.presBase || 'basico';
-  const basePres = presBase === 'basico' ? basico : (basico + antiguedad);
-  const presentismo = (esFC || pierdePresentismo) ? 0 : basePres * num(p.pctPresentismo) / 100;
+  let basePres = basico;
+  if (presBase.includes('antig')) basePres += antiguedad;
+  if (presBase.includes('titulo')) basePres += tituloAdic;
+  if (presBase.includes('acuenta')) basePres += num(d.aCuenta);
+  const pctPres = (sind && Number(sind.pctPresentismo) > 0) ? Number(sind.pctPresentismo) : num(p.pctPresentismo);
+  const presentismo = (esFC || pierdePresentismo) ? 0 : basePres * pctPres / 100;
+  // Adicional presentismo individual (tilde del legajo): lleva el presentismo hasta el 10%; solo si la diferencia es > 0.
+  const adicPres = (esFC || pierdePresentismo || !d.adicionalPresentismo) ? 0 : Math.max(0, basePres * (10 - pctPres) / 100);
   const complemento = num(d.complemento);
   const noRem = num(d.norem);
-  const regularRemun = basico + antiguedad + presentismo + complemento;
+  const regularRemun = basico + antiguedad + presentismo + tituloAdic + adicPres + complemento;
   const mejorRem = num(opts?.mejorRem) || (regularRemun + noRem);
   const fechaPago = opts?.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-01`;
   const G = opts?.ganTabla || ganParaFecha(fechaPago);
@@ -372,6 +383,8 @@ export function calcularRecibo(emp, params, opts) {
     haberes.push({ concepto: 'Sueldo básico' + suf + diasTxt, tipo: 'rem', monto: round2(basico * f) });
     if (antiguedad > 0) haberes.push({ concepto: `Antigüedad (${anios} año${anios !== 1 ? 's' : ''})${suf}`, tipo: 'rem', monto: round2(antiguedad * f) });
     if (presentismo > 0) haberes.push({ concepto: 'Presentismo' + suf, tipo: 'rem', monto: round2(presentismo * f) });
+    if (tituloAdic > 0) haberes.push({ concepto: 'Adicional por título' + suf, tipo: 'rem', monto: round2(tituloAdic * f) });
+    if (adicPres > 0) haberes.push({ concepto: 'Adicional presentismo (al 10%)' + suf, tipo: 'rem', monto: round2(adicPres * f) });
     if (complemento > 0) haberes.push({ concepto: 'Complemento variable' + suf, tipo: 'rem', monto: round2(complemento * f) });
     if (noRem > 0) haberes.push({ concepto: 'Asignación no remunerativa' + suf, tipo: 'norem', monto: round2(noRem * f) });
     // Horas extra (valor hora normal = básico / 200)
