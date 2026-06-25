@@ -534,8 +534,19 @@ export function calcularRecibo(emp, params, opts) {
   if (scvo > 0) contribuciones.push({ concepto: 'SCVO (Dto. 1567/74)', monto: scvo });
   const totalContrib = contribuciones.reduce((s, x) => s + x.monto, 0);
 
+  // Domicilio del empleador (art. 140 LCT inc. a, Dto. 407/2026): se arma desde empresas.data
+  const _ed = emp.empresaData || {};
+  const _domPartes = [
+    [_ed.dir, _ed.nro].filter(Boolean).join(' '),
+    _ed.piso ? 'Piso ' + _ed.piso : '',
+    _ed.depto ? 'Depto ' + _ed.depto : '',
+    _ed.loc, _ed.prov,
+    _ed.cp ? '(CP ' + _ed.cp + ')' : '',
+  ].filter(Boolean);
+  const _domicilioEmpleador = _domPartes.join(', ') || null;
   return {
-    empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, cuil: emp.cuil, cat: emp.cat },
+    empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, cuil: emp.cuil, cat: emp.cat, ingreso: emp.ingreso || null, antiguedadReconocida: emp.data?.antiguedadReconocida || null },
+    empleador: { razonSocial: emp.empresa, cuit: emp.empresaCuit || null, domicilio: _domicilioEmpleador },
     periodo: { anio, mes, tipo, tipoLabel, fechaPago, ganPeriodo: G.periodo || null },
     haberes, descuentos, detalle, ganancias: ganDetalle,
     totales: {
