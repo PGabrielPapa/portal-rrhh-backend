@@ -294,14 +294,15 @@ export function calcularRecibo(emp, params, opts) {
     detalle.sacProporcional = { monto: round2(sacP.monto), dias: sacP.dias };
     // Indemnizaciones según el supuesto legal de la baja.
     const motivo = opts?.motivoBaja || 'renuncia';
-    const conIndemPlena = ['sin_causa', 'despido_indirecto', 'incapacidad'].includes(motivo); // Art. 245 / 246 / 212
-    const conMediaIndem = ['fallecimiento', 'fuerza_mayor'].includes(motivo); // Art. 248 / 247: 50%
+    const aniosAntServicio = (parseDate(fEg) - parseDate(emp.ingreso)) / (365.25 * 86400000);
+    const finContratoMedia = motivo === 'fin_contrato' && aniosAntServicio > 1; // Art. 250: plazo fijo cumplido > 1 año
+    const conIndemPlena = ['sin_causa', 'despido_indirecto', 'incapacidad_absoluta'].includes(motivo); // Art. 245 / 246 / 212 4°
+    const conMediaIndem = ['fallecimiento', 'fuerza_mayor', 'incapacidad_parcial'].includes(motivo) || finContratoMedia; // Art. 248 / 247 / 212 1°-3° / 250: 50%
     const debePreaviso = ['sin_causa', 'fuerza_mayor', 'despido_indirecto'].includes(motivo);
     let pagarPreaviso = true;
     if (opts?.pagarPreaviso === true || opts?.pagarPreaviso === false) pagarPreaviso = opts.pagarPreaviso;
     else if (opts?.fechaNotificacion && fEg) {
-      const aniosAnt = (parseDate(fEg) - parseDate(emp.ingreso)) / (365.25 * 86400000);
-      const plazoMeses = aniosAnt > 5 ? 2 : 1;
+      const plazoMeses = aniosAntServicio > 5 ? 2 : 1;
       const servido = parseDate(opts.fechaNotificacion); servido.setMonth(servido.getMonth() + plazoMeses);
       pagarPreaviso = parseDate(fEg) < servido; // si egresó antes de cumplir el plazo legal, se paga la sustitutiva
     }
@@ -328,13 +329,20 @@ export function calcularRecibo(emp, params, opts) {
         detalle.indemnizacion = { ...(detalle.indemnizacion || {}), art245: round2(ind.monto), anios: ind.anios };
       } else if (conMediaIndem) {
         const m = round2(ind.monto * 0.5);
-        const lblMedia = motivo === 'mutuo' ? 'Art. 241 (mutuo acuerdo)' : motivo === 'fuerza_mayor' ? 'Art. 247 (fuerza mayor / falta de trabajo)' : 'Art. 248 (fallecimiento)';
+        const lblMedia = motivo === 'fuerza_mayor' ? 'Art. 247 (fuerza mayor / falta de trabajo)' : motivo === 'incapacidad_parcial' ? 'Art. 212 (incapacidad parcial)' : motivo === 'fin_contrato' ? 'Art. 250 (fin de contrato a plazo)' : 'Art. 248 (fallecimiento)';
         haberes.push({ concepto: `Indemnización ${lblMedia} — 50% del Art. 245`, tipo: 'exento', monto: m });
         detalle.indemnizacion = { ...(detalle.indemnizacion || {}), art245Media: m, anios: ind.anios };
       }
     }
     const grat = num(opts?.gratificacion);
-    if (grat > 0) { haberes.push({ concepto: 'Gratificación por cese (acuerdo / retiro voluntario)', tipo: 'exento', monto: round2(grat) }); detalle.gratificacion = round2(grat); }
+    if (grat > 0) {
+      const topeExento = calcIndemAntiguedad(emp.ingreso, fEg, mejorRem, opts?.topeCCT).monto; // exenta hasta una indemnización Art. 245
+      const exento = Math.min(grat, topeExento);
+      const gravado = round2(grat - exento);
+      if (exento > 0) haberes.push({ concepto: 'Gratificación por cese (exenta hasta tope Art. 245)', tipo: 'exento', monto: round2(exento) });
+      if (gravado > 0) haberes.push({ concepto: 'Gratificación por cese (excedente gravado en Ganancias)', tipo: 'gravado', monto: gravado });
+      detalle.gratificacion = round2(grat);
+    }
   } else if (esAnticipo) {
     // Anticipo de haberes: pago a cuenta de la remuneración futura. No tributa aportes/Ganancias ahora;
     // se descuenta en la liquidación regular posterior (módulo Adelantos).
@@ -391,8 +399,9 @@ export function calcularRecibo(emp, params, opts) {
   const totalRemun = haberes.filter((h) => h.tipo === 'rem').reduce((s, h) => s + h.monto, 0);
   const totalNoRem = haberes.filter((h) => h.tipo === 'norem').reduce((s, h) => s + h.monto, 0);
   const totalExento = haberes.filter((h) => h.tipo === 'exento').reduce((s, h) => s + h.monto, 0);
+  const totalGravado = haberes.filter((h) => h.tipo === 'gravado').reduce((s, h) => s + h.monto, 0); // Ganancias sí, aportes no
   const totalAnticipo = haberes.filter((h) => h.tipo === 'anticipo').reduce((s, h) => s + h.monto, 0);
-  const totalHaberes = totalRemun + totalNoRem + totalExento + totalAnticipo;
+  const totalHaberes = totalRemun + totalNoRem + totalExento + totalGravado + totalAnticipo;
 
   // Aportes del trabajador (sobre base remunerativa con tope Art. 9 Ley 24.241, si está configurado)
   const descuentos = [];
@@ -424,7 +433,7 @@ export function calcularRecibo(emp, params, opts) {
     const esHabitualCur = !esSacPago && !esNoHabB;                       // mensual/quincenal/vacaciones/final
     const fB = anualizada ? 1 : factorNoHabitual(Number(mes), Number(mes));
     const comp = {
-      habitual: num(ac.habitual) + (esHabitualCur ? totalRemun : 0),
+      habitual: num(ac.habitual) + (esHabitualCur ? totalRemun : 0) + totalGravado,
       noHabPro: num(ac.noHabPro) + (esNoHabB ? totalRemun * fB : 0),
       noHabFull: num(ac.noHabFull) + (esNoHabB ? totalRemun : 0),
       aporHabitual: num(ac.aporHabitual) + (esHabitualCur ? totalAportes : 0),
