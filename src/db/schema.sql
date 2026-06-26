@@ -597,6 +597,18 @@ DROP TRIGGER IF EXISTS trg_fichadas_updated ON fichadas_periodo;
 CREATE TRIGGER trg_fichadas_updated BEFORE UPDATE ON fichadas_periodo
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- ── Circuito de aprobación (doble control) de novedades de fichadas ──
+-- Flujo: pendiente → (RR.HH. acepta) aprob_rrhh → (responsable directo / CEO-admin acepta) autorizada.
+-- Rechazo en cualquier etapa → observada (con comentario). Solo 'autorizada' es liquidable.
+ALTER TABLE fichadas_periodo ADD COLUMN IF NOT EXISTS estado   TEXT NOT NULL DEFAULT 'pendiente';
+ALTER TABLE fichadas_periodo ADD COLUMN IF NOT EXISTS rrhh_por TEXT;          -- DNI/usuario RR.HH. que aceptó
+ALTER TABLE fichadas_periodo ADD COLUMN IF NOT EXISTS rrhh_at  TIMESTAMPTZ;
+ALTER TABLE fichadas_periodo ADD COLUMN IF NOT EXISTS rrhh_obs TEXT;          -- observación si RR.HH. rechaza
+ALTER TABLE fichadas_periodo ADD COLUMN IF NOT EXISTS ger_por  TEXT;          -- responsable directo / CEO que aceptó
+ALTER TABLE fichadas_periodo ADD COLUMN IF NOT EXISTS ger_at   TIMESTAMPTZ;
+ALTER TABLE fichadas_periodo ADD COLUMN IF NOT EXISTS ger_obs  TEXT;          -- observación si el gerente rechaza
+CREATE INDEX IF NOT EXISTS idx_fichadas_estado ON fichadas_periodo(anio, mes, estado);
+
 -- Log de cada importación (auditoría): cuántos cruzaron, sin match, a revisar.
 CREATE TABLE IF NOT EXISTS fichadas_importaciones (
   id            SERIAL PRIMARY KEY,

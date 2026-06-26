@@ -23,9 +23,9 @@ const COLS = {
 // Umbral diario de hora extra (regla Leiten): el extra del día se paga solo
 // si alcanzó este mínimo; si no, no se computa. El cierre es POR DÍA.
 const UMBRAL_EXTRA_MIN = 30;
-// Jornada diaria objetivo en días laborables (regla Leiten: 9h fijas).
-// En sábado/domingo/feriado Pro-Soft pone Hs Normal=0 → no se exige jornada.
-const JORNADA_MIN = 540;
+// Jornada por defecto (9h) por si el extendido no trae "Hs Normal" en un día
+// laborable. En general usamos la jornada REAL de cada empleado del extendido.
+const JORNADA_DEFAULT = 540;
 
 const norm = (s) => String(s == null ? '' : s).trim();
 const normKey = (s) => norm(s).toLowerCase().replace(/\s+/g, ' ');
@@ -126,7 +126,9 @@ export function parseExtendido(rows) {
     const hsNetas = hhmmToMin(cell(r, 'hsNetas'));
     const hsNormal = hhmmToMin(cell(r, 'hsNormal'));
     const esLaborable = hsNormal > 0;                 // Pro-Soft: 0 en finde/feriado
-    const jornadaDia = esLaborable ? JORNADA_MIN : 0; // 9h fijas en laborables, 0 si no
+    // Jornada REAL del empleado según el extendido (columna "Hs Normal"); 0 en
+    // finde/feriado. Antes era 9h fija; ahora respeta la jornada de cada uno.
+    const jornadaDia = esLaborable ? (hsNormal || JORNADA_DEFAULT) : 0;
     const e50 = hhmmToMin(cell(r, 'extra50'));
     const e100 = hhmmToMin(cell(r, 'extra100'));
     const tarde = hhmmToMin(cell(r, 'tarde'));

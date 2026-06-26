@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query, pool } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
-import { makeUid, dniFromCuil } from '../lib/identity.js';
+import { makeUid, dniFromCuil, empSlug } from '../lib/identity.js';
 import { idsEquipoDe, idsDirectosDe } from '../lib/equipo.js';
 
 const router = Router();
@@ -304,7 +304,10 @@ router.post('/import', requireRole('rrhh', 'admin'), async (req, res, next) => {
     const uidSet = new Set(ex.rows.map((r) => makeUid(r.emp, r.leg_num)));
     const dniSet = new Set(ex.rows.map((r) => r.dni));
     const empresasDb = await client.query('SELECT id, nombre FROM empresas');
-    const empresaId = Object.fromEntries(empresasDb.rows.map((r) => [r.nombre, r.id]));
+    // Cruce tolerante por nombre: ignora mayúsculas, puntos y espacios
+    // ("IDEE S.R.L." == "IDEE SRL" == "idee s.r.l.").
+    const empresaId = Object.fromEntries(empresasDb.rows.map((r) => [empSlug(r.nombre), r.id]));
+    const empresasNombres = empresasDb.rows.map((r) => r.nombre).join(', ');
 
     let ok = 0, dup = 0, err = 0; const errores = [];
     for (const r of rows) {
@@ -316,19 +319,27 @@ router.post('/import', requireRole('rrhh', 'admin'), async (req, res, next) => {
       const nom = String(r['Apellido y Nombre'] || '').trim().toUpperCase();
       const ing = String(r['Fecha Ingreso'] || '').trim();
       if (!legNum || !dni || !cuil || !nom || !empresa) { errores.push(`Legajo ${legNum || '?'}: faltan campos obligatorios`); err++; continue; }
-      const eid = empresaId[empresa];
-      if (!eid) { errores.push(`Legajo ${legNum}: empresa desconocida "${empresa}"`); err++; continue; }
+      const eid = empresaId[empSlug(empresa)];
+      if (!eid) { errores.push(`Legajo ${legNum}: empresa "${empresa}" no existe en el portal (empresas: ${empresasNombres})`); err++; continue; }
       const uid = makeUid(empresa, legNum);
       if (uidSet.has(uid)) { errores.push(`Legajo ${legNum} en ${empresa}: ya existe`); dup++; continue; }
       if (dniSet.has(dni)) { errores.push(`DNI ${dni} (${nom}): ya existe`); dup++; continue; }
       const ingISO = (() => { const m = ing.match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return m ? `${m[3]}-${m[2]}-${m[1]}` : (/^\d{4}-\d{2}-\d{2}$/.test(ing) ? ing : null); })();
-      const data = { ubicacion: r['Ubicación'] || '', dom_calle: r['Domicilio Calle'] || '', dom_loc: r['Localidad'] || '', dom_prov: r['Provincia'] || '', dom_cp: r['Código Postal'] || '' };
+      // Tolerante a variantes de nombres de columna (plantilla propia o export Pro-Soft/IDEE).
+      const cat = String(r['Categoría'] || r['Categoría Unif.'] || r['Desc. Categoría'] || '').toUpperCase() || null;
+      const data = {
+        ubicacion: r['Ubicación'] || '',
+        dom_calle: r['Domicilio Calle'] || r['Calle'] || '',
+        dom_nro: r['Número'] || '',
+        dom_loc: r['Localidad'] || '', dom_prov: r['Provincia'] || '', dom_cp: r['Código Postal'] || '',
+      };
       await client.query(
         `INSERT INTO empleados (empresa_id, leg_num, dni, cuil, nom, email, cat, tramo, ingreso, bruto, neto, es_alta, data)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,$12)`,
-        [eid, legNum, dni, cuil, nom, r['E-mail'] || null, (r['Categoría'] || '').toUpperCase() || null,
-         (r['Tramo'] || '').toUpperCase() || null, ingISO, parseFloat(r['Sueldo Bruto']) || 0,
-         parseFloat(r['Sueldo Neto']) || 0, JSON.stringify(data)]
+        [eid, legNum, dni, cuil, nom, r['E-mail'] || null, cat,
+         (r['Tramo'] || '').toUpperCase() || null, ingISO,
+         parseFloat(r['Sueldo Bruto'] || r['Sueldo']) || 0,
+         parseFloat(r['Sueldo Neto'] || r['Sueldo']) || 0, JSON.stringify(data)]
       );
       uidSet.add(uid); dniSet.add(dni); ok++;
     }
