@@ -14,6 +14,7 @@ import { parseExtendido, normLegajo, minToHhmm } from '../lib/fichadasProsoft.js
 import { buildXlsx, buildPdf, nombreMes } from '../lib/fichadasExport.js';
 import { idsDirectosDe } from '../lib/equipo.js';
 import { getValidador } from '../lib/organigrama.js';
+import { procesarParsed } from '../lib/fichadasProcesar.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -21,35 +22,12 @@ router.use(requireAuth);
 // Archivo en memoria (no se persiste el .xlsx). Límite 30 MB.
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
 
-// Da formato de presentación a un agregado por empleado.
-function vista(a) {
-  return {
-    diasTrabajados: a.diasTrabajados,
-    hsNetas: minToHhmm(a.hsNetasMin),
-    horasExtra50: minToHhmm(a.horasExtra50Min),
-    horasExtra100: minToHhmm(a.horasExtra100Min),
-    horasExtra50Min: a.horasExtra50Min,
-    horasExtra100Min: a.horasExtra100Min,
-    hsNetasMin: a.hsNetasMin,
-    horasExtraDescartada: minToHhmm(a.horasExtraDescartadaMin),
-    horasExtraDescartadaMin: a.horasExtraDescartadaMin,
-    bancoNeto: minToHhmm(a.bancoNetoMin),
-    bancoNetoMin: a.bancoNetoMin,
-    tardanzas: minToHhmm(a.tardanzasMin),
-    tardanzasMin: a.tardanzasMin,
-    diasTardanza: a.diasTardanza,
-    diasARevisar: a.diasARevisar,
-    licenciasProsoft: a.licenciasProsoft,
-    diasLicencia: Object.values(a.licenciasProsoft || {}).reduce((t, n) => t + n, 0),
-    dias: a.dias,
-  };
-}
-
 // POST /api/fichadas/importar?confirmar=true|false   (multipart: archivo, anio, mes)
 router.post('/importar', requireRole('rrhh', 'admin'), upload.single('archivo'), async (req, res, next) => {
   try {
     const anio = Number(req.body.anio);
     const mes = Number(req.body.mes);
+    const desde = req.body.desde || null, hasta = req.body.hasta || null; // rango real (período de liquidación)
     const confirmar = String(req.query.confirmar || req.body.confirmar || '') === 'true';
     if (!req.file) return res.status(400).json({ error: 'Subí el archivo Excel (campo "archivo").' });
     if (!anio || !mes || mes < 1 || mes > 12) return res.status(400).json({ error: 'Indicá año y mes válidos.' });
@@ -69,131 +47,14 @@ router.post('/importar', requireRole('rrhh', 'admin'), upload.single('archivo'),
       return res.status(400).json({ error: `Al Excel le faltan columnas esperadas: ${parsed.columnasFaltantes.join(', ')}. Asegurate de exportar el "Extendido".` });
     }
 
-    // Mapa de empleados del portal por legajo normalizado.
-    const { rows: emps } = await query(
-      `SELECT e.id, e.leg_num, e.nom, em.nombre AS empresa FROM empleados e JOIN empresas em ON em.id = e.empresa_id`
-    );
-    const porLeg = new Map();
-    for (const e of emps) porLeg.set(normLegajo(e.leg_num), e);
-
-    const matcheados = [];
-    const sinMatch = [];
-    for (const [leg, a] of Object.entries(parsed.porLegajo)) {
-      const emp = porLeg.get(leg);
-      const v = vista(a);
-      if (emp) {
-        matcheados.push({ empleadoId: emp.id, legNum: emp.leg_num, nom: emp.nom, empresa: emp.empresa, legajoProsoft: a.legajoProsoft, ...v });
-      } else {
-        sinMatch.push({ legajoProsoft: a.legajoProsoft, empleado: a.empleado, empresaProsoft: a.empresaProsoft, area: a.area, ...v });
-      }
-    }
-    matcheados.sort((x, y) => x.nom.localeCompare(y.nom));
-    sinMatch.sort((x, y) => x.empleado.localeCompare(y.empleado));
-    // ── Cruce con licencias APROBADAS del portal ──
-    // Anota cada día con la licencia del portal que lo cubre. Un día laborable
-    // sin marca y sin licencia (ni en Pro-Soft ni en el portal) = injustificado.
-    const ids = matcheados.map((m) => m.empleadoId);
-    const licMap = new Map();
-    if (ids.length) {
-      const ultimo = new Date(anio, mes, 0).getDate();
-      const desdeP = `${anio}-${String(mes).padStart(2, '0')}-01`;
-      const hastaP = `${anio}-${String(mes).padStart(2, '0')}-${String(ultimo).padStart(2, '0')}`;
-      const { rows: lics } = await query(
-        `SELECT empleado_id, tipo, desde, hasta FROM licencias
-          WHERE estado = 'aprobada' AND empleado_id = ANY($1::int[]) AND desde <= $2 AND hasta >= $3`,
-        [ids, hastaP, desdeP]);
-      for (const l of lics) {
-        if (!licMap.has(l.empleado_id)) licMap.set(l.empleado_id, []);
-        licMap.get(l.empleado_id).push({ tipo: l.tipo, desde: String(l.desde).slice(0, 10), hasta: String(l.hasta).slice(0, 10) });
-      }
-    }
-    for (const m of matcheados) {
-      const ranges = licMap.get(m.empleadoId) || [];
-      let injust = 0, conflicto = 0;
-      for (const d of (m.dias || [])) {
-        const licP = ranges.find((r) => d.fecha >= r.desde && d.fecha <= r.hasta);
-        d.licenciaPortal = licP ? licP.tipo : null;
-        if (d.estado === 'sin-marca') {
-          d.estado = licP ? 'licencia-portal' : 'injustificado';
-          if (licP) d.licenciaSoloPortal = true;   // el portal tiene licencia; el reloj NO la registró
-        } else if (d.estado === 'licencia') {
-          d.sinLicenciaPortal = !licP;             // Pro-Soft marca licencia; el portal NO la tiene
-        } else if (licP) {
-          // Hay licencia aprobada en el portal PERO el reloj muestra trabajo/marcas
-          // ese día → informó una licencia y al final no la tomó (trabajó).
-          d.licenciaConflicto = true;
-        }
-        if (d.estado === 'injustificado') injust++;
-        if (d.licenciaConflicto) conflicto++;
-      }
-      m.diasInjustificados = injust;
-      m.diasLicenciaConflicto = conflicto;
-    }
-    const conRevisar = matcheados.filter((m) => m.diasARevisar.length).length;
-
-    const resumen = {
-      filas: parsed.filas,
-      legajos: parsed.legajos,
-      matcheados: matcheados.length,
-      sinMatch: sinMatch.length,
-      conRevisar,
-      conInjustificados: matcheados.filter((m) => m.diasInjustificados > 0).length,
-      conConflictoLicencia: matcheados.filter((m) => m.diasLicenciaConflicto > 0).length,
-    };
-
-    // Si no se confirma, devolvemos solo el preview (no se persiste).
-    if (!confirmar) {
-      return res.json({ confirmado: false, periodo: { anio, mes }, resumen, matcheados, sinMatch });
-    }
-
-    // Persistir: upsert por (empleado, período) + log de importación, en transacción.
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      for (const m of matcheados) {
-        const data = {
-          legajoProsoft: m.legajoProsoft,
-          diasTrabajados: m.diasTrabajados,
-          hsNetasMin: m.hsNetasMin,
-          horasExtra50Min: m.horasExtra50Min,
-          horasExtra100Min: m.horasExtra100Min,
-          horasExtraDescartadaMin: m.horasExtraDescartadaMin,
-          bancoNetoMin: m.bancoNetoMin,
-          tardanzasMin: m.tardanzasMin,
-          diasTardanza: m.diasTardanza,
-          diasARevisar: m.diasARevisar,
-          licenciasProsoft: m.licenciasProsoft,
-          diasLicencia: m.diasLicencia,
-          diasInjustificados: m.diasInjustificados,
-          diasLicenciaConflicto: m.diasLicenciaConflicto,
-          dias: m.dias,
-        };
-        await client.query(
-          `INSERT INTO fichadas_periodo (empleado_id, anio, mes, data, origen, importado_por)
-           VALUES ($1,$2,$3,$4,'prosoft-extendido',$5)
-           ON CONFLICT (empleado_id, anio, mes)
-           DO UPDATE SET data = EXCLUDED.data, origen = EXCLUDED.origen, importado_por = EXCLUDED.importado_por,
-             -- Los datos cambiaron → vuelve a circuito: hay que re-controlar y re-aprobar.
-             estado = 'pendiente', rrhh_por = NULL, rrhh_at = NULL, rrhh_obs = NULL,
-             ger_por = NULL, ger_at = NULL, ger_obs = NULL`,
-          [m.empleadoId, anio, mes, JSON.stringify(data), req.user.dni || null]
-        );
-      }
-      await client.query(
-        `INSERT INTO fichadas_importaciones (anio, mes, archivo, filas, legajos, matcheados, sin_match, importado_por, detalle)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [anio, mes, req.file.originalname || null, parsed.filas, parsed.legajos, matcheados.length, sinMatch.length,
-         req.user.dni || null, JSON.stringify({ sinMatch: sinMatch.map((s) => ({ legajo: s.legajoProsoft, empleado: s.empleado })) })]
-      );
-      await client.query('COMMIT');
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
-
-    return res.json({ confirmado: true, periodo: { anio, mes }, resumen, matcheados, sinMatch });
+    // Cruce + cálculo + persistencia (lógica compartida con la conexión Pro-Soft).
+    const { resumen, matcheados, sinMatch } = await procesarParsed({
+      parsed, anio, mes, confirmar, desde, hasta,
+      origen: 'prosoft-extendido',
+      importadoPor: req.user.dni || null,
+      archivoNombre: req.file.originalname || null,
+    });
+    return res.json({ confirmado: confirmar, periodo: { anio, mes }, resumen, matcheados, sinMatch });
   } catch (e) { next(e); }
 });
 
@@ -212,20 +73,25 @@ router.get('/:anio/:mes/export', requireRole('rrhh', 'admin'), async (req, res, 
   try {
     const anio = Number(req.params.anio), mes = Number(req.params.mes);
     const formato = String(req.query.formato || 'xlsx').toLowerCase();
+    const empresa = req.query.empresa ? String(req.query.empresa) : null;
     if (!anio || !mes || mes < 1 || mes > 12) return res.status(400).json({ error: 'Período inválido.' });
 
+    const cond = ['f.anio = $1', 'f.mes = $2'];
+    const params = [anio, mes];
+    if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
     const { rows } = await query(
       `SELECT f.empleado_id, e.leg_num, e.nom, em.nombre AS empresa, f.data
          FROM fichadas_periodo f
          JOIN empleados e ON e.id = f.empleado_id
          JOIN empresas em ON em.id = e.empresa_id
-        WHERE f.anio = $1 AND f.mes = $2
+        WHERE ${cond.join(' AND ')}
         ORDER BY e.nom`,
-      [anio, mes]
+      params
     );
-    if (!rows.length) return res.status(404).json({ error: `No hay fichadas importadas para ${nombreMes(mes)} ${anio}.` });
+    if (!rows.length) return res.status(404).json({ error: `No hay fichadas importadas para ${nombreMes(mes)} ${anio}${empresa ? ` (${empresa})` : ''}.` });
 
-    const base = `Fichadas_${anio}-${String(mes).padStart(2, '0')}`;
+    const slug = empresa ? '_' + empresa.replace(/[^\w]+/g, '') : '';
+    const base = `Fichadas_${anio}-${String(mes).padStart(2, '0')}${slug}`;
     if (formato === 'pdf') {
       const buf = await buildPdf({ anio, mes }, rows);
       res.setHeader('Content-Type', 'application/pdf');

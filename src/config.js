@@ -22,4 +22,14 @@ export const config = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '8h',
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
   bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS || '10', 10),
+  // Integración Pro-Soft (Gestión de Personal). Credenciales SIEMPRE por env.
+  prosoft: {
+    base: process.env.PROSOFT_BASE || 'https://apild.azurewebsites.net/api',
+    user: process.env.PROSOFT_USER || '',
+    pass: process.env.PROSOFT_PASS || '',
+    // 'true' habilita la importación automática diaria del mes en curso.
+    auto: String(process.env.PROSOFT_AUTO || '') === 'true',
+    // Hora local (0-23) en que corre la tarea diaria.
+    autoHora: parseInt(process.env.PROSOFT_AUTO_HORA || '6', 10),
+  },
 };

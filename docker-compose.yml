@@ -18,6 +18,9 @@ services:
   api:
     build: .
     container_name: prh_api
+    # Lee credenciales extra (p. ej. PROSOFT_USER/PROSOFT_PASS) del .env si existe.
+    env_file:
+      - .env
     environment:
       PORT: 4000
       DATABASE_URL: postgres://portal:portal@db:5432/portal_rrhh

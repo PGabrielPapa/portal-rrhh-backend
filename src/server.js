@@ -20,7 +20,33 @@ try {
 const app = createApp();
 const server = app.listen(config.port, () => {
   console.log(`[api] Portal RR.HH. escuchando en :${config.port}`);
+  programarProsoftDiario();
 });
+
+// Importación automática diaria desde Pro-Soft (si PROSOFT_AUTO=true).
+// Trae el mes en curso sin pisar los períodos ya aprobados (soloPendientes).
+function programarProsoftDiario() {
+  if (!config.prosoft.auto) return;
+  const correr = async () => {
+    try {
+      const { importarMes } = await import('./lib/prosoft.js');
+      const now = new Date();
+      const r = await importarMes(now.getFullYear(), now.getMonth() + 1, { confirmar: true, soloPendientes: true, importadoPor: 'auto-prosoft' });
+      console.log(`[prosoft] importación diaria OK — ${r.resumen.matcheados} empleados (${now.getMonth() + 1}/${now.getFullYear()}).`);
+    } catch (e) {
+      console.error('[prosoft] importación diaria falló:', e.message);
+    }
+  };
+  const msHastaHora = () => {
+    const now = new Date();
+    const next = new Date(now);
+    next.setHours(config.prosoft.autoHora, 0, 0, 0);
+    if (next <= now) next.setDate(next.getDate() + 1);
+    return next - now;
+  };
+  setTimeout(function run() { correr(); setInterval(correr, 24 * 3600 * 1000); }, msHastaHora());
+  console.log(`[prosoft] importación automática diaria activada (~${config.prosoft.autoHora}:00).`);
+}
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {

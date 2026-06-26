@@ -23,9 +23,15 @@ const COLS = {
 // Umbral diario de hora extra (regla Leiten): el extra del día se paga solo
 // si alcanzó este mínimo; si no, no se computa. El cierre es POR DÍA.
 const UMBRAL_EXTRA_MIN = 30;
-// Jornada por defecto (9h) por si el extendido no trae "Hs Normal" en un día
-// laborable. En general usamos la jornada REAL de cada empleado del extendido.
+// Jornada diaria por defecto: 9 hs.
 const JORNADA_DEFAULT = 540;
+// Jornada (en minutos) por TURNO cuando difiere de las 9 hs. Clave = nombre del
+// turno normalizado (sin espacios/símbolos/mayúsculas). Hoy el único de 10 hs es
+// "Hormigon/ mamposteria Leloir". Si aparecen más turnos distintos, agregarlos acá.
+const normTurno = (s) => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]/g, '');
+const JORNADA_POR_TURNO = {
+  [normTurno('Hormigon/ mamposteria Leloir')]: 600, // 10 hs
+};
 
 const norm = (s) => String(s == null ? '' : s).trim();
 const normKey = (s) => norm(s).toLowerCase().replace(/\s+/g, ' ');
@@ -126,9 +132,11 @@ export function parseExtendido(rows) {
     const hsNetas = hhmmToMin(cell(r, 'hsNetas'));
     const hsNormal = hhmmToMin(cell(r, 'hsNormal'));
     const esLaborable = hsNormal > 0;                 // Pro-Soft: 0 en finde/feriado
-    // Jornada REAL del empleado según el extendido (columna "Hs Normal"); 0 en
-    // finde/feriado. Antes era 9h fija; ahora respeta la jornada de cada uno.
-    const jornadaDia = esLaborable ? (hsNormal || JORNADA_DEFAULT) : 0;
+    // Jornada esperada según el TURNO del empleado (9 hs por defecto; 10 hs en
+    // "Hormigon/ mamposteria Leloir"). NO se usa "Hs Normal" como jornada porque
+    // ese campo del reloj varía con lo trabajado. En finde/feriado (Hs Normal=0) → 0.
+    const jornadaTurno = JORNADA_POR_TURNO[normTurno(cell(r, 'turno'))] || JORNADA_DEFAULT;
+    const jornadaDia = esLaborable ? jornadaTurno : 0;
     const e50 = hhmmToMin(cell(r, 'extra50'));
     const e100 = hhmmToMin(cell(r, 'extra100'));
     const tarde = hhmmToMin(cell(r, 'tarde'));
