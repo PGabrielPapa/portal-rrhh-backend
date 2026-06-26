@@ -7,6 +7,10 @@ import { idsEquipoDe, idsDirectosDe } from '../lib/equipo.js';
 const router = Router();
 router.use(requireAuth);
 
+function logAudit(actor, accion, detalle, target) { query('INSERT INTO audit_log (actor_dni, accion, detalle, target) VALUES ($1,$2,$3,$4)', [actor, accion, detalle || null, target || null]).catch(() => {}); }
+// Campos que el empleado puede autogestionar desde "Mis datos" (impacto directo + histórico).
+const SELF_FIELDS = { estado_civil: 'Estado civil', email_personal: 'Mail personal', tel_personal: 'Teléfono personal', contacto_nombre: 'Contacto de emergencia — nombre', contacto_tel: 'Contacto de emergencia — teléfono', contacto_vinculo: 'Contacto de emergencia — vínculo' };
+
 // Mapea una fila (con empresa_nombre/slug) al DTO que consume el front.
 function mapRow(r) {
   const uid = makeUid(r.empresa_nombre, r.leg_num);
@@ -62,6 +66,42 @@ router.get('/mi-perfil', async (req, res, next) => {
     const { rows } = await query(`${SELECT} WHERE e.id = $1`, [req.user.id]);
     if (!rows[0]) return res.status(404).json({ error: 'Empleado no encontrado' });
     res.json(mapRow(rows[0]));
+  } catch (e) { next(e); }
+});
+
+// PATCH /api/empleados/mi-perfil — autogestión del propio empleado (impacto directo).
+// Sólo campos de SELF_FIELDS. Cada cambio queda en cambios_perfil (histórico) y en audit_log (conocimiento RR.HH.).
+router.patch('/mi-perfil', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const curRow = (await query(`${SELECT} WHERE e.id = $1`, [req.user.id])).rows[0];
+    if (!curRow) return res.status(404).json({ error: 'Empleado no encontrado' });
+    const data = curRow.data || {};
+    const patch = {}; const cambios = [];
+    for (const [k, label] of Object.entries(SELF_FIELDS)) {
+      if (b[k] === undefined) continue;
+      const nuevo = b[k] == null ? '' : String(b[k]).trim();
+      const ant = data[k] == null ? '' : String(data[k]);
+      if (nuevo === ant) continue;
+      patch[k] = nuevo; cambios.push({ campo: k, label, ant, nuevo });
+    }
+    if (!cambios.length) return res.json(mapRow(curRow));
+    await query('UPDATE empleados SET data = data || $1::jsonb WHERE id = $2', [JSON.stringify(patch), req.user.id]);
+    for (const c of cambios) {
+      await query('INSERT INTO cambios_perfil (empleado_id, campo, etiqueta, valor_anterior, valor_nuevo, origen, actor_dni) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [req.user.id, c.campo, c.label, c.ant || null, c.nuevo || null, 'empleado', req.user.dni]);
+      logAudit(req.user.dni, 'autoedicion_perfil', `${curRow.nom} — ${c.label}: "${c.ant}" → "${c.nuevo}"`, String(req.user.id));
+    }
+    const out = (await query(`${SELECT} WHERE e.id = $1`, [req.user.id])).rows[0];
+    res.json(mapRow(out));
+  } catch (e) { next(e); }
+});
+
+// GET /api/empleados/mi-perfil/cambios — histórico de autogestión del propio empleado.
+router.get('/mi-perfil/cambios', async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT id, campo, etiqueta, valor_anterior, valor_nuevo, origen, created_at FROM cambios_perfil WHERE empleado_id = $1 ORDER BY created_at DESC', [req.user.id]);
+    res.json(rows);
   } catch (e) { next(e); }
 });
 
@@ -132,6 +172,14 @@ router.get('/:id', async (req, res, next) => {
     const { rows } = await query(`${SELECT} WHERE e.id = $1`, [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: 'Empleado no encontrado' });
     res.json(mapRow(rows[0]));
+  } catch (e) { next(e); }
+});
+
+// GET /api/empleados/:id/cambios-perfil — histórico de autogestión (para RR.HH./gerencia).
+router.get('/:id/cambios-perfil', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT id, campo, etiqueta, valor_anterior, valor_nuevo, origen, actor_dni, created_at FROM cambios_perfil WHERE empleado_id = $1 ORDER BY created_at DESC', [req.params.id]);
+    res.json(rows);
   } catch (e) { next(e); }
 });
 

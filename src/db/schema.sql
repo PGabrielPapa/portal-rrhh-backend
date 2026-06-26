@@ -323,6 +323,21 @@ CREATE TABLE IF NOT EXISTS cambios_domicilio (
 );
 CREATE INDEX IF NOT EXISTS idx_camdom_empleado ON cambios_domicilio(empleado_id);
 
+-- ── Cambios de datos personales/contacto autogestionados por el empleado ──
+-- (impacto directo, con histórico y conocimiento de RR.HH. vía audit_log + ABM)
+CREATE TABLE IF NOT EXISTS cambios_perfil (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  campo TEXT NOT NULL,
+  etiqueta TEXT,
+  valor_anterior TEXT,
+  valor_nuevo TEXT,
+  origen TEXT NOT NULL DEFAULT 'empleado',
+  actor_dni TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_camperfil_empleado ON cambios_perfil(empleado_id, created_at DESC);
+
 -- ── Grupo familiar declarado por el empleado ──
 CREATE TABLE IF NOT EXISTS familiares (
   id SERIAL PRIMARY KEY,
