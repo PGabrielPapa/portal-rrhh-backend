@@ -59,6 +59,23 @@ async function sindMap() {
 }
 const sindDe = (m, emp) => m[String(emp?.data?.cod_sindicato || '').toUpperCase()] || null;
 
+// Mapa de convenios → tablas de la versión vigente (para el básico por categoría de CCT).
+async function convMap() {
+  try {
+    const { rows } = await query('SELECT DISTINCT ON (codigo) codigo, data FROM convenio_versiones WHERE vigencia <= CURRENT_DATE ORDER BY codigo, vigencia DESC, created_at DESC');
+    const m = {}; for (const r of rows) m[String(r.codigo).toUpperCase()] = (r.data && r.data.tablas) || []; return m;
+  } catch { return {}; }
+}
+// Básico del convenio según la categoría elegida (valor 'titulo||cat'). 0 si no aplica.
+function convBasicoDe(m, emp) {
+  const code = String(emp?.data?.cod_convenio || '').toUpperCase();
+  const sel = String(emp?.data?.categoria_convenio || '');
+  if (!code || !sel || !m[code]) return 0;
+  const [titulo, cat] = sel.split('||');
+  for (const t of m[code]) { if (String(t.titulo) === titulo) { for (const c of (t.cats || [])) { if (String(c.cat) === cat) return Number(c.basico) || 0; } } }
+  return 0;
+}
+
 async function getEmp(id) {
   const er = await query(`SELECT e.*, em.nombre AS empresa_nombre, em.cuit AS empresa_cuit, em.data AS empresa_data FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE e.id=$1`, [id]);
   if (!er.rows[0]) return null;
@@ -159,7 +176,8 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const acumGan = await acumGananciasDe(empleadoId, anio, mes);
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
-    res.json(calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, ...extra }));
+    const convBasico = convBasicoDe(await convMap(), emp);
+    res.json(calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -174,7 +192,8 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const acumGan = await acumGananciasDe(empleadoId, anio, mes);
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
-    const recibo = calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, ...extra });
+    const convBasico = convBasicoDe(await convMap(), emp);
+    const recibo = calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ...extra });
     const ins = await query(
       `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, publicado)
        VALUES ($1,$2,$3,$4,$5,$6,$7,true)
@@ -205,6 +224,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const params = await getParams();
     const ganTabla = await ganTablaParaFecha(fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sMap = await sindMap();
+    const cMap = await convMap();
     const cr = await query(
       `INSERT INTO corridas (anio, mes, tipo, empresa, estado, creado_por) VALUES ($1,$2,$3,$4,'borrador',$5) RETURNING id`,
       [Number(anio), Number(mes), tipo, empresa || null, req.user.dni]
@@ -215,7 +235,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       const emp = await getEmp(id);
       const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
       const acumGan = await acumGananciasDe(id, anio, mes);
-      const _sd = sindDe(sMap, emp); const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd });
+      const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp); const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb });
       totalNeto += recibo.totales.neto; cant++;
       const rr = await query(
         `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)

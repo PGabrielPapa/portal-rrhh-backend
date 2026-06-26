@@ -239,7 +239,8 @@ export function calcularRecibo(emp, params, opts) {
   const d = emp.data || {};
   const esFC = !d.cod_sindicato || String(d.cod_sindicato).toUpperCase() === 'FC';
 
-  const basico = num(d.basico) || num(d.sueldo) || num(emp.bruto);
+  // Si el empleado tiene categoría de convenio que define básico, ese tiene prioridad (luego básico cargado / escala).
+  const basico = num(opts?.convBasico) || num(d.basico) || num(d.sueldo) || num(emp.bruto);
   const anios = aniosAntiguedad(emp.ingreso, anio, mes);
   const sind = opts?.sind || null;
   const pctAntig = (sind && Number(sind.pctAntigPorAnio) > 0) ? Number(sind.pctAntigPorAnio) : num(p.pctAntiguedadPorAnio);
