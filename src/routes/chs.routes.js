@@ -9,8 +9,19 @@ router.use(requireAuth);
 
 async function requireComite(req, res, next) {
   try {
-    if (['rrhh', 'admin'].includes(req.user.role)) return next();
-    const { rows } = await query("SELECT (data->>'comite_hys')::boolean AS c FROM empleados WHERE id = $1", [req.user.id]);
+    const u = req.user || {};
+    // Persona del Comité (login por DNI sin ser empleado).
+    if (u.role === 'comite') {
+      if (u.acceso === 'full') return next();
+      if (u.acceso === 'dashboard') {
+        const path = String(req.originalUrl || '').split('?')[0];
+        if (/\/dashboard$/.test(path)) return next();
+        return res.status(403).json({ error: 'Acceso limitado al panel de indicadores' });
+      }
+      return res.status(403).json({ error: 'Acceso restringido' });
+    }
+    if (['rrhh', 'admin'].includes(u.role)) return next();
+    const { rows } = await query("SELECT (data->>'comite_hys')::boolean AS c FROM empleados WHERE id = $1", [u.id]);
     if (rows[0] && rows[0].c) return next();
     return res.status(403).json({ error: 'Acceso restringido a los integrantes del Comité de HyS' });
   } catch (e) { next(e); }

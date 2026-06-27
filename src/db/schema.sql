@@ -961,3 +961,9 @@ CREATE TABLE IF NOT EXISTS periodo_cambios (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_percambios_periodo ON periodo_cambios(periodo_id, created_at DESC);
+
+-- Acceso al Comité de HyS a nivel Persona (login por DNI sin ser empleado).
+ALTER TABLE personas ADD COLUMN IF NOT EXISTS acceso_comite   TEXT;    -- null | 'dashboard' | 'full'
+ALTER TABLE personas ADD COLUMN IF NOT EXISTS password_hash   TEXT;
+ALTER TABLE personas ADD COLUMN IF NOT EXISTS must_change_pwd BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE personas ADD COLUMN IF NOT EXISTS disabled        BOOLEAN NOT NULL DEFAULT false;

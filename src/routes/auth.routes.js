@@ -24,6 +24,10 @@ function signToken(emp) {
     { expiresIn: config.jwtExpiresIn }
   );
 }
+// Token para una Persona del Comité de HyS (login por DNI sin ser empleado).
+function signTokenPersona(per) {
+  return jwt.sign({ pid: per.id, dni: per.dni, role: 'comite', acceso: per.acceso_comite }, config.jwtSecret, { expiresIn: config.jwtExpiresIn });
+}
 
 // POST /api/auth/login  { dni, password }
 router.post('/login', loginLimiter, async (req, res, next) => {
@@ -38,18 +42,29 @@ router.post('/login', loginLimiter, async (req, res, next) => {
       [String(dni).trim()]
     );
     const emp = rows[0];
-    // Respuesta genérica para no filtrar si el DNI existe.
-    if (!emp || !emp.password_hash) return res.status(401).json({ error: 'DNI o contraseña incorrectos' });
-    if (emp.disabled) return res.status(403).json({ error: 'Usuario desactivado. Contactá al administrador.' });
-
-    const ok = await bcrypt.compare(String(password), emp.password_hash);
-    if (!ok) return res.status(401).json({ error: 'DNI o contraseña incorrectos' });
-
-    return res.json({
-      token: signToken(emp),
-      mustChangePassword: emp.must_change_pwd,
-      user: { id: emp.id, dni: emp.dni, nom: emp.nom, role: emp.role, empresa: emp.empresa_nombre, comiteHys: !!(emp.data && emp.data.comite_hys) },
-    });
+    if (emp && emp.password_hash) {
+      if (emp.disabled) return res.status(403).json({ error: 'Usuario desactivado. Contactá al administrador.' });
+      const ok = await bcrypt.compare(String(password), emp.password_hash);
+      if (!ok) return res.status(401).json({ error: 'DNI o contraseña incorrectos' });
+      return res.json({
+        token: signToken(emp),
+        mustChangePassword: emp.must_change_pwd,
+        user: { id: emp.id, dni: emp.dni, nom: emp.nom, role: emp.role, empresa: emp.empresa_nombre, comiteHys: !!(emp.data && emp.data.comite_hys) },
+      });
+    }
+    // Fallback: Persona habilitada al Comité de HyS (no es empleado).
+    const per = (await query("SELECT * FROM personas WHERE dni=$1 AND acceso_comite IS NOT NULL AND password_hash IS NOT NULL", [String(dni).trim()])).rows[0];
+    if (per) {
+      if (per.disabled) return res.status(403).json({ error: 'Usuario desactivado. Contactá al administrador.' });
+      const ok = await bcrypt.compare(String(password), per.password_hash);
+      if (!ok) return res.status(401).json({ error: 'DNI o contraseña incorrectos' });
+      return res.json({
+        token: signTokenPersona(per),
+        mustChangePassword: per.must_change_pwd,
+        user: { id: null, personaId: per.id, dni: per.dni, nom: per.nom, role: 'comite', acceso: per.acceso_comite },
+      });
+    }
+    return res.status(401).json({ error: 'DNI o contraseña incorrectos' });
   } catch (e) { next(e); }
 });
 
@@ -78,6 +93,11 @@ router.post('/change-password', loginLimiter, requireAuth, async (req, res, next
 // GET /api/auth/me   (auth)
 router.get('/me', requireAuth, async (req, res, next) => {
   try {
+    if (req.user.role === 'comite' && req.user.pid) {
+      const pr = (await query('SELECT id, dni, nom, acceso_comite FROM personas WHERE id=$1', [req.user.pid])).rows[0];
+      if (!pr) return res.status(404).json({ error: 'Usuario no encontrado' });
+      return res.json({ id: null, personaId: pr.id, dni: pr.dni, nom: pr.nom, role: 'comite', acceso: pr.acceso_comite });
+    }
     const { rows } = await query(
       `SELECT e.id, e.dni, e.nom, e.role, e.must_change_pwd, e.data, em.nombre AS empresa
          FROM empleados e JOIN empresas em ON em.id = e.empresa_id WHERE e.id = $1`,

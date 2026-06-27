@@ -2,6 +2,8 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import bcrypt from 'bcryptjs';
+import { config } from '../config.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -10,6 +12,7 @@ router.use(requireRole('rrhh', 'admin'));
 const mapPersona = (r) => ({
   id: r.id, cuil: r.cuil, dni: r.dni, apellido: r.apellido, nombres: r.nombres, nom: r.nom,
   tipos: r.tipos || [], data: r.data || {}, empleadoActivo: !!r.empleado_activo, nPeriodos: r.n_periodos != null ? Number(r.n_periodos) : undefined,
+  accesoComite: r.acceso_comite || null, tieneClave: !!r.password_hash,
   createdAt: r.created_at, updatedAt: r.updated_at,
 });
 const mapPeriodo = (r) => ({
@@ -85,6 +88,26 @@ router.put('/:id', async (req, res, next) => {
     if (e && e.code === '23505') return res.status(409).json({ error: 'Ya existe una persona con ese CUIL' });
     next(e);
   }
+});
+
+// Habilitar/cambiar/quitar acceso al Comité de HyS para una persona (login por DNI).
+router.post('/:id/acceso-comite', async (req, res, next) => {
+  try {
+    const acceso = (req.body && req.body.acceso) || null; // 'dashboard' | 'full' | null
+    if (acceso && !['dashboard', 'full'].includes(acceso)) return res.status(400).json({ error: 'Acceso inválido' });
+    const per = (await query('SELECT id, dni, password_hash FROM personas WHERE id=$1', [req.params.id])).rows[0];
+    if (!per) return res.status(404).json({ error: 'Persona no encontrada' });
+    let claveInicial;
+    if (acceso && !per.password_hash) {
+      if (!per.dni) return res.status(400).json({ error: 'La persona necesita DNI para habilitar el acceso' });
+      const hash = await bcrypt.hash(String(per.dni), config.bcryptRounds);
+      await query('UPDATE personas SET acceso_comite=$1, password_hash=$2, must_change_pwd=false, disabled=false WHERE id=$3', [acceso, hash, per.id]);
+      claveInicial = String(per.dni);
+    } else {
+      await query('UPDATE personas SET acceso_comite=$1 WHERE id=$2', [acceso, per.id]);
+    }
+    res.json({ ok: true, acceso, claveInicial });
+  } catch (e) { next(e); }
 });
 
 // Histórico de cambios de un período (función/categoría).
