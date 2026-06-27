@@ -274,4 +274,98 @@ router.delete('/mediciones/:id', async (req, res, next) => {
 
 router.get('/mediciones/:id/archivo', archivoHandler('chs_mediciones'));
 
+// ───────────────────────── Auditorías e Inspecciones ─────────────────────────
+const mapAud = (r) => ({ id: r.id, fecha: r.fecha, tipo: r.tipo, responsable: r.responsable, sector: r.sector, observaciones: r.observaciones, noConformidades: r.no_conformidades, acciones: r.acciones || [], estado: r.estado, archivoNombre: r.archivo_nombre, tieneArchivo: !!r.archivo_nombre, createdBy: r.created_by, createdAt: r.created_at });
+
+router.get('/auditorias', async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT id, fecha, tipo, responsable, sector, observaciones, no_conformidades, acciones, estado, archivo_nombre, created_by, created_at FROM chs_auditorias ORDER BY fecha DESC NULLS LAST, id DESC');
+    res.json(rows.map(mapAud));
+  } catch (e) { next(e); }
+});
+
+router.post('/auditorias', async (req, res, next) => {
+  try {
+    const b = req.body || {}; const [an, am, ad] = archivoCols(b.archivo);
+    const { rows } = await query(
+      `INSERT INTO chs_auditorias (fecha, tipo, responsable, sector, observaciones, no_conformidades, acciones, estado, archivo_nombre, archivo_mime, archivo_data, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      [b.fecha || null, b.tipo || null, b.responsable || null, b.sector || null, b.observaciones || null, b.noConformidades || null, JSON.stringify(b.acciones || []), b.estado || 'Abierta', an, am, ad, req.user.dni]);
+    res.status(201).json({ ok: true, id: rows[0].id });
+  } catch (e) { next(e); }
+});
+
+router.put('/auditorias/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const sets = ['fecha=$1', 'tipo=$2', 'responsable=$3', 'sector=$4', 'observaciones=$5', 'no_conformidades=$6', 'acciones=$7', 'estado=$8', 'updated_at=now()'];
+    const params = [b.fecha || null, b.tipo || null, b.responsable || null, b.sector || null, b.observaciones || null, b.noConformidades || null, JSON.stringify(b.acciones || []), b.estado || 'Abierta'];
+    if (b.archivo && b.archivo.data) { params.push(b.archivo.nombre || 'archivo', b.archivo.mime || 'application/octet-stream', b.archivo.data); sets.push(`archivo_nombre=$${params.length - 2}`, `archivo_mime=$${params.length - 1}`, `archivo_data=$${params.length}`); }
+    else if (b.quitarArchivo) { sets.push('archivo_nombre=NULL', 'archivo_mime=NULL', 'archivo_data=NULL'); }
+    params.push(req.params.id);
+    const r = await query(`UPDATE chs_auditorias SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING id`, params);
+    if (!r.rowCount) return res.status(404).json({ error: 'Auditoría no encontrada' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/auditorias/:id', async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM chs_auditorias WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Auditoría no encontrada' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.get('/auditorias/:id/archivo', archivoHandler('chs_auditorias'));
+
+// ───────────────────────── No Conformidades y Mejoras ─────────────────────────
+const mapNc = (r) => ({ id: r.id, fecha: r.fecha, sector: r.sector, descripcion: r.descripcion, clasificacion: r.clasificacion, prioridad: r.prioridad, accion: r.accion, responsable: r.responsable, fechaCierre: r.fecha_cierre, estado: r.estado, archivoNombre: r.archivo_nombre, tieneArchivo: !!r.archivo_nombre, createdBy: r.created_by, createdAt: r.created_at });
+
+router.get('/noconf', async (req, res, next) => {
+  try {
+    const { estado, clasificacion } = req.query; const cond = [], p = [];
+    if (estado) { p.push(estado); cond.push(`estado=$${p.length}`); }
+    if (clasificacion) { p.push(clasificacion); cond.push(`clasificacion=$${p.length}`); }
+    const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
+    const { rows } = await query(`SELECT id, fecha, sector, descripcion, clasificacion, prioridad, accion, responsable, fecha_cierre, estado, archivo_nombre, created_by, created_at FROM chs_noconf ${where} ORDER BY fecha DESC NULLS LAST, id DESC`, p);
+    res.json(rows.map(mapNc));
+  } catch (e) { next(e); }
+});
+
+router.post('/noconf', async (req, res, next) => {
+  try {
+    const b = req.body || {}; const [an, am, ad] = archivoCols(b.archivo);
+    const { rows } = await query(
+      `INSERT INTO chs_noconf (fecha, sector, descripcion, clasificacion, prioridad, accion, responsable, fecha_cierre, estado, archivo_nombre, archivo_mime, archivo_data, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+      [b.fecha || null, b.sector || null, b.descripcion || null, b.clasificacion || null, b.prioridad || null, b.accion || null, b.responsable || null, b.fechaCierre || null, b.estado || 'Abierta', an, am, ad, req.user.dni]);
+    res.status(201).json({ ok: true, id: rows[0].id });
+  } catch (e) { next(e); }
+});
+
+router.put('/noconf/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const sets = ['fecha=$1', 'sector=$2', 'descripcion=$3', 'clasificacion=$4', 'prioridad=$5', 'accion=$6', 'responsable=$7', 'fecha_cierre=$8', 'estado=$9', 'updated_at=now()'];
+    const params = [b.fecha || null, b.sector || null, b.descripcion || null, b.clasificacion || null, b.prioridad || null, b.accion || null, b.responsable || null, b.fechaCierre || null, b.estado || 'Abierta'];
+    if (b.archivo && b.archivo.data) { params.push(b.archivo.nombre || 'archivo', b.archivo.mime || 'application/octet-stream', b.archivo.data); sets.push(`archivo_nombre=$${params.length - 2}`, `archivo_mime=$${params.length - 1}`, `archivo_data=$${params.length}`); }
+    else if (b.quitarArchivo) { sets.push('archivo_nombre=NULL', 'archivo_mime=NULL', 'archivo_data=NULL'); }
+    params.push(req.params.id);
+    const r = await query(`UPDATE chs_noconf SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING id`, params);
+    if (!r.rowCount) return res.status(404).json({ error: 'Registro no encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/noconf/:id', async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM chs_noconf WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Registro no encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.get('/noconf/:id/archivo', archivoHandler('chs_noconf'));
+
 export default router;

@@ -399,6 +399,30 @@ CREATE TABLE IF NOT EXISTS chs_mediciones (
 );
 CREATE INDEX IF NOT EXISTS idx_chs_med_venc ON chs_mediciones(fecha_vencimiento);
 
+-- Auditorías e inspecciones (con acciones correctivas y cierre).
+CREATE TABLE IF NOT EXISTS chs_auditorias (
+  id SERIAL PRIMARY KEY,
+  fecha DATE, tipo TEXT, responsable TEXT, sector TEXT,
+  observaciones TEXT, no_conformidades TEXT,
+  acciones JSONB NOT NULL DEFAULT '[]'::jsonb,
+  estado TEXT NOT NULL DEFAULT 'Abierta',
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chs_aud_fecha ON chs_auditorias(fecha DESC);
+
+-- No conformidades y oportunidades de mejora.
+CREATE TABLE IF NOT EXISTS chs_noconf (
+  id SERIAL PRIMARY KEY,
+  fecha DATE, sector TEXT, descripcion TEXT,
+  clasificacion TEXT, prioridad TEXT,
+  accion TEXT, responsable TEXT, fecha_cierre DATE,
+  estado TEXT NOT NULL DEFAULT 'Abierta',
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chs_nc_fecha ON chs_noconf(fecha DESC);
+
 -- ── Grupo familiar declarado por el empleado ──
 CREATE TABLE IF NOT EXISTS familiares (
   id SERIAL PRIMARY KEY,
