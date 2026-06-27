@@ -151,4 +151,48 @@ router.post('/:id/ascender', async (req, res, next) => {
   }
 });
 
+// Editar un período (función/categoría/fechas). Registra cada cambio en periodo_cambios
+// y, si es el período vigente ligado a un empleado, sincroniza categoría/función al empleado.
+router.put('/periodos/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const cur = (await query('SELECT * FROM periodos WHERE id=$1', [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'Período no encontrado' });
+    const sv = (v) => v == null ? '' : (v instanceof Date ? v.toISOString().slice(0, 10) : String(v));
+    const campos = [
+      ['funcion', 'Función', b.funcion], ['cat_escala', 'Categoría escala', b.catEscala], ['tramo_escala', 'Tramo escala', b.tramoEscala],
+      ['cat_convenio', 'Categoría convenio', b.catConvenio], ['cod_convenio', 'Convenio', b.codConvenio], ['cod_sindicato', 'Sindicato', b.codSindicato],
+      ['fecha_ingreso', 'Fecha de ingreso', b.fechaIngreso], ['fecha_egreso', 'Fecha de egreso', b.fechaEgreso], ['causa_egreso', 'Causa de egreso', b.causaEgreso],
+    ];
+    const sets = ['updated_at=now()']; const params = []; const cambios = [];
+    for (const [col, lbl, val] of campos) {
+      if (val === undefined) continue;
+      const nuevo = (val === null || String(val).trim() === '') ? null : String(val).trim();
+      params.push(nuevo); sets.push(`${col}=$${params.length}`);
+      if (sv(nuevo) !== sv(cur[col])) cambios.push({ col, lbl, ant: sv(cur[col]), nuevo: sv(nuevo) });
+    }
+    if (b.vigente !== undefined) { params.push(!!b.vigente); sets.push(`vigente=$${params.length}`); }
+    params.push(req.params.id);
+    await query(`UPDATE periodos SET ${sets.join(', ')} WHERE id=$${params.length}`, params);
+    for (const c of cambios) {
+      await query('INSERT INTO periodo_cambios (periodo_id, campo, etiqueta, valor_anterior, valor_nuevo, motivo, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [cur.id, c.col, c.lbl, c.ant || null, c.nuevo || null, b.motivo || null, req.user.dni]);
+    }
+    const vigente = b.vigente === undefined ? cur.vigente : !!b.vigente;
+    if (cur.empleado_id && vigente) {
+      const sets2 = []; const p2 = [];
+      if (b.catEscala !== undefined) { p2.push(b.catEscala || null); sets2.push(`cat=$${p2.length}`); }
+      if (b.tramoEscala !== undefined) { p2.push(b.tramoEscala || null); sets2.push(`tramo=$${p2.length}`); }
+      const dp = {};
+      if (b.funcion !== undefined) dp.tarea = b.funcion || null;
+      if (b.catConvenio !== undefined) dp.categoria_convenio = b.catConvenio || null;
+      if (b.codConvenio !== undefined) dp.cod_convenio = b.codConvenio || null;
+      if (b.codSindicato !== undefined) dp.cod_sindicato = b.codSindicato || null;
+      if (Object.keys(dp).length) { p2.push(JSON.stringify(dp)); sets2.push(`data = data || $${p2.length}::jsonb`); }
+      if (sets2.length) { p2.push(cur.empleado_id); await query(`UPDATE empleados SET ${sets2.join(', ')} WHERE id=$${p2.length}`, p2); }
+    }
+    res.json({ ok: true, cambios: cambios.length });
+  } catch (e) { next(e); }
+});
+
 export default router;

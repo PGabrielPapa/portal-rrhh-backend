@@ -38,7 +38,9 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     const { rows } = await query(
       `SELECT e.*, em.nombre AS empresa_nombre
          FROM empleados e JOIN empresas em ON em.id = e.empresa_id
-        WHERE e.dni = $1`,
+        WHERE e.dni = $1
+        ORDER BY (e.password_hash IS NOT NULL) DESC, e.activo DESC, e.id DESC
+        LIMIT 1`,
       [String(dni).trim()]
     );
     const emp = rows[0];

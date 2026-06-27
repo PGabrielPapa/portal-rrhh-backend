@@ -263,6 +263,7 @@ router.patch('/:id/activo', requireRole('rrhh', 'admin'), async (req, res, next)
   try {
     const activo = !!(req.body || {}).activo;
     await query('UPDATE empleados SET activo = $1 WHERE id = $2', [activo, req.params.id]);
+    try { await query('UPDATE periodos SET vigente=$1, updated_at=now() WHERE empleado_id=$2', [activo, req.params.id]); } catch (e) { /* período opcional */ }
     res.json({ ok: true, activo });
   } catch (e) { next(e); }
 });
@@ -278,6 +279,7 @@ router.post('/:id/baja', requireRole('rrhh', 'admin'), async (req, res, next) =>
       [req.params.id, b.fechaBaja, b.causa, b.fechaNotificacion || null, b.preavisoOverride || null,
        Number(b.gratificacion) || 0, JSON.stringify(b.gratifCuotas || []), b.observaciones || null, req.user.dni]);
     await query('UPDATE empleados SET activo = false WHERE id = $1', [req.params.id]);
+    try { await query('UPDATE periodos SET vigente=false, fecha_egreso=$1, causa_egreso=$2, updated_at=now() WHERE empleado_id=$3 AND vigente=true', [b.fechaBaja, b.causa, req.params.id]); } catch (e) { /* período opcional */ }
     res.status(201).json({ ok: true });
   } catch (e) { next(e); }
 });

@@ -967,3 +967,7 @@ ALTER TABLE personas ADD COLUMN IF NOT EXISTS acceso_comite   TEXT;    -- null |
 ALTER TABLE personas ADD COLUMN IF NOT EXISTS password_hash   TEXT;
 ALTER TABLE personas ADD COLUMN IF NOT EXISTS must_change_pwd BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE personas ADD COLUMN IF NOT EXISTS disabled        BOOLEAN NOT NULL DEFAULT false;
+
+-- Reingresos / cambios de empresa: una persona (DNI) puede tener varios períodos
+-- (varias filas en empleados). Se relaja el DNI único; el legajo sigue único por empresa.
+ALTER TABLE empleados DROP CONSTRAINT IF EXISTS uq_empleado_dni;
