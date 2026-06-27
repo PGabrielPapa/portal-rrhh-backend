@@ -91,7 +91,7 @@ async function main() {
            (empresa_id, leg_num, dni, cuil, nom, email, cat, tramo, ingreso, bruto, neto,
             es_alta, password_hash, role, must_change_pwd, data)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,$12,'employee',true,$13)
-         ON CONFLICT (dni) DO NOTHING
+         ON CONFLICT (empresa_id, leg_num) DO NOTHING
          RETURNING id`,
         [eid, String(e.leg), String(e.dni), e.cuil || null, e.nom || '', e.mail || null,
          e.cat || null, e.tramo || null, toDateISO(e.ing), e.bruto || 0, e.neto || 0,
