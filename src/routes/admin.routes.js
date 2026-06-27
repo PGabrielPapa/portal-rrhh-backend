@@ -22,7 +22,7 @@ router.get('/usuarios', async (req, res, next) => {
     if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i} OR e.dni LIKE $${i})`); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const { rows } = await query(
-      `SELECT e.id, e.leg_num, e.dni, e.nom, e.role, e.disabled, e.must_change_pwd, em.nombre AS empresa
+      `SELECT e.id, e.leg_num, e.dni, e.nom, e.role, e.disabled, e.must_change_pwd, COALESCE((e.data->>'comite_hys')::boolean, false) AS comite_hys, em.nombre AS empresa
          FROM empleados e JOIN empresas em ON em.id = e.empresa_id ${where} ORDER BY e.nom`, params);
     res.json(rows);
   } catch (e) { next(e); }
@@ -43,6 +43,10 @@ router.patch('/usuarios/:id', async (req, res, next) => {
       if (id === req.user.id && disabled) return res.status(400).json({ error: 'No podés desactivarte a vos mismo' });
       await query('UPDATE empleados SET disabled = $1 WHERE id = $2', [!!disabled, id]);
       await audit(req.user.dni, disabled ? 'usuario_desactivado' : 'usuario_activado', null, String(id));
+    }
+    if (req.body && req.body.comiteHys !== undefined) {
+      await query("UPDATE empleados SET data = data || jsonb_build_object('comite_hys', $1::boolean) WHERE id = $2", [!!req.body.comiteHys, id]);
+      await audit(req.user.dni, req.body.comiteHys ? 'comite_hys_alta' : 'comite_hys_baja', 'Integrante Comité HyS', String(id));
     }
     res.json({ ok: true });
   } catch (e) { next(e); }

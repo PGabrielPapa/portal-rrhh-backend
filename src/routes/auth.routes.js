@@ -48,7 +48,7 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     return res.json({
       token: signToken(emp),
       mustChangePassword: emp.must_change_pwd,
-      user: { id: emp.id, dni: emp.dni, nom: emp.nom, role: emp.role, empresa: emp.empresa_nombre },
+      user: { id: emp.id, dni: emp.dni, nom: emp.nom, role: emp.role, empresa: emp.empresa_nombre, comiteHys: !!(emp.data && emp.data.comite_hys) },
     });
   } catch (e) { next(e); }
 });
@@ -79,12 +79,13 @@ router.post('/change-password', loginLimiter, requireAuth, async (req, res, next
 router.get('/me', requireAuth, async (req, res, next) => {
   try {
     const { rows } = await query(
-      `SELECT e.id, e.dni, e.nom, e.role, e.must_change_pwd, em.nombre AS empresa
+      `SELECT e.id, e.dni, e.nom, e.role, e.must_change_pwd, e.data, em.nombre AS empresa
          FROM empleados e JOIN empresas em ON em.id = e.empresa_id WHERE e.id = $1`,
       [req.user.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Usuario no encontrado' });
-    res.json(rows[0]);
+    const r = rows[0];
+    res.json({ id: r.id, dni: r.dni, nom: r.nom, role: r.role, must_change_pwd: r.must_change_pwd, empresa: r.empresa, comiteHys: !!(r.data && r.data.comite_hys) });
   } catch (e) { next(e); }
 });
 
