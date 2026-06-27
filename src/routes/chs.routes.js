@@ -368,4 +368,94 @@ router.delete('/noconf/:id', async (req, res, next) => {
 
 router.get('/noconf/:id/archivo', archivoHandler('chs_noconf'));
 
+// ───────────────────────── Cartelería ─────────────────────────
+const mapCar = (r) => ({ id: r.id, tipo: r.tipo, ubicacion: r.ubicacion, fechaInstalacion: r.fecha_instalacion, estadoConservacion: r.estado_conservacion, fechaRevision: r.fecha_revision, archivoNombre: r.archivo_nombre, tieneArchivo: !!r.archivo_nombre, createdBy: r.created_by, createdAt: r.created_at });
+
+router.get('/carteleria', async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT id, tipo, ubicacion, fecha_instalacion, estado_conservacion, fecha_revision, archivo_nombre, created_by, created_at FROM chs_carteleria ORDER BY id DESC');
+    res.json(rows.map(mapCar));
+  } catch (e) { next(e); }
+});
+
+router.post('/carteleria', async (req, res, next) => {
+  try {
+    const b = req.body || {}; const [an, am, ad] = archivoCols(b.archivo);
+    const { rows } = await query(
+      `INSERT INTO chs_carteleria (tipo, ubicacion, fecha_instalacion, estado_conservacion, fecha_revision, archivo_nombre, archivo_mime, archivo_data, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      [b.tipo || null, b.ubicacion || null, b.fechaInstalacion || null, b.estadoConservacion || null, b.fechaRevision || null, an, am, ad, req.user.dni]);
+    res.status(201).json({ ok: true, id: rows[0].id });
+  } catch (e) { next(e); }
+});
+
+router.put('/carteleria/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const sets = ['tipo=$1', 'ubicacion=$2', 'fecha_instalacion=$3', 'estado_conservacion=$4', 'fecha_revision=$5', 'updated_at=now()'];
+    const params = [b.tipo || null, b.ubicacion || null, b.fechaInstalacion || null, b.estadoConservacion || null, b.fechaRevision || null];
+    if (b.archivo && b.archivo.data) { params.push(b.archivo.nombre || 'foto', b.archivo.mime || 'application/octet-stream', b.archivo.data); sets.push(`archivo_nombre=$${params.length - 2}`, `archivo_mime=$${params.length - 1}`, `archivo_data=$${params.length}`); }
+    else if (b.quitarArchivo) { sets.push('archivo_nombre=NULL', 'archivo_mime=NULL', 'archivo_data=NULL'); }
+    params.push(req.params.id);
+    const r = await query(`UPDATE chs_carteleria SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING id`, params);
+    if (!r.rowCount) return res.status(404).json({ error: 'Cartel no encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/carteleria/:id', async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM chs_carteleria WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Cartel no encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.get('/carteleria/:id/archivo', archivoHandler('chs_carteleria'));
+
+// ───────────────────────── Evidencias de Mejoras ─────────────────────────
+const mapEvi = (r) => ({ id: r.id, descripcion: r.descripcion, motivo: r.motivo, fecha: r.fecha, responsable: r.responsable, estado: r.estado, resultado: r.resultado, archivoNombre: r.archivo_nombre, tieneArchivo: !!r.archivo_nombre, createdBy: r.created_by, createdAt: r.created_at });
+
+router.get('/evidencias', async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT id, descripcion, motivo, fecha, responsable, estado, resultado, archivo_nombre, created_by, created_at FROM chs_evidencias ORDER BY fecha DESC NULLS LAST, id DESC');
+    res.json(rows.map(mapEvi));
+  } catch (e) { next(e); }
+});
+
+router.post('/evidencias', async (req, res, next) => {
+  try {
+    const b = req.body || {}; const [an, am, ad] = archivoCols(b.archivo);
+    const { rows } = await query(
+      `INSERT INTO chs_evidencias (descripcion, motivo, fecha, responsable, estado, resultado, archivo_nombre, archivo_mime, archivo_data, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [b.descripcion || null, b.motivo || null, b.fecha || null, b.responsable || null, b.estado || 'Implementada', b.resultado || null, an, am, ad, req.user.dni]);
+    res.status(201).json({ ok: true, id: rows[0].id });
+  } catch (e) { next(e); }
+});
+
+router.put('/evidencias/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const sets = ['descripcion=$1', 'motivo=$2', 'fecha=$3', 'responsable=$4', 'estado=$5', 'resultado=$6', 'updated_at=now()'];
+    const params = [b.descripcion || null, b.motivo || null, b.fecha || null, b.responsable || null, b.estado || 'Implementada', b.resultado || null];
+    if (b.archivo && b.archivo.data) { params.push(b.archivo.nombre || 'evidencia', b.archivo.mime || 'application/octet-stream', b.archivo.data); sets.push(`archivo_nombre=$${params.length - 2}`, `archivo_mime=$${params.length - 1}`, `archivo_data=$${params.length}`); }
+    else if (b.quitarArchivo) { sets.push('archivo_nombre=NULL', 'archivo_mime=NULL', 'archivo_data=NULL'); }
+    params.push(req.params.id);
+    const r = await query(`UPDATE chs_evidencias SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING id`, params);
+    if (!r.rowCount) return res.status(404).json({ error: 'Evidencia no encontrada' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/evidencias/:id', async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM chs_evidencias WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Evidencia no encontrada' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.get('/evidencias/:id/archivo', archivoHandler('chs_evidencias'));
+
 export default router;

@@ -423,6 +423,23 @@ CREATE TABLE IF NOT EXISTS chs_noconf (
 );
 CREATE INDEX IF NOT EXISTS idx_chs_nc_fecha ON chs_noconf(fecha DESC);
 
+-- Cartelería de seguridad (con evidencia fotográfica).
+CREATE TABLE IF NOT EXISTS chs_carteleria (
+  id SERIAL PRIMARY KEY,
+  tipo TEXT, ubicacion TEXT, fecha_instalacion DATE, estado_conservacion TEXT, fecha_revision DATE,
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Evidencias de mejoras implementadas (con evidencia fotográfica o documental).
+CREATE TABLE IF NOT EXISTS chs_evidencias (
+  id SERIAL PRIMARY KEY,
+  descripcion TEXT, motivo TEXT, fecha DATE, responsable TEXT, estado TEXT NOT NULL DEFAULT 'Implementada', resultado TEXT,
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chs_evi_fecha ON chs_evidencias(fecha DESC);
+
 -- ── Grupo familiar declarado por el empleado ──
 CREATE TABLE IF NOT EXISTS familiares (
   id SERIAL PRIMARY KEY,
