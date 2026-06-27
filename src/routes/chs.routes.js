@@ -503,4 +503,31 @@ router.delete('/riesgos/:id', async (req, res, next) => {
 
 router.get('/riesgos/:id/archivo', archivoHandler('chs_riesgos'));
 
+// ───────────────────────── Dashboard de indicadores ─────────────────────────
+router.get('/dashboard', async (req, res, next) => {
+  try {
+    const one = async (sql) => Number((await query(sql)).rows[0].n) || 0;
+    const out = {};
+    out.siniestrosTotal = await one("SELECT count(*)::int n FROM chs_siniestros");
+    out.siniestrosAbiertos = await one("SELECT count(*)::int n FROM chs_siniestros WHERE estado <> 'Cerrado'");
+    out.siniestrosPorTipo = (await query("SELECT COALESCE(tipo,'(sin tipo)') tipo, count(*)::int n FROM chs_siniestros GROUP BY tipo ORDER BY n DESC")).rows;
+    out.siniestrosPorMes = (await query("SELECT to_char(date_trunc('month', fecha),'YYYY-MM') mes, count(*)::int n FROM chs_siniestros WHERE fecha >= (CURRENT_DATE - INTERVAL '11 months') GROUP BY 1 ORDER BY 1")).rows;
+    out.ncAbiertas = await one("SELECT count(*)::int n FROM chs_noconf WHERE estado <> 'Cerrada'");
+    out.ncCerradas = await one("SELECT count(*)::int n FROM chs_noconf WHERE estado = 'Cerrada'");
+    out.medVencidas = await one("SELECT count(*)::int n FROM chs_mediciones WHERE fecha_vencimiento < CURRENT_DATE");
+    out.medPorVencer = await one("SELECT count(*)::int n FROM chs_mediciones WHERE fecha_vencimiento >= CURRENT_DATE AND fecha_vencimiento <= CURRENT_DATE + INTERVAL '30 days'");
+    out.medVigentes = await one("SELECT count(*)::int n FROM chs_mediciones WHERE fecha_vencimiento > CURRENT_DATE + INTERVAL '30 days'");
+    out.medProximas = (await query("SELECT tipo, fecha_vencimiento FROM chs_mediciones WHERE fecha_vencimiento IS NOT NULL AND fecha_vencimiento <= CURRENT_DATE + INTERVAL '30 days' ORDER BY fecha_vencimiento ASC LIMIT 10")).rows;
+    out.audTotal = await one("SELECT count(*)::int n FROM chs_auditorias");
+    out.audAbiertas = await one("SELECT count(*)::int n FROM chs_auditorias WHERE estado <> 'Cerrada'");
+    const accAud = await one("SELECT COALESCE(sum(c),0)::int n FROM (SELECT (SELECT count(*) FROM jsonb_array_elements(acciones) a WHERE a->>'estado' <> 'Cumplida') c FROM chs_auditorias) t");
+    const accMin = await one("SELECT COALESCE(sum(c),0)::int n FROM (SELECT (SELECT count(*) FROM jsonb_array_elements(acciones) a WHERE a->>'estado' <> 'Cumplida') c FROM chs_minutas) t");
+    out.accionesPendientes = accAud + accMin + out.ncAbiertas;
+    out.cartReponer = await one("SELECT count(*)::int n FROM chs_carteleria WHERE estado_conservacion IN ('Malo','A reponer')");
+    out.evidencias = await one("SELECT count(*)::int n FROM chs_evidencias");
+    out.minutas = await one("SELECT count(*)::int n FROM chs_minutas");
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
 export default router;
