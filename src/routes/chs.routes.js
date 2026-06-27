@@ -458,4 +458,49 @@ router.delete('/evidencias/:id', async (req, res, next) => {
 
 router.get('/evidencias/:id/archivo', archivoHandler('chs_evidencias'));
 
+// ───────────────────────── Matriz de Riesgos ─────────────────────────
+const mapRie = (r) => ({ id: r.id, proceso: r.proceso, sector: r.sector, descripcion: r.descripcion, riesgos: r.riesgos, medidas: r.medidas, eppObligatorio: r.epp_obligatorio, responsableRevision: r.responsable_revision, fechaRevision: r.fecha_revision, archivoNombre: r.archivo_nombre, tieneArchivo: !!r.archivo_nombre, createdBy: r.created_by, createdAt: r.created_at });
+
+router.get('/riesgos', async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT id, proceso, sector, descripcion, riesgos, medidas, epp_obligatorio, responsable_revision, fecha_revision, archivo_nombre, created_by, created_at FROM chs_riesgos ORDER BY proceso ASC NULLS LAST, id DESC');
+    res.json(rows.map(mapRie));
+  } catch (e) { next(e); }
+});
+
+router.post('/riesgos', async (req, res, next) => {
+  try {
+    const b = req.body || {}; const [an, am, ad] = archivoCols(b.archivo);
+    const { rows } = await query(
+      `INSERT INTO chs_riesgos (proceso, sector, descripcion, riesgos, medidas, epp_obligatorio, responsable_revision, fecha_revision, archivo_nombre, archivo_mime, archivo_data, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      [b.proceso || null, b.sector || null, b.descripcion || null, b.riesgos || null, b.medidas || null, b.eppObligatorio || null, b.responsableRevision || null, b.fechaRevision || null, an, am, ad, req.user.dni]);
+    res.status(201).json({ ok: true, id: rows[0].id });
+  } catch (e) { next(e); }
+});
+
+router.put('/riesgos/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const sets = ['proceso=$1', 'sector=$2', 'descripcion=$3', 'riesgos=$4', 'medidas=$5', 'epp_obligatorio=$6', 'responsable_revision=$7', 'fecha_revision=$8', 'updated_at=now()'];
+    const params = [b.proceso || null, b.sector || null, b.descripcion || null, b.riesgos || null, b.medidas || null, b.eppObligatorio || null, b.responsableRevision || null, b.fechaRevision || null];
+    if (b.archivo && b.archivo.data) { params.push(b.archivo.nombre || 'matriz', b.archivo.mime || 'application/octet-stream', b.archivo.data); sets.push(`archivo_nombre=$${params.length - 2}`, `archivo_mime=$${params.length - 1}`, `archivo_data=$${params.length}`); }
+    else if (b.quitarArchivo) { sets.push('archivo_nombre=NULL', 'archivo_mime=NULL', 'archivo_data=NULL'); }
+    params.push(req.params.id);
+    const r = await query(`UPDATE chs_riesgos SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING id`, params);
+    if (!r.rowCount) return res.status(404).json({ error: 'Registro no encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/riesgos/:id', async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM chs_riesgos WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Registro no encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.get('/riesgos/:id/archivo', archivoHandler('chs_riesgos'));
+
 export default router;

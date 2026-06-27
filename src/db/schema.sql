@@ -440,6 +440,15 @@ CREATE TABLE IF NOT EXISTS chs_evidencias (
 );
 CREATE INDEX IF NOT EXISTS idx_chs_evi_fecha ON chs_evidencias(fecha DESC);
 
+-- Matriz de riesgos por proceso/tarea.
+CREATE TABLE IF NOT EXISTS chs_riesgos (
+  id SERIAL PRIMARY KEY,
+  proceso TEXT, sector TEXT, descripcion TEXT, riesgos TEXT, medidas TEXT, epp_obligatorio TEXT,
+  responsable_revision TEXT, fecha_revision DATE,
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ── Grupo familiar declarado por el empleado ──
 CREATE TABLE IF NOT EXISTS familiares (
   id SERIAL PRIMARY KEY,
