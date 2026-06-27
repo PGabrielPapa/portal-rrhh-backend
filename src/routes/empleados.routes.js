@@ -238,6 +238,7 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
 router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const b = req.body || {};
+    const before = (await query('SELECT cat, tramo, data FROM empleados WHERE id=$1', [req.params.id])).rows[0] || {};
     // Columnas núcleo editables (identidad empresa+legajo+dni NO se cambia acá).
     const fields = { nom: b.nom, email: b.email, cat: b.cat, tramo: b.tramo, cuil: b.cuil,
       ingreso: b.ingreso, bruto: b.bruto, neto: b.neto };
@@ -254,6 +255,30 @@ router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
     await query(`UPDATE empleados SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
     const out = await query(`${SELECT} WHERE e.id = $1`, [req.params.id]);
     if (!out.rows[0]) return res.status(404).json({ error: 'Empleado no encontrado' });
+    // Sincronizar período vigente + histórico de función/categoría (solo lo que cambió en esta edición).
+    try {
+      const aft = out.rows[0]; const bd = before.data || {}; const ad = aft.data || {};
+      const sv = (v) => v == null ? '' : String(v);
+      const map = [
+        ['funcion', 'Función', sv(bd.tarea), sv(ad.tarea)],
+        ['cat_escala', 'Categoría escala', sv(before.cat), sv(aft.cat)],
+        ['tramo_escala', 'Tramo escala', sv(before.tramo), sv(aft.tramo)],
+        ['cat_convenio', 'Categoría convenio', sv(bd.categoria_convenio), sv(ad.categoria_convenio)],
+        ['cod_convenio', 'Convenio', sv(bd.cod_convenio), sv(ad.cod_convenio)],
+        ['cod_sindicato', 'Sindicato', sv(bd.cod_sindicato), sv(ad.cod_sindicato)],
+      ].filter((x) => x[2] !== x[3]);
+      if (map.length) {
+        const per = (await query('SELECT id FROM periodos WHERE empleado_id=$1 AND vigente=true ORDER BY id DESC LIMIT 1', [req.params.id])).rows[0];
+        if (per) {
+          const sets2 = [], p2 = [];
+          for (const [col, lbl, antv, newv] of map) {
+            await query('INSERT INTO periodo_cambios (periodo_id, campo, etiqueta, valor_anterior, valor_nuevo, created_by) VALUES ($1,$2,$3,$4,$5,$6)', [per.id, col, lbl, antv || null, newv || null, req.user.dni]);
+            p2.push(newv || null); sets2.push(`${col}=$${p2.length}`);
+          }
+          p2.push(per.id); await query(`UPDATE periodos SET ${sets2.join(', ')}, updated_at=now() WHERE id=$${p2.length}`, p2);
+        }
+      }
+    } catch (e) { /* no romper el guardado */ }
     res.json(mapRow(out.rows[0]));
   } catch (e) { next(e); }
 });

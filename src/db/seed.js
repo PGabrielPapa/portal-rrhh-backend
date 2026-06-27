@@ -332,18 +332,19 @@ async function main() {
       }
       console.log(`[seed] capas: ${emps.length} empleados · personas nuevas ${nuevas} · períodos nuevos ${periodosNuevos}`);
     } catch (ex) { console.warn('[seed] personas/periodos:', ex.message); }
-    // ── Familiares existentes → base de Personas (tipo 'familiar'), si tienen DNI (idempotente) ──
+    // ── Familiares existentes → base de Personas (tipo 'familiar'), con o sin DNI. Idempotente por CUIL / familiar_id / DNI ──
     try {
-      const fam = (await client.query("SELECT apellido, nombre, dni, cuil, fecha_nac, tipo FROM familiares WHERE dni IS NOT NULL AND dni <> ''")).rows;
+      const fam = (await client.query('SELECT id, apellido, nombre, dni, cuil, fecha_nac, tipo FROM familiares')).rows;
       let nf = 0;
       for (const fm of fam) {
-        const fcuil = (fm.cuil || '').trim() || null; const fdni = (fm.dni || '').trim(); if (!fdni) continue;
+        const fcuil = (fm.cuil || '').trim() || null; const fdni = (fm.dni || '').trim() || null;
         let pid = null;
         if (fcuil) { const x = await client.query('SELECT id FROM personas WHERE cuil=$1', [fcuil]); if (x.rows[0]) pid = x.rows[0].id; }
-        if (!pid) { const x = await client.query("SELECT id FROM personas WHERE dni=$1 AND (cuil IS NULL OR cuil='')", [fdni]); if (x.rows[0]) pid = x.rows[0].id; }
+        if (!pid) { const x = await client.query("SELECT id FROM personas WHERE data->>'familiar_id' = $1", [String(fm.id)]); if (x.rows[0]) pid = x.rows[0].id; }
+        if (!pid && fdni) { const x = await client.query("SELECT id FROM personas WHERE dni=$1 AND (cuil IS NULL OR cuil='')", [fdni]); if (x.rows[0]) pid = x.rows[0].id; }
         const nomF = [String(fm.apellido || '').trim(), String(fm.nombre || '').trim()].filter(Boolean).join(', ').toUpperCase();
-        if (!pid) { await client.query("INSERT INTO personas (cuil,dni,apellido,nombres,nom,tipos,data) VALUES ($1,$2,$3,$4,$5,ARRAY['familiar'],$6)", [fcuil, fdni, fm.apellido || null, fm.nombre || null, nomF, JSON.stringify({ fecha_nac: fm.fecha_nac || null, vinculo: fm.tipo || null })]); nf++; }
-        else { await client.query("UPDATE personas SET tipos = ARRAY(SELECT DISTINCT unnest(tipos || ARRAY['familiar'])) WHERE id=$1", [pid]); }
+        if (!pid) { await client.query("INSERT INTO personas (cuil,dni,apellido,nombres,nom,tipos,data) VALUES ($1,$2,$3,$4,$5,ARRAY['familiar'],$6)", [fcuil, fdni, fm.apellido || null, fm.nombre || null, nomF, JSON.stringify({ fecha_nac: fm.fecha_nac || null, vinculo: fm.tipo || null, familiar_id: fm.id })]); nf++; }
+        else { await client.query("UPDATE personas SET tipos = ARRAY(SELECT DISTINCT unnest(tipos || ARRAY['familiar'])), data = data || $2::jsonb WHERE id=$1", [pid, JSON.stringify({ familiar_id: fm.id })]); }
       }
       console.log(`[seed] familiares→personas: ${nf} nuevas`);
     } catch (e) { console.warn('[seed] familiares→personas:', e.message); }

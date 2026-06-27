@@ -971,3 +971,6 @@ ALTER TABLE personas ADD COLUMN IF NOT EXISTS disabled        BOOLEAN NOT NULL D
 -- Reingresos / cambios de empresa: una persona (DNI) puede tener varios períodos
 -- (varias filas en empleados). Se relaja el DNI único; el legajo sigue único por empresa.
 ALTER TABLE empleados DROP CONSTRAINT IF EXISTS uq_empleado_dni;
+
+-- El DNI de persona pasa a ser opcional (familiares/postulantes pueden no tenerlo; el CUIL sigue siendo la identidad única).
+ALTER TABLE personas ALTER COLUMN dni DROP NOT NULL;

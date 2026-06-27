@@ -57,9 +57,9 @@ router.get('/:id', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   try {
     const b = req.body || {};
-    const dni = String(b.dni || '').trim();
-    if (!dni) return res.status(400).json({ error: 'El DNI es obligatorio' });
+    const dni = String(b.dni || '').trim() || null;
     const cuil = String(b.cuil || '').trim() || null;
+    if (!dni && !cuil && !b.apellido && !b.nombres && !b.nom) return res.status(400).json({ error: 'Cargá al menos un nombre o documento' });
     const tipos = Array.isArray(b.tipos) ? b.tipos : (b.tipo ? [b.tipo] : []);
     const core = ['dni', 'cuil', 'apellido', 'nombres', 'nom', 'tipos', 'tipo'];
     const data = {}; for (const k of Object.keys(b)) if (!core.includes(k)) data[k] = b[k];
