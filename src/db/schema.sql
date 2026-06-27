@@ -388,6 +388,17 @@ CREATE TABLE IF NOT EXISTS chs_siniestros (
 );
 CREATE INDEX IF NOT EXISTS idx_chs_sin_fecha ON chs_siniestros(fecha DESC);
 
+-- Mediciones de HyS (obligatorias): tipo, responsable, realización, vencimiento, resultado, informe.
+CREATE TABLE IF NOT EXISTS chs_mediciones (
+  id SERIAL PRIMARY KEY,
+  tipo TEXT, empresa TEXT, lugar TEXT, empresa_responsable TEXT,
+  fecha_realizacion DATE, fecha_vencimiento DATE,
+  resultado TEXT,
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chs_med_venc ON chs_mediciones(fecha_vencimiento);
+
 -- ── Grupo familiar declarado por el empleado ──
 CREATE TABLE IF NOT EXISTS familiares (
   id SERIAL PRIMARY KEY,

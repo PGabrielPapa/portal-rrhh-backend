@@ -220,4 +220,58 @@ router.delete('/siniestros/:id', async (req, res, next) => {
 
 router.get('/siniestros/:id/archivo', archivoHandler('chs_siniestros'));
 
+// ───────────────────────── Mediciones de HyS ─────────────────────────
+const mapMed = (r) => ({ id: r.id, tipo: r.tipo, empresa: r.empresa, lugar: r.lugar, empresaResponsable: r.empresa_responsable, fechaRealizacion: r.fecha_realizacion, fechaVencimiento: r.fecha_vencimiento, resultado: r.resultado, archivoNombre: r.archivo_nombre, tieneArchivo: !!r.archivo_nombre, createdBy: r.created_by, createdAt: r.created_at });
+
+router.get('/mediciones', async (req, res, next) => {
+  try {
+    const { tipo } = req.query; const cond = [], p = [];
+    if (tipo) { p.push(tipo); cond.push(`tipo=$${p.length}`); }
+    const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
+    const { rows } = await query(
+      `SELECT id, tipo, empresa, lugar, empresa_responsable, fecha_realizacion, fecha_vencimiento, resultado, archivo_nombre, created_by, created_at
+         FROM chs_mediciones ${where} ORDER BY fecha_vencimiento ASC NULLS LAST, id DESC`, p);
+    res.json(rows.map(mapMed));
+  } catch (e) { next(e); }
+});
+
+router.post('/mediciones', async (req, res, next) => {
+  try {
+    const b = req.body || {}; const [an, am, ad] = archivoCols(b.archivo);
+    const { rows } = await query(
+      `INSERT INTO chs_mediciones (tipo, empresa, lugar, empresa_responsable, fecha_realizacion, fecha_vencimiento, resultado, archivo_nombre, archivo_mime, archivo_data, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+      [b.tipo || null, b.empresa || null, b.lugar || null, b.empresaResponsable || null, b.fechaRealizacion || null, b.fechaVencimiento || null, b.resultado || null, an, am, ad, req.user.dni]);
+    res.status(201).json({ ok: true, id: rows[0].id });
+  } catch (e) { next(e); }
+});
+
+router.put('/mediciones/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const sets = ['tipo=$1', 'empresa=$2', 'lugar=$3', 'empresa_responsable=$4', 'fecha_realizacion=$5', 'fecha_vencimiento=$6', 'resultado=$7', 'updated_at=now()'];
+    const params = [b.tipo || null, b.empresa || null, b.lugar || null, b.empresaResponsable || null, b.fechaRealizacion || null, b.fechaVencimiento || null, b.resultado || null];
+    if (b.archivo && b.archivo.data) {
+      params.push(b.archivo.nombre || 'informe', b.archivo.mime || 'application/octet-stream', b.archivo.data);
+      sets.push(`archivo_nombre=$${params.length - 2}`, `archivo_mime=$${params.length - 1}`, `archivo_data=$${params.length}`);
+    } else if (b.quitarArchivo) {
+      sets.push('archivo_nombre=NULL', 'archivo_mime=NULL', 'archivo_data=NULL');
+    }
+    params.push(req.params.id);
+    const r = await query(`UPDATE chs_mediciones SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING id`, params);
+    if (!r.rowCount) return res.status(404).json({ error: 'Medición no encontrada' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/mediciones/:id', async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM chs_mediciones WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Medición no encontrada' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.get('/mediciones/:id/archivo', archivoHandler('chs_mediciones'));
+
 export default router;
