@@ -298,6 +298,40 @@ async function main() {
       const upd = await client.query(`UPDATE empleados SET data = data || '{"comite_hys": true}'::jsonb WHERE NOT (data ? 'comite_hys') AND (${cond})`, comite);
       console.log(`[seed] Comité HyS marcados: ${upd.rowCount}`);
     } catch (e) { console.warn('[seed] comite hys:', e.message); }
+    // ── Capas Personas/Períodos: migrar empleados existentes (idempotente) ──
+    try {
+      const emps = (await client.query('SELECT id, empresa_id, leg_num, dni, cuil, nom, cat, tramo, ingreso, activo, persona_id, data FROM empleados')).rows;
+      let nuevas = 0, periodosNuevos = 0;
+      for (const e of emps) {
+        const cuil = (e.cuil || '').trim() || null;
+        const dni = (e.dni || '').trim();
+        const d = e.data || {};
+        const apellido = d.apellido || (String(e.nom || '').split(',')[0] || '').trim();
+        const nombres = d.nombres || (String(e.nom || '').split(',').slice(1).join(',') || '').trim();
+        let pid = e.persona_id || null;
+        if (!pid && cuil) { const r = await client.query('SELECT id FROM personas WHERE cuil=$1', [cuil]); if (r.rows[0]) pid = r.rows[0].id; }
+        if (!pid && dni) { const r = await client.query("SELECT id FROM personas WHERE dni=$1 AND (cuil IS NULL OR cuil='')", [dni]); if (r.rows[0]) pid = r.rows[0].id; }
+        if (!pid) {
+          const ins = await client.query("INSERT INTO personas (cuil, dni, apellido, nombres, nom, tipos, data) VALUES ($1,$2,$3,$4,$5,ARRAY['empleado'],$6) RETURNING id",
+            [cuil, dni, apellido, nombres, e.nom, JSON.stringify(d)]);
+          pid = ins.rows[0].id; nuevas++;
+        } else {
+          await client.query("UPDATE personas SET tipos = ARRAY(SELECT DISTINCT unnest(tipos || ARRAY['empleado'])) WHERE id=$1", [pid]);
+        }
+        await client.query('UPDATE empleados SET persona_id=$1 WHERE id=$2 AND persona_id IS NULL', [pid, e.id]);
+        const ex = await client.query('SELECT id FROM periodos WHERE empleado_id=$1', [e.id]);
+        if (!ex.rows[0]) {
+          let fEgreso = null;
+          if (!e.activo) { const b = await client.query('SELECT fecha_baja FROM bajas WHERE empleado_id=$1 ORDER BY created_at DESC LIMIT 1', [e.id]); if (b.rows[0]) fEgreso = b.rows[0].fecha_baja; }
+          await client.query(
+            `INSERT INTO periodos (persona_id, empleado_id, empresa_id, legajo, fecha_ingreso, fecha_egreso, funcion, cat_escala, tramo_escala, cat_convenio, cod_convenio, cod_sindicato, vigente)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+            [pid, e.id, e.empresa_id, e.leg_num, e.ingreso, fEgreso, d.tarea || null, e.cat, e.tramo, d.categoria_convenio || null, d.cod_convenio || null, d.cod_sindicato || null, !!e.activo]);
+          periodosNuevos++;
+        }
+      }
+      console.log(`[seed] capas: ${emps.length} empleados · personas nuevas ${nuevas} · períodos nuevos ${periodosNuevos}`);
+    } catch (ex) { console.warn('[seed] personas/periodos:', ex.message); }
     await client.query('COMMIT');
     console.log(`[seed] empleados cargados: ${ok} · omitidos: ${skip}`);
     console.log('[seed] contraseña inicial = DNI (cambio forzado en primer login).');

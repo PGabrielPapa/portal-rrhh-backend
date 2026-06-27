@@ -7,6 +7,7 @@ import { notFound, errorHandler } from './middleware/error.js';
 import authRoutes from './routes/auth.routes.js';
 import empleadosRoutes from './routes/empleados.routes.js';
 import chsRoutes from './routes/chs.routes.js';
+import personasRoutes from './routes/personas.routes.js';
 import mensajesRoutes from './routes/mensajes.routes.js';
 import cbusRoutes from './routes/cbus.routes.js';
 import gananciasRoutes from './routes/ganancias.routes.js';
@@ -80,6 +81,7 @@ export function createApp() {
   app.use('/api/fichadas', fichadasRoutes);
   app.use('/api/prosoft', prosoftRoutes);
   app.use('/api/chs', chsRoutes);
+  app.use('/api/personas', personasRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

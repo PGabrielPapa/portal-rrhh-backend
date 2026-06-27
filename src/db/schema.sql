@@ -908,3 +908,56 @@ CREATE TABLE IF NOT EXISTS hys_talles_historial (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_hys_talles_hist_emp ON hys_talles_historial(empleado_id);
+
+-- ╔══════════════════════════════════════════════════════════════════╗
+-- ║  Modelo en capas: Personas (capa 1) → Períodos de prestación      ║
+-- ║  (capa 2). Aditivo: empleados sigue operando; persona_id la liga. ║
+-- ╚══════════════════════════════════════════════════════════════════╝
+-- Capa 1: Personas (familiares, prestadores, postulantes, empleados, etc.).
+CREATE TABLE IF NOT EXISTS personas (
+  id SERIAL PRIMARY KEY,
+  cuil TEXT,
+  dni TEXT NOT NULL,
+  apellido TEXT, nombres TEXT, nom TEXT,
+  tipos TEXT[] NOT NULL DEFAULT '{}',
+  data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_personas_cuil ON personas(cuil) WHERE cuil IS NOT NULL AND cuil <> '';
+CREATE INDEX IF NOT EXISTS idx_personas_dni ON personas(dni);
+
+-- Liga empleados (capa operativa) con su persona.
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS persona_id INTEGER REFERENCES personas(id);
+CREATE INDEX IF NOT EXISTS idx_empleados_persona ON empleados(persona_id);
+
+-- Capa 2: Períodos de prestación laboral (reingresos, cambios de empresa/legajo).
+CREATE TABLE IF NOT EXISTS periodos (
+  id SERIAL PRIMARY KEY,
+  persona_id INTEGER NOT NULL REFERENCES personas(id) ON DELETE CASCADE,
+  empleado_id INTEGER REFERENCES empleados(id) ON DELETE SET NULL,
+  empresa_id INTEGER REFERENCES empresas(id),
+  legajo TEXT,
+  fecha_ingreso DATE, fecha_egreso DATE, causa_egreso TEXT,
+  funcion TEXT, cat_escala TEXT, tramo_escala TEXT, cat_convenio TEXT, cod_convenio TEXT, cod_sindicato TEXT,
+  vigente BOOLEAN NOT NULL DEFAULT true,
+  data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_periodos_persona ON periodos(persona_id);
+CREATE INDEX IF NOT EXISTS idx_periodos_empleado ON periodos(empleado_id);
+
+-- Histórico de cambios dentro de un período (función, categoría escala/convenio, etc.).
+CREATE TABLE IF NOT EXISTS periodo_cambios (
+  id SERIAL PRIMARY KEY,
+  periodo_id INTEGER NOT NULL REFERENCES periodos(id) ON DELETE CASCADE,
+  campo TEXT NOT NULL, etiqueta TEXT,
+  valor_anterior TEXT, valor_nuevo TEXT,
+  fecha DATE NOT NULL DEFAULT CURRENT_DATE,
+  motivo TEXT, created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_percambios_periodo ON periodo_cambios(periodo_id, created_at DESC);
