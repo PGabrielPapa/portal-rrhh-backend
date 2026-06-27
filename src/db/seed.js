@@ -293,7 +293,7 @@ async function main() {
 
     // Integrantes del Comité de HyS (REG-002-CHS): set inicial por nombre. Solo si nunca se definió (respeta cambios manuales en ABM Usuarios).
     try {
-      const comite = ['AGUIAR, LUNA%', 'BOZZUTO%', 'CLAUDINO%', 'GUILLEN%', 'DIAZ OLIVIERI%', 'MORINI%', 'RODRIGUEZ FERREYRA%', 'PAPA, PABLO GABRIEL%', 'PARERA, PABLO%', 'DIMASI%', 'MONTERO, AGUSTIN%', 'SAAVEDRA%', 'SECCHI%'];
+      const comite = ['AGUIAR%LUNA%', 'BOZZUTO%', 'CLAUDINO%', 'GUILLEN%', 'DIAZ OLIVIERI%', 'MORINI%', 'RODRIGUEZ FERREYRA%', 'PAPA, PABLO GABRIEL%', 'PARERA, PABLO%', 'DIMASI%', 'MONTERO, AGUSTIN%', 'SAAVEDRA%', 'SECCHI%'];
       const cond = comite.map((_, i) => `nom ILIKE $${i + 1}`).join(' OR ');
       const upd = await client.query(`UPDATE empleados SET data = data || '{"comite_hys": true}'::jsonb WHERE NOT (data ? 'comite_hys') AND (${cond})`, comite);
       console.log(`[seed] Comité HyS marcados: ${upd.rowCount}`);
