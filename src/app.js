@@ -6,6 +6,7 @@ import { config } from './config.js';
 import { notFound, errorHandler } from './middleware/error.js';
 import authRoutes from './routes/auth.routes.js';
 import empleadosRoutes from './routes/empleados.routes.js';
+import chsRoutes from './routes/chs.routes.js';
 import mensajesRoutes from './routes/mensajes.routes.js';
 import cbusRoutes from './routes/cbus.routes.js';
 import gananciasRoutes from './routes/ganancias.routes.js';
@@ -78,6 +79,7 @@ export function createApp() {
   app.use('/api/familiares', familiaresRoutes);
   app.use('/api/fichadas', fichadasRoutes);
   app.use('/api/prosoft', prosoftRoutes);
+  app.use('/api/chs', chsRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

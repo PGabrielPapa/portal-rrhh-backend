@@ -338,6 +338,41 @@ CREATE TABLE IF NOT EXISTS cambios_perfil (
 );
 CREATE INDEX IF NOT EXISTS idx_camperfil_empleado ON cambios_perfil(empleado_id, created_at DESC);
 
+-- ╔══════════════════════════════════════════════════════════════════╗
+-- ║  Comité de Higiene y Seguridad (REG-002-CHS)                       ║
+-- ╚══════════════════════════════════════════════════════════════════╝
+-- Minutas de las reuniones del Comité de HyS.
+CREATE TABLE IF NOT EXISTS chs_minutas (
+  id            SERIAL PRIMARY KEY,
+  comite        TEXT,
+  fecha         DATE,
+  participantes TEXT,
+  temas         TEXT,
+  decisiones    TEXT,
+  observaciones TEXT,
+  acciones      JSONB NOT NULL DEFAULT '[]'::jsonb,
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,
+  created_by    TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chs_minutas_fecha ON chs_minutas(fecha DESC);
+
+-- Política de HyS: versiones (control de versiones + vigencia + archivo firmado).
+CREATE TABLE IF NOT EXISTS chs_politica (
+  id SERIAL PRIMARY KEY,
+  version TEXT, vigencia DATE, comentario TEXT, vigente BOOLEAN NOT NULL DEFAULT false,
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Registro de difusión de la política al personal.
+CREATE TABLE IF NOT EXISTS chs_difusion (
+  id SERIAL PRIMARY KEY,
+  fecha DATE, alcance TEXT, observacion TEXT,
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ── Grupo familiar declarado por el empleado ──
 CREATE TABLE IF NOT EXISTS familiares (
   id SERIAL PRIMARY KEY,
