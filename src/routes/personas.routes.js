@@ -83,7 +83,7 @@ router.put('/:id', async (req, res, next) => {
     const core = ['dni', 'cuil', 'apellido', 'nombres', 'nom', 'tipos', 'tipo', 'id'];
     const data = {}; for (const k of Object.keys(b)) if (!core.includes(k)) data[k] = b[k];
     const sets = ['dni=$1', 'cuil=$2', 'apellido=$3', 'nombres=$4', 'nom=$5', 'updated_at=now()'];
-    const params = [String(b.dni || '').trim(), String(b.cuil || '').trim() || null, b.apellido || null, b.nombres || null, nomDe(b)];
+    const params = [String(b.dni || '').trim() || null, String(b.cuil || '').trim() || null, b.apellido || null, b.nombres || null, nomDe(b)];
     if (tipos) { params.push(tipos); sets.push(`tipos=$${params.length}`); }
     if (Object.keys(data).length) { params.push(JSON.stringify(data)); sets.push(`data = data || $${params.length}::jsonb`); }
     params.push(req.params.id);

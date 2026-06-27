@@ -358,7 +358,9 @@ router.post('/import', requireRole('rrhh', 'admin'), async (req, res, next) => {
       const cuil = String(r['CUIL'] || '').trim();
       let dni = String(r['DNI'] || '').trim();
       if (!dni && cuil) dni = dniFromCuil(cuil);
-      const nom = String(r['Apellido y Nombre'] || '').trim().toUpperCase();
+      const apellido = String(r['Apellido'] || '').trim();
+      const nombres = String(r['Nombres'] || '').trim();
+      const nom = (apellido || nombres) ? [apellido, nombres].filter(Boolean).join(', ').toUpperCase() : String(r['Apellido y Nombre'] || '').trim().toUpperCase();
       const ing = String(r['Fecha Ingreso'] || '').trim();
       if (!legNum || !dni || !cuil || !nom || !empresa) { errores.push(`Legajo ${legNum || '?'}: faltan campos obligatorios`); err++; continue; }
       const eid = empresaId[empSlug(empresa)];
@@ -369,20 +371,39 @@ router.post('/import', requireRole('rrhh', 'admin'), async (req, res, next) => {
       const ingISO = (() => { const m = ing.match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return m ? `${m[3]}-${m[2]}-${m[1]}` : (/^\d{4}-\d{2}-\d{2}$/.test(ing) ? ing : null); })();
       // Tolerante a variantes de nombres de columna (plantilla propia o export Pro-Soft/IDEE).
       const cat = String(r['Categoría'] || r['Categoría Unif.'] || r['Desc. Categoría'] || '').toUpperCase() || null;
+      const tramo = (r['Tramo'] || '').toUpperCase() || null;
       const data = {
-        ubicacion: r['Ubicación'] || '',
-        dom_calle: r['Domicilio Calle'] || r['Calle'] || '',
-        dom_nro: r['Número'] || '',
+        apellido: apellido || null, nombres: nombres || null,
+        fecha_nac: r['Fecha Nacimiento'] || r['Fecha Nac.'] || '', sexo: r['Sexo'] || '', estado_civil: r['Estado Civil'] || '', nacionalidad: r['Nacionalidad'] || '',
+        lugar: r['Ubicación'] || r['Lugar'] || '', tarea: r['Tarea'] || r['Función'] || r['Funcion'] || '', desc_categoria: r['Descripción de categoría'] || '',
+        cod_convenio: r['Convenio'] || r['CCT'] || r['Código de convenio'] || '', categoria_convenio: r['Categoría de convenio'] || '', cod_sindicato: r['Sindicato'] || r['Código de sindicato'] || '',
+        condicion: r['Condición'] || '', nivelTitulo: r['Nivel de título'] || r['Nivel Título'] || '',
+        email_laboral: r['Mail laboral'] || '', email_personal: r['Mail personal'] || '',
+        tel_laboral: r['Teléfono laboral'] || '', tel_personal: r['Teléfono personal'] || '',
+        contacto_nombre: r['Contacto emergencia nombre'] || '', contacto_tel: r['Contacto emergencia teléfono'] || '', contacto_vinculo: r['Contacto emergencia vínculo'] || '',
+        dom_calle: r['Domicilio Calle'] || r['Calle'] || '', dom_nro: r['Número'] || '', dom_piso: r['Piso'] || '', dom_depto: r['Depto'] || '',
         dom_loc: r['Localidad'] || '', dom_prov: r['Provincia'] || '', dom_cp: r['Código Postal'] || '',
       };
-      await client.query(
+      const osCod = String(r['Obra Social'] || r['Obra Social (RNOS)'] || '').trim();
+      if (osCod) { data.os_codigo = osCod; data.codigoObraSocial = osCod.replace(/\D/g, '').slice(-6); }
+      const insE = await client.query(
         `INSERT INTO empleados (empresa_id, leg_num, dni, cuil, nom, email, cat, tramo, ingreso, bruto, neto, es_alta, data)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,$12)`,
-        [eid, legNum, dni, cuil, nom, r['E-mail'] || null, cat,
-         (r['Tramo'] || '').toUpperCase() || null, ingISO,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,$12) RETURNING id`,
+        [eid, legNum, dni, cuil, nom, r['E-mail'] || r['E-mail (sistema)'] || null, cat, tramo, ingISO,
          parseFloat(r['Sueldo Bruto'] || r['Sueldo']) || 0,
          parseFloat(r['Sueldo Neto'] || r['Sueldo']) || 0, JSON.stringify(data)]
       );
+      // Capa Personas/Períodos (idempotente por CUIL/DNI).
+      try {
+        const empId = insE.rows[0].id;
+        let pid = null;
+        if (cuil) { const x = await client.query('SELECT id FROM personas WHERE cuil=$1', [cuil]); if (x.rows[0]) pid = x.rows[0].id; }
+        if (!pid) { const x = await client.query("SELECT id FROM personas WHERE dni=$1 AND (cuil IS NULL OR cuil='')", [dni]); if (x.rows[0]) pid = x.rows[0].id; }
+        if (!pid) { const x = await client.query("INSERT INTO personas (cuil,dni,apellido,nombres,nom,tipos,data) VALUES ($1,$2,$3,$4,$5,ARRAY['empleado'],$6) RETURNING id", [cuil || null, dni, apellido || null, nombres || null, nom, JSON.stringify(data)]); pid = x.rows[0].id; }
+        else { await client.query("UPDATE personas SET tipos = ARRAY(SELECT DISTINCT unnest(tipos || ARRAY['empleado'])) WHERE id=$1", [pid]); }
+        await client.query('UPDATE empleados SET persona_id=$1 WHERE id=$2', [pid, empId]);
+        await client.query('INSERT INTO periodos (persona_id, empleado_id, empresa_id, legajo, fecha_ingreso, funcion, cat_escala, tramo_escala, cat_convenio, cod_convenio, cod_sindicato, vigente) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true)', [pid, empId, eid, legNum, ingISO, data.tarea || null, cat, tramo, data.categoria_convenio || null, data.cod_convenio || null, data.cod_sindicato || null]);
+      } catch (e) { /* el empleado se importó igual */ }
       uidSet.add(uid); dniSet.add(dni); ok++;
     }
     await client.query('COMMIT');
