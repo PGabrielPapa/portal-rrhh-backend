@@ -530,4 +530,122 @@ router.get('/dashboard', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ───────────────────────── Plan Anual de Capacitaciones ─────────────────────────
+const mapCap = (r) => ({ id: r.id, capacitacion: r.capacitacion, empresa: r.empresa, sector: r.sector, fecha: r.fecha, temario: r.temario, asistentes: r.asistentes, evaluacion: r.evaluacion, estado: r.estado, archivoNombre: r.archivo_nombre, tieneArchivo: !!r.archivo_nombre, createdBy: r.created_by, createdAt: r.created_at });
+
+router.get('/capacitaciones', async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT id, capacitacion, empresa, sector, fecha, temario, asistentes, evaluacion, estado, archivo_nombre, created_by, created_at FROM chs_capacitaciones ORDER BY fecha DESC NULLS LAST, id DESC');
+    res.json(rows.map(mapCap));
+  } catch (e) { next(e); }
+});
+
+router.post('/capacitaciones', async (req, res, next) => {
+  try {
+    const b = req.body || {}; const [an, am, ad] = archivoCols(b.archivo);
+    const { rows } = await query(
+      `INSERT INTO chs_capacitaciones (capacitacion, empresa, sector, fecha, temario, asistentes, evaluacion, estado, archivo_nombre, archivo_mime, archivo_data, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      [b.capacitacion || null, b.empresa || null, b.sector || null, b.fecha || null, b.temario || null, b.asistentes || null, b.evaluacion || null, b.estado || 'Pendiente', an, am, ad, req.user.dni]);
+    res.status(201).json({ ok: true, id: rows[0].id });
+  } catch (e) { next(e); }
+});
+
+router.put('/capacitaciones/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const sets = ['capacitacion=$1', 'empresa=$2', 'sector=$3', 'fecha=$4', 'temario=$5', 'asistentes=$6', 'evaluacion=$7', 'estado=$8', 'updated_at=now()'];
+    const params = [b.capacitacion || null, b.empresa || null, b.sector || null, b.fecha || null, b.temario || null, b.asistentes || null, b.evaluacion || null, b.estado || 'Pendiente'];
+    if (b.archivo && b.archivo.data) { params.push(b.archivo.nombre || 'registro', b.archivo.mime || 'application/octet-stream', b.archivo.data); sets.push(`archivo_nombre=$${params.length - 2}`, `archivo_mime=$${params.length - 1}`, `archivo_data=$${params.length}`); }
+    else if (b.quitarArchivo) { sets.push('archivo_nombre=NULL', 'archivo_mime=NULL', 'archivo_data=NULL'); }
+    params.push(req.params.id);
+    const r = await query(`UPDATE chs_capacitaciones SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING id`, params);
+    if (!r.rowCount) return res.status(404).json({ error: 'Capacitación no encontrada' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/capacitaciones/:id', async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM chs_capacitaciones WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Capacitación no encontrada' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.get('/capacitaciones/:id/archivo', archivoHandler('chs_capacitaciones'));
+
+// ───────────────────────── EPP: matriz por puesto ─────────────────────────
+const mapEppM = (r) => ({ id: r.id, puesto: r.puesto, elementos: r.elementos, observaciones: r.observaciones, createdBy: r.created_by, createdAt: r.created_at });
+
+router.get('/epp-matriz', async (req, res, next) => {
+  try { const { rows } = await query('SELECT id, puesto, elementos, observaciones, created_by, created_at FROM chs_epp_matriz ORDER BY puesto ASC NULLS LAST, id DESC'); res.json(rows.map(mapEppM)); }
+  catch (e) { next(e); }
+});
+
+router.post('/epp-matriz', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const { rows } = await query('INSERT INTO chs_epp_matriz (puesto, elementos, observaciones, created_by) VALUES ($1,$2,$3,$4) RETURNING id', [b.puesto || null, b.elementos || null, b.observaciones || null, req.user.dni]);
+    res.status(201).json({ ok: true, id: rows[0].id });
+  } catch (e) { next(e); }
+});
+
+router.put('/epp-matriz/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const r = await query('UPDATE chs_epp_matriz SET puesto=$1, elementos=$2, observaciones=$3, updated_at=now() WHERE id=$4 RETURNING id', [b.puesto || null, b.elementos || null, b.observaciones || null, req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'No encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/epp-matriz/:id', async (req, res, next) => {
+  try { const r = await query('DELETE FROM chs_epp_matriz WHERE id=$1 RETURNING id', [req.params.id]); if (!r.rowCount) return res.status(404).json({ error: 'No encontrado' }); res.json({ ok: true }); }
+  catch (e) { next(e); }
+});
+
+// ───────────────────────── EPP: registro de entregas ─────────────────────────
+const mapEppE = (r) => ({ id: r.id, empleadoId: r.empleado_id, empleadoNom: r.empleado_nom, empleadoLeg: r.leg_num, puesto: r.puesto, elementos: r.elementos, fechaEntrega: r.fecha_entrega, fechaReposicion: r.fecha_reposicion, observaciones: r.observaciones, archivoNombre: r.archivo_nombre, tieneArchivo: !!r.archivo_nombre, createdBy: r.created_by, createdAt: r.created_at });
+
+router.get('/epp-entregas', async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT s.*, e.nom AS empleado_nom, e.leg_num FROM chs_epp_entregas s LEFT JOIN empleados e ON e.id=s.empleado_id ORDER BY s.fecha_entrega DESC NULLS LAST, s.id DESC`);
+    res.json(rows.map(mapEppE));
+  } catch (e) { next(e); }
+});
+
+router.post('/epp-entregas', async (req, res, next) => {
+  try {
+    const b = req.body || {}; const [an, am, ad] = archivoCols(b.archivo);
+    const { rows } = await query(
+      `INSERT INTO chs_epp_entregas (empleado_id, puesto, elementos, fecha_entrega, fecha_reposicion, observaciones, archivo_nombre, archivo_mime, archivo_data, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [b.empleadoId || null, b.puesto || null, b.elementos || null, b.fechaEntrega || null, b.fechaReposicion || null, b.observaciones || null, an, am, ad, req.user.dni]);
+    res.status(201).json({ ok: true, id: rows[0].id });
+  } catch (e) { next(e); }
+});
+
+router.put('/epp-entregas/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const sets = ['empleado_id=$1', 'puesto=$2', 'elementos=$3', 'fecha_entrega=$4', 'fecha_reposicion=$5', 'observaciones=$6', 'updated_at=now()'];
+    const params = [b.empleadoId || null, b.puesto || null, b.elementos || null, b.fechaEntrega || null, b.fechaReposicion || null, b.observaciones || null];
+    if (b.archivo && b.archivo.data) { params.push(b.archivo.nombre || 'constancia', b.archivo.mime || 'application/octet-stream', b.archivo.data); sets.push(`archivo_nombre=$${params.length - 2}`, `archivo_mime=$${params.length - 1}`, `archivo_data=$${params.length}`); }
+    else if (b.quitarArchivo) { sets.push('archivo_nombre=NULL', 'archivo_mime=NULL', 'archivo_data=NULL'); }
+    params.push(req.params.id);
+    const r = await query(`UPDATE chs_epp_entregas SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING id`, params);
+    if (!r.rowCount) return res.status(404).json({ error: 'Entrega no encontrada' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/epp-entregas/:id', async (req, res, next) => {
+  try { const r = await query('DELETE FROM chs_epp_entregas WHERE id=$1 RETURNING id', [req.params.id]); if (!r.rowCount) return res.status(404).json({ error: 'Entrega no encontrada' }); res.json({ ok: true }); }
+  catch (e) { next(e); }
+});
+
+router.get('/epp-entregas/:id/archivo', archivoHandler('chs_epp_entregas'));
+
 export default router;

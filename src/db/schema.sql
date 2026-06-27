@@ -440,6 +440,33 @@ CREATE TABLE IF NOT EXISTS chs_evidencias (
 );
 CREATE INDEX IF NOT EXISTS idx_chs_evi_fecha ON chs_evidencias(fecha DESC);
 
+-- Plan Anual de Capacitaciones (PAC) — seguimiento del cumplimiento.
+CREATE TABLE IF NOT EXISTS chs_capacitaciones (
+  id SERIAL PRIMARY KEY,
+  capacitacion TEXT, empresa TEXT, sector TEXT, fecha DATE, temario TEXT,
+  asistentes TEXT, evaluacion TEXT, estado TEXT NOT NULL DEFAULT 'Pendiente',
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chs_cap_fecha ON chs_capacitaciones(fecha DESC);
+
+-- EPP: matriz por puesto.
+CREATE TABLE IF NOT EXISTS chs_epp_matriz (
+  id SERIAL PRIMARY KEY,
+  puesto TEXT, elementos TEXT, observaciones TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- EPP: registro de entregas (con constancia firmada).
+CREATE TABLE IF NOT EXISTS chs_epp_entregas (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER REFERENCES empleados(id) ON DELETE SET NULL,
+  puesto TEXT, elementos TEXT, fecha_entrega DATE, fecha_reposicion DATE, observaciones TEXT,
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chs_eppent_fecha ON chs_epp_entregas(fecha_entrega DESC);
+
 -- Matriz de riesgos por proceso/tarea.
 CREATE TABLE IF NOT EXISTS chs_riesgos (
   id SERIAL PRIMARY KEY,
