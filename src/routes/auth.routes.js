@@ -75,6 +75,18 @@ router.post('/change-password', loginLimiter, requireAuth, async (req, res, next
     if (!newPassword || String(newPassword).length < 6)
       return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres' });
 
+    // Persona del Comité (login por DNI, sin ser empleado).
+    if (req.user.role === 'comite' && req.user.pid) {
+      const per = (await query('SELECT * FROM personas WHERE id=$1', [req.user.pid])).rows[0];
+      if (!per) return res.status(404).json({ error: 'Usuario no encontrado' });
+      const okp = await bcrypt.compare(String(currentPassword || ''), per.password_hash || '');
+      if (!okp) return res.status(401).json({ error: 'La contraseña actual es incorrecta' });
+      if (String(newPassword) === String(per.dni)) return res.status(400).json({ error: 'La nueva contraseña no puede ser igual al DNI' });
+      const hp = await bcrypt.hash(String(newPassword), config.bcryptRounds);
+      await query('UPDATE personas SET password_hash=$1, must_change_pwd=false WHERE id=$2', [hp, per.id]);
+      return res.json({ ok: true });
+    }
+
     const { rows } = await query('SELECT * FROM empleados WHERE id = $1', [req.user.id]);
     const emp = rows[0];
     if (!emp) return res.status(404).json({ error: 'Usuario no encontrado' });

@@ -101,7 +101,7 @@ router.post('/:id/acceso-comite', async (req, res, next) => {
     if (acceso && !per.password_hash) {
       if (!per.dni) return res.status(400).json({ error: 'La persona necesita DNI para habilitar el acceso' });
       const hash = await bcrypt.hash(String(per.dni), config.bcryptRounds);
-      await query('UPDATE personas SET acceso_comite=$1, password_hash=$2, must_change_pwd=false, disabled=false WHERE id=$3', [acceso, hash, per.id]);
+      await query('UPDATE personas SET acceso_comite=$1, password_hash=$2, must_change_pwd=true, disabled=false WHERE id=$3', [acceso, hash, per.id]);
       claveInicial = String(per.dni);
     } else {
       await query('UPDATE personas SET acceso_comite=$1 WHERE id=$2', [acceso, per.id]);
