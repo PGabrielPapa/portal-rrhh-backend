@@ -373,6 +373,21 @@ CREATE TABLE IF NOT EXISTS chs_difusion (
   created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Siniestros (ART y Medicina Laboral): accidentes, in itinere, enfermedades profesionales, incidentes.
+CREATE TABLE IF NOT EXISTS chs_siniestros (
+  id SERIAL PRIMARY KEY,
+  tipo TEXT,
+  empleado_id INTEGER REFERENCES empleados(id) ON DELETE SET NULL,
+  fecha DATE, lugar TEXT,
+  descripcion TEXT, causas TEXT, acciones TEXT,
+  estado TEXT NOT NULL DEFAULT 'Abierto',
+  art_nro TEXT, dias_baja INTEGER,
+  seguimientos JSONB NOT NULL DEFAULT '[]'::jsonb,
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chs_sin_fecha ON chs_siniestros(fecha DESC);
+
 -- ── Grupo familiar declarado por el empleado ──
 CREATE TABLE IF NOT EXISTS familiares (
   id SERIAL PRIMARY KEY,

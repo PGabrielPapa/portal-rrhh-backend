@@ -164,4 +164,60 @@ router.delete('/difusion/:id', async (req, res, next) => {
 
 router.get('/difusion/:id/archivo', archivoHandler('chs_difusion'));
 
+// ───────────────────────── Siniestros (ART / Medicina Laboral) ─────────────────────────
+const mapSin = (r) => ({ id: r.id, tipo: r.tipo, empleadoId: r.empleado_id, empleadoNom: r.empleado_nom, empleadoLeg: r.leg_num, empresa: r.empresa, fecha: r.fecha, lugar: r.lugar, descripcion: r.descripcion, causas: r.causas, acciones: r.acciones, estado: r.estado, artNro: r.art_nro, diasBaja: r.dias_baja, seguimientos: r.seguimientos || [], archivoNombre: r.archivo_nombre, tieneArchivo: !!r.archivo_nombre, createdBy: r.created_by, createdAt: r.created_at });
+
+router.get('/siniestros', async (req, res, next) => {
+  try {
+    const { tipo, estado } = req.query; const cond = [], p = [];
+    if (tipo) { p.push(tipo); cond.push(`s.tipo=$${p.length}`); }
+    if (estado) { p.push(estado); cond.push(`s.estado=$${p.length}`); }
+    const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
+    const { rows } = await query(
+      `SELECT s.*, e.nom AS empleado_nom, e.leg_num, em.nombre AS empresa
+         FROM chs_siniestros s LEFT JOIN empleados e ON e.id=s.empleado_id LEFT JOIN empresas em ON em.id=e.empresa_id
+         ${where} ORDER BY s.fecha DESC NULLS LAST, s.id DESC`, p);
+    res.json(rows.map(mapSin));
+  } catch (e) { next(e); }
+});
+
+router.post('/siniestros', async (req, res, next) => {
+  try {
+    const b = req.body || {}; const [an, am, ad] = archivoCols(b.archivo);
+    const { rows } = await query(
+      `INSERT INTO chs_siniestros (tipo,empleado_id,fecha,lugar,descripcion,causas,acciones,estado,art_nro,dias_baja,seguimientos,archivo_nombre,archivo_mime,archivo_data,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+      [b.tipo || null, b.empleadoId || null, b.fecha || null, b.lugar || null, b.descripcion || null, b.causas || null, b.acciones || null, b.estado || 'Abierto', b.artNro || null, b.diasBaja || null, JSON.stringify(b.seguimientos || []), an, am, ad, req.user.dni]);
+    res.status(201).json({ ok: true, id: rows[0].id });
+  } catch (e) { next(e); }
+});
+
+router.put('/siniestros/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const sets = ['tipo=$1', 'empleado_id=$2', 'fecha=$3', 'lugar=$4', 'descripcion=$5', 'causas=$6', 'acciones=$7', 'estado=$8', 'art_nro=$9', 'dias_baja=$10', 'seguimientos=$11', 'updated_at=now()'];
+    const params = [b.tipo || null, b.empleadoId || null, b.fecha || null, b.lugar || null, b.descripcion || null, b.causas || null, b.acciones || null, b.estado || 'Abierto', b.artNro || null, b.diasBaja || null, JSON.stringify(b.seguimientos || [])];
+    if (b.archivo && b.archivo.data) {
+      params.push(b.archivo.nombre || 'archivo', b.archivo.mime || 'application/octet-stream', b.archivo.data);
+      sets.push(`archivo_nombre=$${params.length - 2}`, `archivo_mime=$${params.length - 1}`, `archivo_data=$${params.length}`);
+    } else if (b.quitarArchivo) {
+      sets.push('archivo_nombre=NULL', 'archivo_mime=NULL', 'archivo_data=NULL');
+    }
+    params.push(req.params.id);
+    const r = await query(`UPDATE chs_siniestros SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING id`, params);
+    if (!r.rowCount) return res.status(404).json({ error: 'Siniestro no encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/siniestros/:id', async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM chs_siniestros WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Siniestro no encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.get('/siniestros/:id/archivo', archivoHandler('chs_siniestros'));
+
 export default router;
