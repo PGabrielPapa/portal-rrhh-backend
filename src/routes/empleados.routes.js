@@ -214,6 +214,21 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
        b.cat || null, b.tramo || null, b.ingreso || null, b.bruto || 0, b.neto || 0,
        b.role || 'employee', JSON.stringify(data)]
     );
+    // Capa Personas/Períodos: ligar el empleado a una persona y abrir su período (no rompe el alta si falla).
+    try {
+      const empId = rows[0].id;
+      const cuilN = (cuil || '').trim() || null;
+      const apellido = data.apellido || (String(b.nom || '').split(',')[0] || '').trim();
+      const nombres = data.nombres || (String(b.nom || '').split(',').slice(1).join(',') || '').trim();
+      let pid = null;
+      if (cuilN) { const x = await client.query('SELECT id FROM personas WHERE cuil=$1', [cuilN]); if (x.rows[0]) pid = x.rows[0].id; }
+      if (!pid) { const x = await client.query("SELECT id FROM personas WHERE dni=$1 AND (cuil IS NULL OR cuil='')", [dni]); if (x.rows[0]) pid = x.rows[0].id; }
+      if (!pid) { const x = await client.query("INSERT INTO personas (cuil,dni,apellido,nombres,nom,tipos,data) VALUES ($1,$2,$3,$4,$5,ARRAY['empleado'],$6) RETURNING id", [cuilN, dni, apellido || null, nombres || null, String(b.nom).toUpperCase(), JSON.stringify(data)]); pid = x.rows[0].id; }
+      else { await client.query("UPDATE personas SET tipos = ARRAY(SELECT DISTINCT unnest(tipos || ARRAY['empleado'])) WHERE id=$1", [pid]); }
+      await client.query('UPDATE empleados SET persona_id=$1 WHERE id=$2', [pid, empId]);
+      await client.query('INSERT INTO periodos (persona_id, empleado_id, empresa_id, legajo, fecha_ingreso, funcion, cat_escala, tramo_escala, cat_convenio, cod_convenio, cod_sindicato, vigente) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true)',
+        [pid, empId, empresaId, legAsignado, b.ingreso || null, data.tarea || null, b.cat || null, b.tramo || null, data.categoria_convenio || null, data.cod_convenio || null, data.cod_sindicato || null]);
+    } catch (e) { /* el empleado se creó igual */ }
     const out = await client.query(`${SELECT} WHERE e.id = $1`, [rows[0].id]);
     res.status(201).json(mapRow(out.rows[0]));
   } catch (e) { next(e); } finally { client.release(); }

@@ -38,6 +38,11 @@ router.get('/', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+router.get('/_empresas', async (req, res, next) => {
+  try { const { rows } = await query('SELECT nombre FROM empresas ORDER BY nombre'); res.json(rows.map((r) => r.nombre)); }
+  catch (e) { next(e); }
+});
+
 router.get('/:id', async (req, res, next) => {
   try {
     const pr = await query('SELECT * FROM personas WHERE id=$1', [req.params.id]);
@@ -116,6 +121,34 @@ router.get('/periodos/:id/cambios', async (req, res, next) => {
     const { rows } = await query('SELECT id, campo, etiqueta, valor_anterior, valor_nuevo, fecha, motivo, created_by, created_at FROM periodo_cambios WHERE periodo_id=$1 ORDER BY created_at DESC', [req.params.id]);
     res.json(rows);
   } catch (e) { next(e); }
+});
+
+// Ascender una persona a empleado: crea el empleado (legajo automático) + período vigente.
+router.post('/:id/ascender', async (req, res, next) => {
+  try {
+    const empresa = String((req.body && req.body.empresa) || '').trim();
+    if (!empresa) return res.status(400).json({ error: 'La empresa es obligatoria' });
+    const per = (await query('SELECT * FROM personas WHERE id=$1', [req.params.id])).rows[0];
+    if (!per) return res.status(404).json({ error: 'Persona no encontrada' });
+    if (!per.dni) return res.status(400).json({ error: 'La persona necesita DNI para darse de alta como empleado' });
+    const er = await query('SELECT id FROM empresas WHERE nombre=$1', [empresa]);
+    if (!er.rows[0]) return res.status(400).json({ error: 'Empresa no encontrada' });
+    const empresaId = er.rows[0].id;
+    const lg = await query("SELECT COALESCE(MAX(NULLIF(regexp_replace(leg_num,'\\D','','g'),'')::int),0)+1 AS n FROM empleados WHERE empresa_id=$1", [empresaId]);
+    const legajo = String(lg.rows[0].n).padStart(6, '0');
+    const nom = per.nom || [per.apellido, per.nombres].filter(Boolean).join(', ').toUpperCase();
+    const ins = await query(
+      `INSERT INTO empleados (empresa_id, leg_num, dni, cuil, nom, es_alta, role, persona_id, data)
+       VALUES ($1,$2,$3,$4,$5,true,'employee',$6,$7) RETURNING id`,
+      [empresaId, legajo, per.dni, per.cuil || null, nom, per.id, JSON.stringify(per.data || {})]);
+    const empId = ins.rows[0].id;
+    await query("UPDATE personas SET tipos = ARRAY(SELECT DISTINCT unnest(tipos || ARRAY['empleado'])) WHERE id=$1", [per.id]);
+    await query('INSERT INTO periodos (persona_id, empleado_id, empresa_id, legajo, fecha_ingreso, vigente) VALUES ($1,$2,$3,$4,CURRENT_DATE,true)', [per.id, empId, empresaId, legajo]);
+    res.status(201).json({ ok: true, empleadoId: empId, legajo, empresa });
+  } catch (e) {
+    if (e && e.code === '23505') return res.status(409).json({ error: 'Ya existe un empleado con ese DNI (la persona ya es empleado).' });
+    next(e);
+  }
 });
 
 export default router;
