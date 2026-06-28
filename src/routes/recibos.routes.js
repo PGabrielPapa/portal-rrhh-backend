@@ -33,7 +33,7 @@ router.get('/', async (req, res, next) => {
     // El empleado solo ve sus recibos publicados; gestores ven todos los del consultado.
     const filtro = (esPropio && req.user.role === 'employee') ? 'AND publicado = true' : '';
     const { rows } = await query(
-      `SELECT id, anio, mes, tipo, neto, created_at, publicado FROM recibos WHERE empleado_id = $1 ${filtro} ORDER BY anio DESC, mes DESC`,
+      `SELECT id, anio, mes, tipo, neto, created_at, publicado, acuse_at FROM recibos WHERE empleado_id = $1 ${filtro} ORDER BY anio DESC, mes DESC`,
       [empleadoId]
     );
     res.json(rows);
@@ -51,7 +51,7 @@ router.get('/gestion', requireRole('rrhh', 'admin'), async (req, res, next) => {
     if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const { rows } = await query(
-      `SELECT r.id, r.anio, r.mes, r.tipo, r.neto, r.created_at, r.created_by, r.publicado, r.pagado,
+      `SELECT r.id, r.anio, r.mes, r.tipo, r.neto, r.created_at, r.created_by, r.publicado, r.pagado, r.acuse_at,
               EXISTS (SELECT 1 FROM recibo_vistas v WHERE v.recibo_id = r.id) AS visto,
               e.nom, e.leg_num, em.nombre AS empresa
          FROM recibos r JOIN empleados e ON e.id = r.empleado_id
@@ -173,6 +173,20 @@ router.post('/eliminar-lote', requireRole('rrhh', 'admin'), async (req, res, nex
       logAudit(req.user.dni, 'recibos_eliminados_lote', `${ids.length} recibos · ${empresa || 'todas las empresas'} · ${String(mes).padStart(2, '0')}/${anio}${tipo ? ' · ' + tipo : ''}`, null);
     }
     res.json({ ok: true, eliminados: ids.length });
+  } catch (e) { next(e); }
+});
+
+// Acuse de recibo del empleado (Ley 27.555): el propio empleado confirma la recepción.
+router.post('/:id/acuse', async (req, res, next) => {
+  try {
+    const r = (await query('SELECT empleado_id, acuse_at FROM recibos WHERE id=$1', [req.params.id])).rows[0];
+    if (!r) return res.status(404).json({ error: 'Recibo no encontrado' });
+    if (r.empleado_id !== req.user.id) return res.status(403).json({ error: 'Solo el titular puede dar el acuse' });
+    if (r.acuse_at) return res.json({ ok: true, ya: true, acuseAt: r.acuse_at });
+    const ip = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').toString().split(',')[0].trim();
+    const nombre = (await query('SELECT nom FROM empleados WHERE id=$1', [req.user.id])).rows[0]?.nom || '';
+    const up = await query('UPDATE recibos SET acuse_at=now(), acuse_ip=$2, acuse_nombre=$3 WHERE id=$1 RETURNING acuse_at', [req.params.id, ip, nombre]);
+    res.json({ ok: true, acuseAt: up.rows[0].acuse_at });
   } catch (e) { next(e); }
 });
 

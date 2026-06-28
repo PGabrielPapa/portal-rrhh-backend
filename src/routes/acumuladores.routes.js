@@ -92,4 +92,17 @@ router.get('/consulta', requireRole('rrhh', 'admin'), async (req, res, next) => 
   } catch (e) { next(e); }
 });
 
+// Acumuladores de UN empleado para un período (para mostrar en el recibo / F.1357).
+router.get('/empleado/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    await seedSiVacio();
+    const def = hoy();
+    const anio = Number(req.query.anio) || def.anio, mes = Number(req.query.mes) || def.mes;
+    const acums = (await query('SELECT * FROM acumuladores WHERE activo=true ORDER BY orden, nombre')).rows.map(mapRow);
+    const recs = (await query('SELECT mes, tipo, data FROM recibos WHERE empleado_id=$1 AND anio=$2 AND tipo = ANY($3)', [req.params.id, anio, TIPOS_RECIBO])).rows;
+    const out = acums.map((a) => ({ codigo: a.codigo, nombre: a.nombre, tipo: a.tipo, afectaGanancias: a.afectaGanancias, valor: sumarAcumulador(recibosDeVentana(recs, a.tipo, mes), a.reglas) }));
+    res.json({ anio, mes, acumuladores: out });
+  } catch (e) { next(e); }
+});
+
 export default router;

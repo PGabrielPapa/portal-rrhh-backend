@@ -436,6 +436,32 @@ router.post('/simular', requireRole('rrhh', 'admin'), async (req, res, next) => 
   } catch (e) { next(e); }
 });
 
+// ── Liquidación FINAL ANUAL de Ganancias (RG 4003): impuesto anual vs. retenido => ajuste a imputar ──
+router.get('/final-anual', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const anio = Number(req.query.anio) || hoy().anio;
+    const empresaId = req.query.empresaId ? Number(req.query.empresaId) : null;
+    const cond = ['e.activo = true']; const args = [];
+    if (empresaId) { args.push(empresaId); cond.push(`e.empresa_id = $${args.length}`); }
+    const emps = (await query(`SELECT e.id FROM empleados e WHERE ${cond.join(' AND ')} ORDER BY e.nom`, args)).rows;
+    const filas = [];
+    for (const e of emps) {
+      const f = await f1357For(e.id, anio, 12, true); // anualizada
+      if (!f) continue;
+      const impuesto = f.determinacion.impuestoDeterminado;
+      const retenido = f.determinacion.retenidoAnterior;
+      const aRetener = f.determinacion.impuestoARetener;   // saldo a favor del fisco
+      const aDevolver = f.determinacion.devolucion;        // saldo a favor del empleado
+      if (impuesto === 0 && retenido === 0) continue;       // no alcanzado, no listar
+      filas.push({ empleadoId: e.id, legNum: f.empleado.legNum, nom: f.empleado.nom, empresa: f.empleado.empresa, cuil: f.empleado.cuil,
+        gravado: f.gravadas.totalGravada, dedGenerales: f.dedGenerales.total, dedPersonales: f.dedPersonales.total, dedSiradig: f.dedPersonales.dedSiradig || 0,
+        impuesto, retenido, aRetener, aDevolver, siradigSinClasificar: f.dedPersonales.siradig?.sinClasificar || 0 });
+    }
+    const tot = filas.reduce((a, r) => ({ impuesto: a.impuesto + r.impuesto, retenido: a.retenido + r.retenido, aRetener: a.aRetener + r.aRetener, aDevolver: a.aDevolver + r.aDevolver }), { impuesto: 0, retenido: 0, aRetener: 0, aDevolver: 0 });
+    res.json({ anio, filas, totales: Object.fromEntries(Object.entries(tot).map(([k, v]) => [k, r2(v)])) });
+  } catch (e) { next(e); }
+});
+
 // ── Informe de control de Ganancias (consolidado por empleado, estilo Tango "informe de control") ──
 router.get('/control', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {

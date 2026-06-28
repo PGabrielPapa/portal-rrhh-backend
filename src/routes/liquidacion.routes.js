@@ -6,6 +6,7 @@ import { ganTablaParaFecha } from '../lib/gananciasParams.js';
 import { periodoCerrado } from './cierres.routes.js';
 import { idsEquipoDe } from '../lib/equipo.js';
 
+import { embargosOpts } from './embargos.routes.js';
 const router = Router();
 router.use(requireAuth);
 
@@ -177,7 +178,8 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
     const convBasico = convBasicoDe(await convMap(), emp);
-    res.json(calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ...extra }));
+    const emb = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
+    res.json(calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ...emb, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -193,7 +195,8 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
     const convBasico = convBasicoDe(await convMap(), emp);
-    const recibo = calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ...extra });
+    const emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
+    const recibo = calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ...emb, ...extra });
     const ins = await query(
       `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, publicado)
        VALUES ($1,$2,$3,$4,$5,$6,$7,true)

@@ -1033,3 +1033,24 @@ CREATE TABLE IF NOT EXISTS acumuladores (
   updated_by TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ── Embargos y cuota alimentaria (ABM; el motor aplica topes de embargabilidad) ──
+CREATE TABLE IF NOT EXISTS embargos (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL DEFAULT 'judicial',     -- judicial | alimentos
+  modo TEXT NOT NULL DEFAULT 'monto',        -- monto | porcentaje (solo alimentos)
+  monto NUMERIC(14,2) NOT NULL DEFAULT 0,
+  porcentaje NUMERIC(6,2) NOT NULL DEFAULT 0,
+  caratula TEXT, juzgado TEXT, expediente TEXT, oficio TEXT,
+  total NUMERIC(14,2) NOT NULL DEFAULT 0,    -- monto total a embargar (0 = sin límite)
+  retenido NUMERIC(14,2) NOT NULL DEFAULT 0, -- acumulado retenido
+  desde DATE, hasta DATE, activo BOOLEAN NOT NULL DEFAULT true, obs TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_embargos_emp ON embargos(empleado_id);
+
+-- ── Recibo digital: acuse de recibo del empleado (Ley 27.555) ──
+ALTER TABLE recibos ADD COLUMN IF NOT EXISTS acuse_at  TIMESTAMPTZ;
+ALTER TABLE recibos ADD COLUMN IF NOT EXISTS acuse_ip  TEXT;
+ALTER TABLE recibos ADD COLUMN IF NOT EXISTS acuse_nombre TEXT;
