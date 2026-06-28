@@ -150,7 +150,7 @@ router.get('/gerente', requireRole('manager', 'rrhh', 'admin'), async (req, res,
     } catch (e) {}
 
     // ── Puntualidad y horas extra (fichadas del mes) ──
-    let tardanzasCasos = 0, tardanzasMin = 0, extraMin = 0, rankingExtra = [], rankingTarde = [];
+    let tardanzasCasos = 0, tardanzasMin = 0, extraMin = 0, rankingExtra = [], rankingTarde = [], detalleTarde = [];
     try {
       const fp = (await query(
         `SELECT f.empleado_id, e.nom, f.data FROM fichadas_periodo f JOIN empleados e ON e.id=f.empleado_id
@@ -162,6 +162,8 @@ router.get('/gerente', requireRole('manager', 'rrhh', 'admin'), async (req, res,
         const dias = Array.isArray(dd.dias) ? dd.dias : [];
         let extraBruta = 0, deficit = 0;
         for (const x of dias) {
+          const lm = Number(x.tardeMin || 0);
+          if (lm > 0) detalleTarde.push({ nom: r.nom, fecha: x.fecha || null, dia: x.dia || null, entrada: x.entrada || null, min: lm });
           const ss = typeof x.saldoMin === 'number' ? x.saldoMin : null;
           if (ss == null) continue;
           if (ss >= 30) extraBruta += ss; else if (ss < 0) deficit += -ss;
@@ -171,6 +173,8 @@ router.get('/gerente', requireRole('manager', 'rrhh', 'admin'), async (req, res,
       }
       rankingExtra.sort((a, b) => b.min - a.min); rankingExtra = rankingExtra.slice(0, 5);
       rankingTarde.sort((a, b) => b.min - a.min); rankingTarde = rankingTarde.slice(0, 5);
+      detalleTarde.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || (b.min - a.min));
+      detalleTarde = detalleTarde.slice(0, 200);
     } catch (e) {}
 
     // ── Avisos: cumpleaños y aniversarios (próximos 30 días) ──
@@ -213,7 +217,7 @@ router.get('/gerente', requireRole('manager', 'rrhh', 'admin'), async (req, res,
       kpi: { dotacion, masaBruta, costoLaboral, contribPct, antiguedadProm, edadProm },
       pendientes: { adelantos, fichadas, licencias, evaluaciones, anualAbierto },
       asistencia: { ausentesHoy, ausentismoDias },
-      puntualidad: { tardanzasCasos, tardanzasMin, ranking: rankingTarde },
+      puntualidad: { tardanzasCasos, tardanzasMin, ranking: rankingTarde, detalle: detalleTarde },
       extra: { totalMin: extraMin, ranking: rankingExtra },
       avisos: { cumple, aniversarios, prueba },
       evolucion,
