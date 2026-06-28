@@ -999,3 +999,23 @@ CREATE TABLE IF NOT EXISTS siradig_presentaciones (
 );
 CREATE INDEX IF NOT EXISTS idx_siradig_periodo ON siradig_presentaciones(anio);
 CREATE INDEX IF NOT EXISTS idx_siradig_emp ON siradig_presentaciones(empleado_id);
+
+-- ── Carga inicial de acumulados de Ganancias (arranque a mitad de año, estilo Tango "Carga Inicial") ──
+-- Acumulados del período fiscal NO surgidos del sistema (liquidados antes de implementar, u otro empleador).
+CREATE TABLE IF NOT EXISTS ganancias_apertura (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  anio INTEGER NOT NULL,
+  hasta_mes INTEGER NOT NULL DEFAULT 0,   -- acumulado hasta este mes inclusive (informativo)
+  gravado NUMERIC(16,2) NOT NULL DEFAULT 0,      -- remuneración gravada acumulada
+  aportes NUMERIC(16,2) NOT NULL DEFAULT 0,      -- aportes (jub + obra social + sindical) acumulados
+  retenido NUMERIC(16,2) NOT NULL DEFAULT 0,     -- retención de Ganancias acumulada
+  sac_gravado NUMERIC(16,2) NOT NULL DEFAULT 0,  -- SAC gravado percibido (para liquidación anualizada)
+  sac_aportes NUMERIC(16,2) NOT NULL DEFAULT 0,
+  origen TEXT DEFAULT 'CARGA_INICIAL',           -- CARGA_INICIAL | OTRO_EMPLEADOR
+  obs TEXT,
+  updated_by TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_gan_apertura UNIQUE (empleado_id, anio)
+);
+CREATE INDEX IF NOT EXISTS idx_gan_apertura ON ganancias_apertura(anio);

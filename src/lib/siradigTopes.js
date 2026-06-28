@@ -12,6 +12,7 @@ export const TABLA4_DEFAULT = {
   hipotecario: 20000.00,    // Intereses créditos hipotecarios
   sepelio: 996.23,          // Gastos de sepelio
   pctNeta: 0.05,            // 5% de la ganancia neta (cuota médico + donaciones + honorarios)
+  modo: 'MENSUAL_PRORRATEADO', // 'FIJO_PERIODO' = tope anual fijo todos los meses · 'MENSUAL_PRORRATEADO' = tope anual / 12 * meses (RG 4003)
 };
 
 // Conceptos internos y su regla de tope.
@@ -29,7 +30,7 @@ export const CONCEPTOS = {
   seguro_retiro:         { label: 'Seguro de retiro privado', regla: 'fijo', key: 'seguroRetiro' },
   gastos_sepelio:        { label: 'Gastos de sepelio', regla: 'fijo', key: 'sepelio' },
   intereses_hipotecarios:{ label: 'Intereses créditos hipotecarios', regla: 'fijo', key: 'hipotecario' },
-  alquiler_h_40:         { label: 'Alquileres casa-habitación (40%)', regla: 'tope_40gni' },
+  alquiler_h_40:         { label: 'Alquileres casa-habitación', regla: 'sin_tope' }, // el monto del SiRADIG YA viene topeado (40% y tope anual) por ARCA
   servicio_domestico:    { label: 'Personal de casas particulares', regla: 'tope_gni' },
   servicios_educativos:  { label: 'Servicios con fines educativos', regla: 'tope_40gni' }, // "según Tabla 4" — a confirmar con asesor
 };
@@ -63,6 +64,8 @@ export function calcularDeduccionesSiradig({ deducciones = [], mes = 12, anualiz
   const T = { ...TABLA4_DEFAULT, ...(topes || {}) };
   const MAP = { ...MAPA_TIPOS_DEFAULT, ...(mapaTipos || {}) };
   const prop = anualizada ? 1 : Math.min(1, Math.max(0, Number(mes) / 12));
+  // Tope fijo del período fiscal vs prorrateado mes a mes (como en Tango). Anualizada => tope pleno.
+  const capMult = (anualizada || T.modo === 'FIJO_PERIODO') ? 1 : prop;
 
   // 1) Acumular declarado por concepto
   const porConcepto = {}; // concepto -> { declarado, items:[] }
@@ -94,11 +97,11 @@ export function calcularDeduccionesSiradig({ deducciones = [], mes = 12, anualiz
     if (c.regla === 'pct_neta_5') continue; // se resuelve en el paso 3
     let comp = 0;
     if (c.regla === 'sin_tope') { comp = info.declarado; for (const f of info.filas) { f.tope = null; f.computable = f.declarado; } }
-    else if (c.regla === 'tope_gni') comp = aplicarCap(concepto, info, round2(T.gni * prop));
-    else if (c.regla === 'tope_40gni') comp = aplicarCap(concepto, info, round2(T.gni40 * prop));
+    else if (c.regla === 'tope_gni') comp = aplicarCap(concepto, info, round2(T.gni * capMult));
+    else if (c.regla === 'tope_40gni') comp = aplicarCap(concepto, info, round2(T.gni40 * capMult));
     else if (c.regla === 'fijo') {
-      if (c.bucket) { (buckets[c.bucket] ||= { cap: round2(T[c.key] * prop), declarado: 0, filas: [] }); buckets[c.bucket].declarado += info.declarado; buckets[c.bucket].filas.push(...info.filas); continue; }
-      comp = aplicarCap(concepto, info, round2(T[c.key] * prop));
+      if (c.bucket) { (buckets[c.bucket] ||= { cap: round2(T[c.key] * capMult), declarado: 0, filas: [] }); buckets[c.bucket].declarado += info.declarado; buckets[c.bucket].filas.push(...info.filas); continue; }
+      comp = aplicarCap(concepto, info, round2(T[c.key] * capMult));
     }
     otrasGenerales += comp;
   }

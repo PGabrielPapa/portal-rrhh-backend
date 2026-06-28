@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { CONCEPTOS, TABLA4_DEFAULT, MAPA_TIPOS_DEFAULT } from '../lib/siradigTopes.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -146,6 +147,38 @@ router.delete('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const r = await query('DELETE FROM siradig_presentaciones WHERE id=$1 RETURNING id', [req.params.id]);
     if (!r.rowCount) return res.status(404).json({ error: 'No encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ── Configuración: mapeo código tipo->concepto + topes (guardado en parametros_liq.data) ──
+router.get('/_config', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const data = (await query('SELECT data FROM parametros_liq WHERE id=1')).rows[0]?.data || {};
+    res.json({
+      mapaTipos: { ...MAPA_TIPOS_DEFAULT, ...(data.siradigTipos || {}) },
+      topes: { ...TABLA4_DEFAULT, ...(data.topesSiradig || {}) },
+      conceptos: CONCEPTOS,
+      tabla4Default: TABLA4_DEFAULT,
+    });
+  } catch (e) { next(e); }
+});
+
+router.put('/_config', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const cur = (await query('SELECT data FROM parametros_liq WHERE id=1')).rows[0]?.data || {};
+    const next = { ...cur };
+    if (b.mapaTipos && typeof b.mapaTipos === 'object') {
+      // normalizar: clave numérica -> concepto (string) | vacío = sin clasificar
+      const m = {}; for (const [k, v] of Object.entries(b.mapaTipos)) { if (v) m[String(k).replace(/\D/g, '')] = String(v); }
+      next.siradigTipos = m;
+    }
+    if (b.topes && typeof b.topes === 'object') {
+      const t = {}; for (const [k, v] of Object.entries(b.topes)) { t[k] = (k === 'modo') ? String(v) : Number(v) || 0; }
+      next.topesSiradig = t;
+    }
+    await query('INSERT INTO parametros_liq (id, data) VALUES (1, $1::jsonb) ON CONFLICT (id) DO UPDATE SET data=$1::jsonb', [JSON.stringify(next)]);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });

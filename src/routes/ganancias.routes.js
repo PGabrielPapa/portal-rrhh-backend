@@ -43,6 +43,16 @@ async function acumular(empleadoId, anio, mes) {
       a.habitual += remun; a.aporHabitual += aportes; a.jub += jub; a.os += os; a.sind += sind;
     }
   }
+  // Carga inicial (saldos de apertura): acumulados del período fiscal previos al sistema u otro empleador.
+  const ap = (await query('SELECT * FROM ganancias_apertura WHERE empleado_id=$1 AND anio=$2', [empleadoId, Number(anio)])).rows[0];
+  if (ap) {
+    a.habitual += Number(ap.gravado || 0);
+    a.aporHabitual += Number(ap.aportes || 0);
+    a.retenidoAcum += Number(ap.retenido || 0);
+    a.sacReal += Number(ap.sac_gravado || 0);
+    a.aporSacReal += Number(ap.sac_aportes || 0);
+    a.jub += Number(ap.aportes || 0); // para que el total de deducciones generales mostrado incluya la apertura
+  }
   return a;
 }
 
@@ -424,6 +434,79 @@ router.post('/simular', requireRole('rrhh', 'admin'), async (req, res, next) => 
         retenidoEnElAnio: r2(retAcum), ajusteFinal: ga.retencionPeriodo, sacReal: remBruto },
     });
   } catch (e) { next(e); }
+});
+
+// ── Informe de control de Ganancias (consolidado por empleado, estilo Tango "informe de control") ──
+router.get('/control', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const def = hoy();
+    const anio = Number(req.query.anio) || def.anio, mes = Number(req.query.mes) || def.mes;
+    const anual = req.query.anual === '1';
+    const empresaId = req.query.empresaId ? Number(req.query.empresaId) : null;
+    const cond = ['e.activo = true']; const args = [];
+    if (empresaId) { args.push(empresaId); cond.push(`e.empresa_id = $${args.length}`); }
+    const emps = (await query(`SELECT e.id FROM empleados e WHERE ${cond.join(' AND ')} ORDER BY e.nom`, args)).rows;
+    const filas = [];
+    for (const e of emps) {
+      const f = await f1357For(e.id, anio, mes, anual);
+      if (!f) continue;
+      filas.push({
+        empleadoId: e.id, legNum: f.empleado.legNum, nom: f.empleado.nom, empresa: f.empleado.empresa, cuil: f.empleado.cuil,
+        gravado: f.gravadas.totalGravada, dedGenerales: f.dedGenerales.total, dedPersonales: f.dedPersonales.total,
+        dedSiradig: f.dedPersonales.dedSiradig || 0, siradigSinClasificar: f.dedPersonales.siradig?.sinClasificar || 0,
+        remSujeta: f.determinacion.remSujeta, impuesto: f.determinacion.impuestoDeterminado,
+        retenidoAnterior: f.determinacion.retenidoAnterior, aRetener: f.determinacion.impuestoARetener, devolucion: f.determinacion.devolucion,
+      });
+    }
+    const tot = filas.reduce((a, r) => ({
+      gravado: a.gravado + r.gravado, dedGenerales: a.dedGenerales + r.dedGenerales, dedPersonales: a.dedPersonales + r.dedPersonales,
+      dedSiradig: a.dedSiradig + r.dedSiradig, impuesto: a.impuesto + r.impuesto, aRetener: a.aRetener + r.aRetener, devolucion: a.devolucion + r.devolucion,
+    }), { gravado: 0, dedGenerales: 0, dedPersonales: 0, dedSiradig: 0, impuesto: 0, aRetener: 0, devolucion: 0 });
+    res.json({ periodo: { anio, mes, anual }, filas, totales: Object.fromEntries(Object.entries(tot).map(([k, v]) => [k, r2(v)])) });
+  } catch (e) { next(e); }
+});
+
+// ── Carga inicial de acumulados de Ganancias (ABM) ──
+router.get('/apertura', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const anio = Number(req.query.anio) || hoy().anio;
+    const { rows } = await query(
+      `SELECT a.*, e.nom AS empleado_nom, e.leg_num FROM ganancias_apertura a
+         JOIN empleados e ON e.id=a.empleado_id WHERE a.anio=$1 ORDER BY e.nom`, [anio]);
+    res.json(rows.map((r) => ({ id: r.id, empleadoId: r.empleado_id, empleadoNom: r.empleado_nom, legNum: r.leg_num,
+      anio: r.anio, hastaMes: r.hasta_mes, gravado: Number(r.gravado), aportes: Number(r.aportes), retenido: Number(r.retenido),
+      sacGravado: Number(r.sac_gravado), sacAportes: Number(r.sac_aportes), origen: r.origen, obs: r.obs, updatedBy: r.updated_by, updatedAt: r.updated_at })));
+  } catch (e) { next(e); }
+});
+
+router.get('/apertura/:empleadoId', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const anio = Number(req.query.anio) || hoy().anio;
+    const r = (await query('SELECT * FROM ganancias_apertura WHERE empleado_id=$1 AND anio=$2', [req.params.empleadoId, anio])).rows[0];
+    if (!r) return res.json(null);
+    res.json({ id: r.id, empleadoId: r.empleado_id, anio: r.anio, hastaMes: r.hasta_mes, gravado: Number(r.gravado), aportes: Number(r.aportes), retenido: Number(r.retenido), sacGravado: Number(r.sac_gravado), sacAportes: Number(r.sac_aportes), origen: r.origen, obs: r.obs });
+  } catch (e) { next(e); }
+});
+
+router.put('/apertura/:empleadoId', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const anio = Number(b.anio) || hoy().anio;
+    const who = req.user?.email || String(req.user?.id || '');
+    const r = await query(
+      `INSERT INTO ganancias_apertura (empleado_id, anio, hasta_mes, gravado, aportes, retenido, sac_gravado, sac_aportes, origen, obs, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (empleado_id, anio) DO UPDATE SET hasta_mes=EXCLUDED.hasta_mes, gravado=EXCLUDED.gravado, aportes=EXCLUDED.aportes,
+         retenido=EXCLUDED.retenido, sac_gravado=EXCLUDED.sac_gravado, sac_aportes=EXCLUDED.sac_aportes, origen=EXCLUDED.origen, obs=EXCLUDED.obs, updated_by=EXCLUDED.updated_by, updated_at=now()
+       RETURNING id`,
+      [req.params.empleadoId, anio, Number(b.hastaMes) || 0, r2(b.gravado), r2(b.aportes), r2(b.retenido), r2(b.sacGravado), r2(b.sacAportes), b.origen || 'CARGA_INICIAL', b.obs || null, who]);
+    res.json({ ok: true, id: r.rows[0].id });
+  } catch (e) { next(e); }
+});
+
+router.delete('/apertura/:empleadoId', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try { await query('DELETE FROM ganancias_apertura WHERE empleado_id=$1 AND anio=$2', [req.params.empleadoId, Number(req.query.anio) || hoy().anio]); res.json({ ok: true }); }
+  catch (e) { next(e); }
 });
 
 export default router;
