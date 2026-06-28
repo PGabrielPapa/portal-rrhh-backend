@@ -22,7 +22,7 @@ router.get('/usuarios', async (req, res, next) => {
     if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i} OR e.dni LIKE $${i})`); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const { rows } = await query(
-      `SELECT e.id, e.leg_num, e.dni, e.nom, e.role, e.disabled, e.must_change_pwd, COALESCE((e.data->>'comite_hys')::boolean, false) AS comite_hys, em.nombre AS empresa
+      `SELECT e.id, e.leg_num, e.dni, e.nom, e.role, e.disabled, e.must_change_pwd, COALESCE((e.data->>'comite_hys')::boolean, false) AS comite_hys, COALESCE(e.data->'modulosOcultos','[]'::jsonb) AS modulos_ocultos, COALESCE(e.totp_enabled,false) AS twofa, em.nombre AS empresa
          FROM empleados e JOIN empresas em ON em.id = e.empresa_id ${where} ORDER BY e.nom`, params);
     res.json(rows);
   } catch (e) { next(e); }
@@ -47,6 +47,15 @@ router.patch('/usuarios/:id', async (req, res, next) => {
     if (req.body && req.body.comiteHys !== undefined) {
       await query("UPDATE empleados SET data = data || jsonb_build_object('comite_hys', $1::boolean) WHERE id = $2", [!!req.body.comiteHys, id]);
       await audit(req.user.dni, req.body.comiteHys ? 'comite_hys_alta' : 'comite_hys_baja', 'Integrante Comité HyS', String(id));
+    }
+    if (req.body && Array.isArray(req.body.modulosOcultos)) {
+      const mods = req.body.modulosOcultos.map(String);
+      await query("UPDATE empleados SET data = data || jsonb_build_object('modulosOcultos', $1::jsonb) WHERE id = $2", [JSON.stringify(mods), id]);
+      await audit(req.user.dni, 'modulos_ocultos', `${mods.length} módulo(s) ocultos`, String(id));
+    }
+    if (req.body && req.body.reset2fa) {
+      await query('UPDATE empleados SET totp_secret=NULL, totp_enabled=false WHERE id=$1', [id]);
+      await audit(req.user.dni, 'reset_2fa', '2FA restablecido', String(id));
     }
     res.json({ ok: true });
   } catch (e) { next(e); }

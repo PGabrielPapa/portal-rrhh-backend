@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { generarSecret, verificarToken, otpauthURI } from '../lib/totp.js';
 import { query } from '../db.js';
 import { config } from '../config.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -48,10 +49,15 @@ router.post('/login', loginLimiter, async (req, res, next) => {
       if (emp.disabled) return res.status(403).json({ error: 'Usuario desactivado. Contactá al administrador.' });
       const ok = await bcrypt.compare(String(password), emp.password_hash);
       if (!ok) return res.status(401).json({ error: 'DNI o contraseña incorrectos' });
+      if (emp.totp_enabled) {
+        const tok = (req.body || {}).token;
+        if (!tok) return res.status(401).json({ error: 'Ingresá el código de tu app de autenticación', need2fa: true });
+        if (!verificarToken(emp.totp_secret, tok)) return res.status(401).json({ error: 'Código de verificación inválido', need2fa: true });
+      }
       return res.json({
         token: signToken(emp),
         mustChangePassword: emp.must_change_pwd,
-        user: { id: emp.id, dni: emp.dni, nom: emp.nom, role: emp.role, empresa: emp.empresa_nombre, comiteHys: !!(emp.data && emp.data.comite_hys) },
+        user: { id: emp.id, dni: emp.dni, nom: emp.nom, role: emp.role, empresa: emp.empresa_nombre, comiteHys: !!(emp.data && emp.data.comite_hys), twofa: !!emp.totp_enabled, modulosOcultos: (emp.data && emp.data.modulosOcultos) || [] },
       });
     }
     // Fallback: Persona habilitada al Comité de HyS (no es empleado).
@@ -119,8 +125,45 @@ router.get('/me', requireAuth, async (req, res, next) => {
     );
     if (!rows[0]) return res.status(404).json({ error: 'Usuario no encontrado' });
     const r = rows[0];
-    res.json({ id: r.id, dni: r.dni, nom: r.nom, role: r.role, must_change_pwd: r.must_change_pwd, empresa: r.empresa, comiteHys: !!(r.data && r.data.comite_hys) });
+    res.json({ id: r.id, dni: r.dni, nom: r.nom, role: r.role, must_change_pwd: r.must_change_pwd, empresa: r.empresa, comiteHys: !!(r.data && r.data.comite_hys), twofa: !!r.totp_enabled, modulosOcultos: (r.data && r.data.modulosOcultos) || [] });
   } catch (e) { next(e); }
+});
+
+// ── 2FA (TOTP) ──
+router.post('/2fa/setup', requireAuth, async (req, res, next) => {
+  try {
+    if (!req.user.id) return res.status(400).json({ error: '2FA no disponible para este tipo de usuario' });
+    const r = (await query('SELECT dni, nom FROM empleados WHERE id=$1', [req.user.id])).rows[0];
+    const secret = generarSecret();
+    await query('UPDATE empleados SET totp_secret=$1, totp_enabled=false WHERE id=$2', [secret, req.user.id]);
+    res.json({ secret, otpauth: otpauthURI(secret, r?.dni || String(req.user.id)) });
+  } catch (e) { next(e); }
+});
+
+router.post('/2fa/activate', requireAuth, async (req, res, next) => {
+  try {
+    if (!req.user.id) return res.status(400).json({ error: 'No disponible' });
+    const r = (await query('SELECT totp_secret FROM empleados WHERE id=$1', [req.user.id])).rows[0];
+    if (!r?.totp_secret) return res.status(400).json({ error: 'Primero generá el secreto (setup)' });
+    if (!verificarToken(r.totp_secret, (req.body || {}).token)) return res.status(400).json({ error: 'Código inválido' });
+    await query('UPDATE empleados SET totp_enabled=true WHERE id=$1', [req.user.id]);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.post('/2fa/disable', requireAuth, async (req, res, next) => {
+  try {
+    if (!req.user.id) return res.status(400).json({ error: 'No disponible' });
+    const r = (await query('SELECT totp_secret, totp_enabled FROM empleados WHERE id=$1', [req.user.id])).rows[0];
+    if (r?.totp_enabled && !verificarToken(r.totp_secret, (req.body || {}).token)) return res.status(400).json({ error: 'Código inválido' });
+    await query('UPDATE empleados SET totp_secret=NULL, totp_enabled=false WHERE id=$1', [req.user.id]);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.get('/2fa/estado', requireAuth, async (req, res, next) => {
+  try { if (!req.user.id) return res.json({ enabled: false }); const r = (await query('SELECT totp_enabled FROM empleados WHERE id=$1', [req.user.id])).rows[0]; res.json({ enabled: !!r?.totp_enabled }); }
+  catch (e) { next(e); }
 });
 
 export default router;

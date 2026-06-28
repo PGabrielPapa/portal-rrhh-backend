@@ -1135,3 +1135,7 @@ CREATE TABLE IF NOT EXISTS legajo_docs (
 );
 CREATE INDEX IF NOT EXISTS idx_legajo_docs_emp ON legajo_docs(empleado_id);
 CREATE INDEX IF NOT EXISTS idx_legajo_docs_venc ON legajo_docs(fecha_vencimiento);
+
+-- ── 2FA (TOTP) para usuarios ──
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS totp_secret TEXT;
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
