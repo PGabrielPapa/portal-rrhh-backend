@@ -36,5 +36,7 @@
   "gan_pctCorredoresViajantes": 40,
   "topeAportesMax": 4414652.38,
   "topeAportesMin": 0,
-  "mesesPeriodoPrueba": 6
+  "mesesPeriodoPrueba": 6,
+  "fondoCesePct": 0,
+  "modoIndemnizacion": "art245"
 }

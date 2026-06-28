@@ -2,15 +2,15 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { verificarValoresLegales } from './valoresLegales.routes.js';
+import { enviarMail } from '../lib/mailer.js';
 
 const router = Router();
 router.use(requireAuth);
 const diasEntre = (a, b) => Math.round((new Date(a).getTime() - new Date(b).getTime()) / 864e5);
 
 // Alertas de vencimientos: ART, mediciones HyS, período de prueba, contratos a plazo.
-router.get('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
-  try {
-    const horizonte = Number(req.query.dias) || 30; // ventana de aviso (días)
+async function construirAlertas(dias) {
+    const horizonte = Number(dias) || 30; // ventana de aviso (días)
     const pParams = (await query('SELECT data FROM parametros_liq WHERE id=1')).rows[0]?.data || {};
     const mesesPP = Number(pParams.mesesPeriodoPrueba) || 6; // Ley Bases 27.742: 6 meses
     const hoy = new Date().toISOString().slice(0, 10);
@@ -61,7 +61,26 @@ router.get('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
 
     out.sort((a, b) => a.dias - b.dias);
     const resumen = { total: out.length, vencidos: out.filter((x) => x.severidad === 'vencido').length, urgentes: out.filter((x) => x.severidad === 'urgente').length };
-    res.json({ horizonte, resumen, alertas: out });
+    return { horizonte, resumen, alertas: out };
+}
+
+router.get('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try { res.json(await construirAlertas(req.query.dias)); } catch (e) { next(e); }
+});
+
+// Enviar el digest de alertas por correo (RR.HH./admin).
+router.post('/enviar-mail', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const to = (req.body?.to || '').trim();
+    if (!to) return res.status(400).json({ error: 'Indicá el destinatario' });
+    const data = await construirAlertas(req.body?.dias || 30);
+    if (!data.alertas.length) return res.json({ ok: true, sinAlertas: true });
+    const COLOR = { vencido: '#b91c1c', urgente: '#b45309', proximo: '#1d4ed8' };
+    const fmt = (s) => { const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : (s || ''); };
+    const filas = data.alertas.map((a) => `<tr><td style="padding:3px 8px;color:${COLOR[a.severidad] || '#333'};font-weight:600">${a.tipo}</td><td style="padding:3px 8px">${a.titulo} — ${a.detalle}</td><td style="padding:3px 8px;white-space:nowrap">${fmt(a.fecha)}</td></tr>`).join('');
+    const html = `<div style="font-family:sans-serif;max-width:680px"><h2>Alertas de vencimientos</h2><p>${data.resumen.total} alertas · ${data.resumen.vencidos} vencidas · ${data.resumen.urgentes} urgentes</p><table style="width:100%;border-collapse:collapse;font-size:14px">${filas}</table></div>`;
+    await enviarMail({ to, subject: `RR.HH. — ${data.resumen.total} alertas de vencimientos`, html });
+    res.json({ ok: true, enviadas: data.resumen.total });
   } catch (e) { next(e); }
 });
 

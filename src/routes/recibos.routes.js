@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { query } from '../db.js';
+import { enviarMail } from '../lib/mailer.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { idsEquipoDe } from '../lib/equipo.js';
 import { periodoCerrado } from './cierres.routes.js';
@@ -187,6 +188,35 @@ router.post('/:id/acuse', async (req, res, next) => {
     const nombre = (await query('SELECT nom FROM empleados WHERE id=$1', [req.user.id])).rows[0]?.nom || '';
     const up = await query('UPDATE recibos SET acuse_at=now(), acuse_ip=$2, acuse_nombre=$3 WHERE id=$1 RETURNING acuse_at', [req.params.id, ip, nombre]);
     res.json({ ok: true, acuseAt: up.rows[0].acuse_at });
+  } catch (e) { next(e); }
+});
+
+// Enviar el recibo por correo al empleado (RR.HH./admin).
+router.post('/:id/enviar-mail', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const r = (await query(
+      `SELECT r.anio, r.mes, r.tipo, r.neto, r.data, e.nom, e.email, em.nombre AS empresa
+         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id WHERE r.id=$1`, [req.params.id])).rows[0];
+    if (!r) return res.status(404).json({ error: 'Recibo no encontrado' });
+    const to = (req.body?.to || r.email || '').trim();
+    if (!to) return res.status(400).json({ error: 'El empleado no tiene e-mail cargado' });
+    const $ = (n) => '$ ' + Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 });
+    const MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    const fila = (c, m) => `<tr><td style="padding:2px 8px">${c}</td><td style="padding:2px 8px;text-align:right;font-family:monospace">${$(m)}</td></tr>`;
+    const hab = (r.data?.haberes || []).map((h) => fila(h.concepto, h.monto)).join('');
+    const des = (r.data?.descuentos || []).map((d) => fila(d.concepto, -Number(d.monto || 0))).join('');
+    const html = `<div style="font-family:sans-serif;max-width:640px">
+      <h2>Recibo de haberes — ${MESES[r.mes]} ${r.anio}</h2>
+      <p>${r.nom} · ${r.empresa} · ${r.tipo}</p>
+      <table style="width:100%;border-collapse:collapse;font-size:14px">
+        <tr><th colspan="2" style="text-align:left;background:#f1f5f9;padding:4px 8px">Haberes</th></tr>${hab}
+        <tr><th colspan="2" style="text-align:left;background:#f1f5f9;padding:4px 8px">Descuentos</th></tr>${des}
+        <tr><td style="padding:6px 8px;font-weight:700;border-top:2px solid #ccc">Neto</td><td style="padding:6px 8px;text-align:right;font-weight:700;border-top:2px solid #ccc;font-family:monospace">${$(r.neto)}</td></tr>
+      </table>
+      <p style="color:#666;font-size:12px">Este es un comprobante informativo. Podés ver y dar el acuse de tu recibo en el portal de RR.HH.</p>
+    </div>`;
+    await enviarMail({ to, subject: `Recibo de haberes ${String(r.mes).padStart(2, '0')}/${r.anio} — ${r.empresa}`, html });
+    res.json({ ok: true, to });
   } catch (e) { next(e); }
 });
 

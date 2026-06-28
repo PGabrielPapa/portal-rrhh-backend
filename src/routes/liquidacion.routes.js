@@ -8,6 +8,7 @@ import { idsEquipoDe } from '../lib/equipo.js';
 
 import { embargosOpts } from './embargos.routes.js';
 import { valoresLegalesVigentes, verificarValoresLegales, autoActualizarValores } from './valoresLegales.routes.js';
+import { paramsParaFecha } from './parametros.routes.js';
 const router = Router();
 router.use(requireAuth);
 
@@ -87,7 +88,7 @@ async function getEmp(id) {
 async function getParams() { const pr = await query('SELECT data FROM parametros_liq WHERE id = 1'); return pr.rows[0]?.data || {}; }
 // Antes de cada cálculo se superponen los VALORES LEGALES vigentes del período (tope SIPA, SMVM, SCVO, FFEP).
 async function getParamsConValores(anio, mes) {
-  const params = await getParams();
+  const params = { ...(await paramsParaFecha(`${anio}-${String(mes).padStart(2, '0')}-15`)) };
   const v = await valoresLegalesVigentes(`${anio}-${String(mes).padStart(2, '0')}-15`);
   if (v) {
     if (v.topeSipaMax > 0) params.topeAportesMax = v.topeSipaMax;

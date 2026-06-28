@@ -1082,3 +1082,13 @@ CREATE TABLE IF NOT EXISTS ajustes_neto (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_ajustes_neto_emp ON ajustes_neto(empleado_id, recuperado);
+
+-- ── Parámetros de liquidación VERSIONADOS por vigencia (para reliquidar con valores de época) ──
+CREATE TABLE IF NOT EXISTS parametros_periodos (
+  id SERIAL PRIMARY KEY,
+  vigencia_desde DATE NOT NULL UNIQUE,
+  data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  nota TEXT,
+  updated_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_parametros_periodos_vig ON parametros_periodos(vigencia_desde DESC);

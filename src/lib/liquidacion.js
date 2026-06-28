@@ -337,14 +337,25 @@ export function calcularRecibo(emp, params, opts) {
         const montoPre = round2((mejorRem / 30) * 15);
         haberes.push({ concepto: 'Preaviso período de prueba (15 días — Art. 92 bis)', tipo: 'rem', monto: montoPre });
       }
+      const usaFondoCese = (opts?.modoIndemnizacion || p.modoIndemnizacion) === 'fondo_cese';
       if (conIndemPlena) {
-        haberes.push({ concepto: `Indemnización por antigüedad — Art. 245 (${ind.anios} años${ind.topeAplicado ? ', con tope CCT' : ''})`, tipo: 'exento', monto: round2(ind.monto) });
-        detalle.indemnizacion = { ...(detalle.indemnizacion || {}), art245: round2(ind.monto), anios: ind.anios };
+        if (usaFondoCese) {
+          detalle.indemnizacion = { ...(detalle.indemnizacion || {}), art245: 0, cubiertoPorFondoCese: round2(ind.monto), anios: ind.anios };
+          detalle.notaFondoCese = 'Indemnización por antigüedad cubierta por el Fondo de Cese Laboral (Ley Bases 27.742) — no se abona Art. 245 con la liquidación final.';
+        } else {
+          haberes.push({ concepto: `Indemnización por antigüedad — Art. 245 (${ind.anios} años${ind.topeAplicado ? ', con tope CCT' : ''})`, tipo: 'exento', monto: round2(ind.monto) });
+          detalle.indemnizacion = { ...(detalle.indemnizacion || {}), art245: round2(ind.monto), anios: ind.anios };
+        }
       } else if (conMediaIndem) {
         const m = round2(ind.monto * 0.5);
         const lblMedia = motivo === 'fuerza_mayor' ? 'Art. 247 (fuerza mayor / falta de trabajo)' : motivo === 'incapacidad_parcial' ? 'Art. 212 (incapacidad parcial)' : motivo === 'fin_contrato' ? 'Art. 250 (fin de contrato a plazo)' : 'Art. 248 (fallecimiento)';
-        haberes.push({ concepto: `Indemnización ${lblMedia} — 50% del Art. 245`, tipo: 'exento', monto: m });
-        detalle.indemnizacion = { ...(detalle.indemnizacion || {}), art245Media: m, anios: ind.anios };
+        if (usaFondoCese && motivo !== 'fin_contrato') {
+          detalle.indemnizacion = { ...(detalle.indemnizacion || {}), art245Media: 0, cubiertoPorFondoCese: m, anios: ind.anios };
+          detalle.notaFondoCese = 'Indemnización cubierta por el Fondo de Cese Laboral (Ley Bases 27.742).';
+        } else {
+          haberes.push({ concepto: `Indemnización ${lblMedia} — 50% del Art. 245`, tipo: 'exento', monto: m });
+          detalle.indemnizacion = { ...(detalle.indemnizacion || {}), art245Media: m, anios: ind.anios };
+        }
       }
     }
     const grat = num(opts?.gratificacion);
@@ -551,6 +562,8 @@ export function calcularRecibo(emp, params, opts) {
   if (cSind > 0) contribuciones.push({ concepto: 'Cuota sindical patronal', monto: cSind });
   if (scvo > 0) contribuciones.push({ concepto: 'SCVO — Seguro de Vida Obligatorio (Dto. 1567/74)', monto: scvo });
   if (ffep > 0) contribuciones.push({ concepto: 'FFEP — Fondo Fiduc. Enfermedades Profesionales (SRT)', monto: ffep });
+  const fcese = (tipo === 'mensual' || esQuincenal) ? round2(totalRemun * num(p.fondoCesePct) / 100) : 0;
+  if (fcese > 0) contribuciones.push({ concepto: 'Fondo de cese laboral (Ley Bases 27.742)', monto: fcese });
   const totalContrib = contribuciones.reduce((s, x) => s + x.monto, 0);
 
   // Domicilio del empleador (art. 140 LCT inc. a, Dto. 407/2026): se arma desde empresas.data

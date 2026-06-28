@@ -32,4 +32,13 @@ export const config = {
     // Hora local (0-23) en que corre la tarea diaria.
     autoHora: parseInt(process.env.PROSOFT_AUTO_HORA || '6', 10),
   },
+  // Envío de mails (SMTP). Si no se configura host, el envío queda deshabilitado.
+  smtp: {
+    host: process.env.SMTP_HOST || '',
+    port: parseInt(process.env.SMTP_PORT || '587', 10),
+    secure: String(process.env.SMTP_SECURE || '') === 'true',
+    user: process.env.SMTP_USER || '',
+    pass: process.env.SMTP_PASS || '',
+    from: process.env.SMTP_FROM || process.env.SMTP_USER || '',
+  },
 };
