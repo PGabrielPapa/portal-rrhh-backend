@@ -974,3 +974,28 @@ ALTER TABLE empleados DROP CONSTRAINT IF EXISTS uq_empleado_dni;
 
 -- El DNI de persona pasa a ser opcional (familiares/postulantes pueden no tenerlo; el CUIL sigue siendo la identidad única).
 ALTER TABLE personas ALTER COLUMN dni DROP NOT NULL;
+
+-- ── SIRADIG (F.572 web): deducciones declaradas por el trabajador para Ganancias ──
+-- Una fila por CUIL + año = la ULTIMA presentación (mayor nroPresentacion). Estructura fiel al XML de ARCA.
+CREATE TABLE IF NOT EXISTS siradig_presentaciones (
+  id SERIAL PRIMARY KEY,
+  cuil TEXT NOT NULL,
+  empleado_id INTEGER REFERENCES empleados(id) ON DELETE SET NULL,
+  nom TEXT,
+  anio INTEGER NOT NULL,
+  nro_presentacion INTEGER NOT NULL DEFAULT 0,
+  fecha_presentacion DATE,
+  version TEXT,
+  empleado_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  cargas_familia JSONB NOT NULL DEFAULT '[]'::jsonb,
+  deducciones JSONB NOT NULL DEFAULT '[]'::jsonb,
+  total NUMERIC(16,2) NOT NULL DEFAULT 0,
+  total_por_mes JSONB NOT NULL DEFAULT '{}'::jsonb,
+  archivo_nombre TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_siradig UNIQUE (cuil, anio)
+);
+CREATE INDEX IF NOT EXISTS idx_siradig_periodo ON siradig_presentaciones(anio);
+CREATE INDEX IF NOT EXISTS idx_siradig_emp ON siradig_presentaciones(empleado_id);

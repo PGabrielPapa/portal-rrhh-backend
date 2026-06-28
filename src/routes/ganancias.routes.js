@@ -3,6 +3,7 @@ import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { calcularRecibo, factorNoHabitual, TIPOS_SAC, TIPOS_NO_HABITUAL_B, calcularGananciasAcum } from '../lib/liquidacion.js';
 import { ganTablaParaFecha, mapGanRow } from '../lib/gananciasParams.js';
+import { calcularDeduccionesSiradig } from '../lib/siradigTopes.js';
 import { requireRole } from '../middleware/auth.js';
 
 const router = Router();
@@ -93,6 +94,18 @@ async function f1357For(empleadoId, anio, mes, anualizada) {
     tieneConyuge, nroHijosMenores, nroHijosIncapacitados,
     ganTabla, mes: Number(mes), anualizada,
   };
+  // SiRADIG: deducciones declaradas (última presentación del año), con topes RG 4003 sobre el acumulado fiscal.
+  const sir = (await query('SELECT deducciones FROM siradig_presentaciones WHERE empleado_id=$1 AND anio=$2', [empleadoId, Number(anio)])).rows[0] || null;
+  const gan0 = calcularGananciasAcum(comp); // base (sin SiRADIG) para el tope del 5% de ganancia neta
+  let sirCalc = null;
+  if (sir) {
+    sirCalc = calcularDeduccionesSiradig({
+      deducciones: sir.deducciones || [], mes: Number(mes), anualizada,
+      gravadoTotal: gan0.gravadoTotal, aportesTotal: gan0.aportesAcum,
+      topes: params.topesSiradig || null, mapaTipos: params.siradigTipos || null,
+    });
+    comp.dedSiradigAcum = sirCalc.totalComputable;
+  }
   const gan = calcularGananciasAcum(comp);
 
   return {
@@ -104,7 +117,9 @@ async function f1357For(empleadoId, anio, mes, anualizada) {
       mni: gan.mni,
       cargasFamilia: { total: gan.cargasFamilia, tieneConyuge, nHijos: nroHijosMenores, nHijosInc: nroHijosIncapacitados },
       dedEspecial: gan.dedEspecial, dedEspecial2: gan.dedEspecial2, dedVoluntarias: gan.dedVoluntarias,
-      total: r2(gan.mni + gan.cargasFamilia + gan.dedEspecial + gan.dedEspecial2 + gan.dedVoluntarias),
+      dedSiradig: gan.dedSiradig,
+      siradig: sirCalc ? { declarado: sirCalc.totalDeclarado, computable: sirCalc.totalComputable, sinClasificar: sirCalc.sinClasificar, gananciaNeta5: sirCalc.gananciaNeta, cap5: sirCalc.cap5, detalle: sirCalc.detalle } : null,
+      total: r2(gan.mni + gan.cargasFamilia + gan.dedEspecial + gan.dedEspecial2 + gan.dedVoluntarias + gan.dedSiradig),
     },
     determinacion: {
       remSujeta: gan.remSujeta, impuestoDeterminado: gan.impuestoDeterminado,

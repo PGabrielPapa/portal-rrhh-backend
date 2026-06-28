@@ -97,8 +97,9 @@ export function calcularGananciasAcum(comp) {
   const dedEsp2 = num(G.dedEsp2Anual) * prop;
   const cargasDed = cargasFamAnual * prop;
   const dedVol = num(comp.dedVoluntariasAnual) * prop;
+  const dedSir = num(comp.dedSiradigAcum); // SiRADIG: deducciones ya acumuladas del período (no se prorratean)
 
-  const remSujeta = Math.max(0, gravadoTotal - aportesTotal - mni - dedEsp - dedEsp2 - cargasDed - dedVol);
+  const remSujeta = Math.max(0, gravadoTotal - aportesTotal - mni - dedEsp - dedEsp2 - cargasDed - dedVol - dedSir);
   const impDet = (prop > 0 && prop < 1)
     ? round2(impuestoEscala(remSujeta / prop, G.escala) * prop)
     : round2(impuestoEscala(remSujeta, G.escala));
@@ -111,7 +112,7 @@ export function calcularGananciasAcum(comp) {
     gravadoBase: round2(gravadoBase), sacProvision: round2(sacProv), gravadoTotal: round2(gravadoTotal),
     aportesAcum: round2(aportesTotal), aportesBase: round2(aportesBase), sacDeduccion: round2(sacDed),
     mni: round2(mni), dedEspecial: round2(dedEsp), dedEspecial2: round2(dedEsp2),
-    cargasFamilia: round2(cargasDed), dedVoluntarias: round2(dedVol),
+    cargasFamilia: round2(cargasDed), dedVoluntarias: round2(dedVol), dedSiradig: round2(dedSir),
     remSujeta: round2(remSujeta), impuestoDeterminado: round2(impDet),
     retenidoAnterior: round2(retenidoAnterior), retencionPeriodo, periodo: G.periodo || null,
   };
