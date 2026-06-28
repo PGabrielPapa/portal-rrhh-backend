@@ -311,6 +311,16 @@ router.post('/:anio/:mes/aprobacion-masiva', requireRole('rrhh', 'admin', 'manag
   } catch (e) { next(e); }
 });
 
+// GET /api/fichadas/mias/ultima — la última fichada disponible del propio usuario (pantalla de inicio).
+router.get('/mias/ultima', async (req, res, next) => {
+  try {
+    const row = (await query(
+      `SELECT id, anio, mes, data, estado, rrhh_at, ger_at FROM fichadas_periodo WHERE empleado_id=$1 ORDER BY anio DESC, mes DESC LIMIT 1`,
+      [req.user.id])).rows[0];
+    res.json(row || null);
+  } catch (e) { next(e); }
+});
+
 // GET /api/fichadas/mias/:anio/:mes — la fichada del PROPIO usuario para el período (pantalla de inicio).
 router.get('/mias/:anio/:mes', async (req, res, next) => {
   try {
