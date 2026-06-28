@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { query } from '../db.js';
-import { enviarMail } from '../lib/mailer.js';
+import { enviarMail, mailConfigurado } from '../lib/mailer.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { idsEquipoDe } from '../lib/equipo.js';
 import { periodoCerrado } from './cierres.routes.js';
@@ -191,24 +191,14 @@ router.post('/:id/acuse', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// Enviar el recibo por correo al empleado (RR.HH./admin).
-router.post('/:id/enviar-mail', requireRole('rrhh', 'admin'), async (req, res, next) => {
-  try {
-    const r = (await query(
-      `SELECT r.anio, r.mes, r.tipo, r.neto, r.data, e.nom, e.email, e.data AS edata, em.nombre AS empresa
-         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id WHERE r.id=$1`, [req.params.id])).rows[0];
-    if (!r) return res.status(404).json({ error: 'Recibo no encontrado' });
-    // Prioridad de destino: mail laboral -> mail personal -> e-mail general del legajo.
-    const ed = r.edata || {};
-    const destino = (req.body?.to || ed.email_laboral || ed.email_personal || r.email || '').trim();
-    const to = destino;
-    if (!to) return res.status(400).json({ error: 'El empleado no tiene mail laboral, personal ni general cargado' });
-    const $ = (n) => '$ ' + Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 });
-    const MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-    const fila = (c, m) => `<tr><td style="padding:2px 8px">${c}</td><td style="padding:2px 8px;text-align:right;font-family:monospace">${$(m)}</td></tr>`;
-    const hab = (r.data?.haberes || []).map((h) => fila(h.concepto, h.monto)).join('');
-    const des = (r.data?.descuentos || []).map((d) => fila(d.concepto, -Number(d.monto || 0))).join('');
-    const html = `<div style="font-family:sans-serif;max-width:640px">
+// Arma el HTML del recibo y resuelve el destino (mail laboral -> personal -> general).
+function _htmlRecibo(r) {
+  const $ = (n) => '$ ' + Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 });
+  const MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  const fila = (c, m) => `<tr><td style="padding:2px 8px">${c}</td><td style="padding:2px 8px;text-align:right;font-family:monospace">${$(m)}</td></tr>`;
+  const hab = (r.data?.haberes || []).map((h) => fila(h.concepto, h.monto)).join('');
+  const des = (r.data?.descuentos || []).map((d) => fila(d.concepto, -Number(d.monto || 0))).join('');
+  return `<div style="font-family:sans-serif;max-width:640px">
       <h2>Recibo de haberes — ${MESES[r.mes]} ${r.anio}</h2>
       <p>${r.nom} · ${r.empresa} · ${r.tipo}</p>
       <table style="width:100%;border-collapse:collapse;font-size:14px">
@@ -216,9 +206,48 @@ router.post('/:id/enviar-mail', requireRole('rrhh', 'admin'), async (req, res, n
         <tr><th colspan="2" style="text-align:left;background:#f1f5f9;padding:4px 8px">Descuentos</th></tr>${des}
         <tr><td style="padding:6px 8px;font-weight:700;border-top:2px solid #ccc">Neto</td><td style="padding:6px 8px;text-align:right;font-weight:700;border-top:2px solid #ccc;font-family:monospace">${$(r.neto)}</td></tr>
       </table>
-      <p style="color:#666;font-size:12px">Este es un comprobante informativo. Podés ver y dar el acuse de tu recibo en el portal de RR.HH.</p>
+      <p style="color:#666;font-size:12px">Comprobante informativo. Podés ver y dar el acuse en el portal de RR.HH.</p>
     </div>`;
-    await enviarMail({ to, subject: `Recibo de haberes ${String(r.mes).padStart(2, '0')}/${r.anio} — ${r.empresa}`, html });
+}
+function _destinoMail(r) { const ed = r.edata || {}; return (ed.email_laboral || ed.email_personal || r.email || '').trim(); }
+
+// Envío MASIVO: manda los recibos publicados de un período, cada uno a su mail (laboral->personal->general).
+router.post('/enviar-mail-lote', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { anio, mes, empresa, tipo } = req.body || {};
+    if (!anio || !mes) return res.status(400).json({ error: 'anio y mes son obligatorios' });
+    const cond = ['r.anio=$1', 'r.mes=$2', 'r.publicado=true']; const args = [Number(anio), Number(mes)];
+    if (empresa) { args.push(empresa); cond.push(`em.nombre=$${args.length}`); }
+    if (tipo) { args.push(tipo); cond.push(`r.tipo=$${args.length}`); }
+    const recs = (await query(
+      `SELECT r.id, r.anio, r.mes, r.tipo, r.neto, r.data, e.nom, e.email, e.data AS edata, em.nombre AS empresa
+         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
+        WHERE ${cond.join(' AND ')} ORDER BY em.nombre, e.nom`, args)).rows;
+    if (!recs.length) return res.status(400).json({ error: 'No hay recibos publicados para ese período/filtro' });
+    if (!mailConfigurado()) return res.status(400).json({ error: 'SMTP no configurado en el servidor' });
+    let enviados = 0; const sinMail = []; const errores = [];
+    for (const r of recs) {
+      const to = _destinoMail(r);
+      if (!to) { sinMail.push(`${r.nom}`); continue; }
+      try {
+        await enviarMail({ to, subject: `Recibo de haberes ${String(r.mes).padStart(2, '0')}/${r.anio} — ${r.empresa}`, html: _htmlRecibo(r) });
+        enviados++;
+      } catch (e) { errores.push(`${r.nom}: ${e.message}`); }
+    }
+    res.json({ ok: true, total: recs.length, enviados, sinMail, errores });
+  } catch (e) { next(e); }
+});
+
+// Enviar el recibo por correo al empleado (RR.HH./admin).
+router.post('/:id/enviar-mail', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const r = (await query(
+      `SELECT r.anio, r.mes, r.tipo, r.neto, r.data, e.nom, e.email, e.data AS edata, em.nombre AS empresa
+         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id WHERE r.id=$1`, [req.params.id])).rows[0];
+    if (!r) return res.status(404).json({ error: 'Recibo no encontrado' });
+    const to = (req.body?.to || _destinoMail(r)).trim();
+    if (!to) return res.status(400).json({ error: 'El empleado no tiene mail laboral, personal ni general cargado' });
+    await enviarMail({ to, subject: `Recibo de haberes ${String(r.mes).padStart(2, '0')}/${r.anio} — ${r.empresa}`, html: _htmlRecibo(r) });
     res.json({ ok: true, to });
   } catch (e) { next(e); }
 });
