@@ -1069,3 +1069,16 @@ CREATE TABLE IF NOT EXISTS valores_legales (
   updated_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_valores_legales_vig ON valores_legales(vigencia_desde DESC);
+
+-- ── Ajustes por neto negativo: lo que se llevó a cero en un período se recupera en el siguiente ──
+CREATE TABLE IF NOT EXISTS ajustes_neto (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  anio INTEGER NOT NULL,          -- período que GENERÓ el ajuste
+  mes INTEGER NOT NULL,
+  monto NUMERIC(14,2) NOT NULL DEFAULT 0,
+  recuperado BOOLEAN NOT NULL DEFAULT false,
+  recuperado_anio INTEGER, recuperado_mes INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_ajustes_neto_emp ON ajustes_neto(empleado_id, recuperado);

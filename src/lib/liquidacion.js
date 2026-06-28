@@ -412,11 +412,11 @@ export function calcularRecibo(emp, params, opts) {
   }
 
   const totalRemun = haberes.filter((h) => h.tipo === 'rem').reduce((s, h) => s + h.monto, 0);
-  const totalNoRem = haberes.filter((h) => h.tipo === 'norem').reduce((s, h) => s + h.monto, 0);
+  let totalNoRem = haberes.filter((h) => h.tipo === 'norem').reduce((s, h) => s + h.monto, 0);
   const totalExento = haberes.filter((h) => h.tipo === 'exento').reduce((s, h) => s + h.monto, 0);
   const totalGravado = haberes.filter((h) => h.tipo === 'gravado').reduce((s, h) => s + h.monto, 0); // Ganancias sí, aportes no
   const totalAnticipo = haberes.filter((h) => h.tipo === 'anticipo').reduce((s, h) => s + h.monto, 0);
-  const totalHaberes = totalRemun + totalNoRem + totalExento + totalGravado + totalAnticipo;
+  let totalHaberes = totalRemun + totalNoRem + totalExento + totalGravado + totalAnticipo;
 
   // Aportes del trabajador (sobre base remunerativa con tope Art. 9 Ley 24.241, si está configurado)
   const descuentos = [];
@@ -483,6 +483,9 @@ export function calcularRecibo(emp, params, opts) {
   // Descuento del anticipo de ajuste de sueldo abonado durante el mes (regularización).
   const antAjDesc = (tipo === 'mensual' || esQuincenal) ? num(opts?.anticipoAjusteDesc) : 0;
   if (antAjDesc > 0) descuentos.push({ concepto: 'Descuento anticipo ajuste de sueldo', monto: round2(antAjDesc) });
+  // Recupero del ajuste por neto negativo generado en la liquidación anterior.
+  const ajRecuperar = (tipo === 'mensual' || esQuincenal) ? num(opts?.ajusteNetoRecuperar) : 0;
+  if (ajRecuperar > 0) descuentos.push({ concepto: 'Recupero ajuste de sueldo (neto negativo período anterior)', monto: round2(ajRecuperar) });
 
   // Suspensiones / ausencias (días no trabajados → descuento) + embargos.
   if ((tipo === 'mensual' || esQuincenal)) {
@@ -520,7 +523,19 @@ export function calcularRecibo(emp, params, opts) {
   }
 
   const totalDescuentos = descuentos.reduce((s, x) => s + x.monto, 0);
-  const neto = totalHaberes - totalDescuentos;
+  let neto = totalHaberes - totalDescuentos;
+  // El neto NUNCA puede ser negativo: se agrega un ajuste no remunerativo que lo lleva a cero,
+  // y se registra para recuperarlo (descontarlo) en la liquidación siguiente.
+  let ajusteNetoNegativo = 0;
+  if ((tipo === 'mensual' || esQuincenal) && round2(neto) < 0) {
+    ajusteNetoNegativo = round2(-neto);
+    haberes.push({ concepto: 'Ajuste de sueldo no remunerativo (neto negativo — a recuperar próx. liquidación)', tipo: 'norem', monto: ajusteNetoNegativo });
+    totalNoRem += ajusteNetoNegativo;
+    totalHaberes += ajusteNetoNegativo;
+    neto = 0;
+  }
+  detalle.ajusteNetoNegativo = ajusteNetoNegativo;
+  detalle.ajusteNetoRecuperado = round2(ajRecuperar);
 
   // Costo del empleador (contribuciones patronales + SCVO) — sobre remunerativos
   const contribuciones = [];
