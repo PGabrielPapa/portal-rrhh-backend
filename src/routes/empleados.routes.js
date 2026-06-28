@@ -212,7 +212,7 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,$12,$13) RETURNING id`,
       [empresaId, legAsignado, dni, cuil || null, String(b.nom).toUpperCase(), b.email || null,
        b.cat || null, b.tramo || null, b.ingreso || null, b.bruto || 0, b.neto || 0,
-       b.role || 'employee', JSON.stringify(data)]
+       ((b.esAdmin && req.user.role === 'admin') ? 'admin' : (b.role || 'employee')), JSON.stringify(data)]
     );
     // Capa Personas/Períodos: ligar el empleado a una persona y abrir su período (no rompe el alta si falla).
     try {
@@ -238,7 +238,13 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
 router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const b = req.body || {};
-    const before = (await query('SELECT cat, tramo, data FROM empleados WHERE id=$1', [req.params.id])).rows[0] || {};
+    const before = (await query('SELECT cat, tramo, role, data FROM empleados WHERE id=$1', [req.params.id])).rows[0] || {};
+    // Tilde "Administrador": marca -> role admin; desmarca -> employee solo si era admin (no pisa manager/rrhh).
+    if (b.esAdmin !== undefined && req.user.role === 'admin') {
+      if (!b.esAdmin && Number(req.params.id) === req.user.id) return res.status(400).json({ error: 'No podés quitarte el rol admin a vos mismo' });
+      const nuevoRol = b.esAdmin ? 'admin' : (before.role === 'admin' ? 'employee' : before.role);
+      if (nuevoRol && nuevoRol !== before.role) await query('UPDATE empleados SET role=$1 WHERE id=$2', [nuevoRol, req.params.id]);
+    }
     // Columnas núcleo editables (identidad empresa+legajo+dni NO se cambia acá).
     const fields = { nom: b.nom, email: b.email, cat: b.cat, tramo: b.tramo, cuil: b.cuil,
       ingreso: b.ingreso, bruto: b.bruto, neto: b.neto };
