@@ -107,6 +107,8 @@ async function main() {
     );
     console.log('[seed] parámetros de liquidación: ok');
 
+
+
     // Migración legal idempotente: corrige defaults desactualizados SIN pisar personalizaciones del usuario.
     try {
       const pr = (await client.query('SELECT data FROM parametros_liq WHERE id=1')).rows[0]?.data || {};

@@ -1054,3 +1054,18 @@ CREATE INDEX IF NOT EXISTS idx_embargos_emp ON embargos(empleado_id);
 ALTER TABLE recibos ADD COLUMN IF NOT EXISTS acuse_at  TIMESTAMPTZ;
 ALTER TABLE recibos ADD COLUMN IF NOT EXISTS acuse_ip  TEXT;
 ALTER TABLE recibos ADD COLUMN IF NOT EXISTS acuse_nombre TEXT;
+
+-- ── Valores legales versionados por vigencia (se verifican/actualizan antes de cada corrida) ──
+CREATE TABLE IF NOT EXISTS valores_legales (
+  id SERIAL PRIMARY KEY,
+  vigencia_desde DATE NOT NULL UNIQUE,
+  tope_sipa_max NUMERIC(16,2) NOT NULL DEFAULT 0,   -- base imponible máxima SIPA (art. 9 Ley 24.241)
+  tope_sipa_min NUMERIC(16,2) NOT NULL DEFAULT 0,   -- base imponible mínima SIPA
+  smvm NUMERIC(16,2) NOT NULL DEFAULT 0,            -- Salario Mínimo Vital y Móvil
+  scvo_percapita NUMERIC(12,2) NOT NULL DEFAULT 0,  -- Seguro de Vida Obligatorio (Dto. 1567/74) prima individual
+  scvo_suma_asegurada NUMERIC(16,2) NOT NULL DEFAULT 0,
+  ffep NUMERIC(12,2) NOT NULL DEFAULT 0,            -- Fondo Fiduciario de Enfermedades Profesionales (suma fija)
+  fuente TEXT, nota TEXT,
+  updated_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_valores_legales_vig ON valores_legales(vigencia_desde DESC);

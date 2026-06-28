@@ -7,6 +7,7 @@ import { periodoCerrado } from './cierres.routes.js';
 import { idsEquipoDe } from '../lib/equipo.js';
 
 import { embargosOpts } from './embargos.routes.js';
+import { valoresLegalesVigentes, verificarValoresLegales, autoActualizarValores } from './valoresLegales.routes.js';
 const router = Router();
 router.use(requireAuth);
 
@@ -84,6 +85,19 @@ async function getEmp(id) {
   return { id: r.id, legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, empresaCuit: r.empresa_cuit || null, empresaData: r.empresa_data || {}, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} };
 }
 async function getParams() { const pr = await query('SELECT data FROM parametros_liq WHERE id = 1'); return pr.rows[0]?.data || {}; }
+// Antes de cada cálculo se superponen los VALORES LEGALES vigentes del período (tope SIPA, SMVM, SCVO, FFEP).
+async function getParamsConValores(anio, mes) {
+  const params = await getParams();
+  const v = await valoresLegalesVigentes(`${anio}-${String(mes).padStart(2, '0')}-15`);
+  if (v) {
+    if (v.topeSipaMax > 0) params.topeAportesMax = v.topeSipaMax;
+    if (v.topeSipaMin > 0) params.topeAportesMin = v.topeSipaMin;
+    if (v.smvm > 0) { params.smvmMensual = v.smvm; params.smvm = v.smvm; }
+    if (v.scvoPercapita > 0) params.scvoPercapita = v.scvoPercapita;
+    if (v.ffep > 0) params.ffep = v.ffep;
+  }
+  return params;
+}
 
 const round2c = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 const aniosAntig = (ing, anio, mes) => { if (!ing) return 0; const d = new Date(ing); const ref = new Date(anio, mes - 1, 1); let a = ref.getFullYear() - d.getFullYear(); if (ref.getMonth() < d.getMonth()) a--; return Math.max(0, a); };
@@ -179,7 +193,7 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
     const convBasico = convBasicoDe(await convMap(), emp);
     const emb = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
-    res.json(calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ...emb, ...extra }));
+    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ...emb, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -196,7 +210,7 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
     const convBasico = convBasicoDe(await convMap(), emp);
     const emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
-    const recibo = calcularRecibo(emp, await getParams(), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ...emb, ...extra });
+    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ...emb, ...extra });
     const ins = await query(
       `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, publicado)
        VALUES ($1,$2,$3,$4,$5,$6,$7,true)
@@ -224,7 +238,10 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     if (!emps.length) return res.status(400).json({ error: 'No hay empleados activos para ese filtro' });
 
     if (empresa && await periodoCerrado(empresa, anio, mes)) return res.status(409).json({ error: `El período ${String(mes).padStart(2,'0')}/${anio} de ${empresa} está cerrado` });
-    const params = await getParams();
+    try { await autoActualizarValores(); } catch (e) { /* no bloquea la corrida */ }
+    const verVal = await verificarValoresLegales(anio, mes);
+    if (verVal.faltan) return res.status(409).json({ error: verVal.mensaje });
+    const params = await getParamsConValores(anio, mes);
     const ganTabla = await ganTablaParaFecha(fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sMap = await sindMap();
     const cMap = await convMap();
@@ -238,7 +255,9 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       const emp = await getEmp(id);
       const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
       const acumGan = await acumGananciasDe(id, anio, mes);
-      const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp); const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb });
+      const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp);
+      const _emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(id, fechaPago) : {};
+      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ..._emb });
       totalNeto += recibo.totales.neto; cant++;
       const rr = await query(
         `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)
@@ -251,7 +270,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       await registrarCuotas(cuotas, anio, mes, rr.rows[0].id, corridaId);
     }
     await query('UPDATE corridas SET total_neto=$1, cant=$2 WHERE id=$3', [totalNeto, cant, corridaId]);
-    res.status(201).json({ ok: true, id: corridaId, cant, totalNeto });
+    res.status(201).json({ ok: true, id: corridaId, cant, totalNeto, avisoValores: verVal.desactualizado ? verVal.mensaje : null });
   } catch (e) { next(e); }
 });
 

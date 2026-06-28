@@ -17,6 +17,15 @@ try {
   console.error('[boot] error aplicando el esquema:', e.message);
 }
 
+// Actualización automática de valores legales (tope SIPA, SMVM, SCVO, FFEP) según el calendario publicado.
+try {
+  const { autoActualizarValores } = await import('./routes/valoresLegales.routes.js');
+  const r = await autoActualizarValores();
+  console.log(`[boot] valores legales actualizados ✓ (${r.creadas} nuevos, ${r.actualizadas} actualizados)`);
+} catch (e) {
+  console.error('[boot] valores legales:', e.message);
+}
+
 const app = createApp();
 const server = app.listen(config.port, () => {
   console.log(`[api] Portal RR.HH. escuchando en :${config.port}`);

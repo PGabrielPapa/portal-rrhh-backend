@@ -526,14 +526,16 @@ export function calcularRecibo(emp, params, opts) {
   const contribuciones = [];
   const co = (pct) => round2(totalRemun * num(pct) / 100);
   const cJub = co(p.pctJubPatronal), cOS = co(p.pctOsPatronal), cPami = co(p.pctPamiPatronal), cFne = co(p.pctDesempleo), cArt = co(p.pctArt), cSind = esFC ? 0 : co(p.pctSindicatoPatronal);
-  const scvo = round2(num(p.scvoPercapita));
+  const scvo = round2(num(p.scvoPercapita));  // Seguro de Vida Obligatorio (Dto. 1567/74), prima per cápita
+  const ffep = round2(num(p.ffep));            // Fondo Fiduciario de Enfermedades Profesionales (SRT), suma fija por trabajador
   if (cJub > 0) contribuciones.push({ concepto: 'Jubilación patronal (SIPA)', monto: cJub });
   if (cOS > 0) contribuciones.push({ concepto: 'Obra Social patronal', monto: cOS });
   if (cPami > 0) contribuciones.push({ concepto: 'INSSJP patronal (PAMI)', monto: cPami });
   if (cFne > 0) contribuciones.push({ concepto: 'Fondo Nacional de Empleo', monto: cFne });
   if (cArt > 0) contribuciones.push({ concepto: 'ART', monto: cArt });
   if (cSind > 0) contribuciones.push({ concepto: 'Cuota sindical patronal', monto: cSind });
-  if (scvo > 0) contribuciones.push({ concepto: 'SCVO (Dto. 1567/74)', monto: scvo });
+  if (scvo > 0) contribuciones.push({ concepto: 'SCVO — Seguro de Vida Obligatorio (Dto. 1567/74)', monto: scvo });
+  if (ffep > 0) contribuciones.push({ concepto: 'FFEP — Fondo Fiduc. Enfermedades Profesionales (SRT)', monto: ffep });
   const totalContrib = contribuciones.reduce((s, x) => s + x.monto, 0);
 
   // Domicilio del empleador (art. 140 LCT inc. a, Dto. 407/2026): se arma desde empresas.data

@@ -14,6 +14,7 @@ import embargosRoutes from './routes/embargos.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import alertasRoutes from './routes/alertas.routes.js';
 import provisionRoutes from './routes/provision.routes.js';
+import valoresLegalesRoutes from './routes/valoresLegales.routes.js';
 import mensajesRoutes from './routes/mensajes.routes.js';
 import cbusRoutes from './routes/cbus.routes.js';
 import gananciasRoutes from './routes/ganancias.routes.js';
@@ -94,6 +95,7 @@ export function createApp() {
   app.use('/api/dashboard', dashboardRoutes);
   app.use('/api/alertas', alertasRoutes);
   app.use('/api/provision', provisionRoutes);
+  app.use('/api/valores-legales', valoresLegalesRoutes);
 
   app.use(notFound);
   app.use(errorHandler);
