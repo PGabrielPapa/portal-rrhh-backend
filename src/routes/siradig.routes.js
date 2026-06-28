@@ -6,22 +6,11 @@ import { CONCEPTOS, TABLA4_DEFAULT, MAPA_TIPOS_DEFAULT } from '../lib/siradigTop
 const router = Router();
 router.use(requireAuth);
 
-// Mapa de tipos de deducción del XML SiRADIG (RG 4003). Los que no estén acá se muestran como
-// "Deducción tipo N" usando la denominación/descripción que el propio XML trae.
-export const SIRADIG_TIPOS = {
-  1: 'Cuota médico asistencial',
-  2: 'Primas de seguro (muerte)',
-  3: 'Donaciones',
-  4: 'Intereses créditos hipotecarios',
-  5: 'Gastos de sepelio',
-  6: 'Gastos médicos y paramédicos',
-  7: 'Honorarios servicios médicos',
-  8: 'Alquileres (40% casa habitación)',
-  9: 'Aportes jubilatorios',
-  22: 'Personal doméstico (casas particulares)',
-  32: 'Servicios con fines educativos',
-};
-const tipoLabel = (t) => SIRADIG_TIPOS[Number(t)] || `Deducción tipo ${t}`;
+// Etiqueta de cada código tipo del XML, derivada de la tabla oficial (MAPA_TIPOS_DEFAULT -> CONCEPTOS).
+export const SIRADIG_TIPOS = Object.fromEntries(
+  Object.entries(MAPA_TIPOS_DEFAULT).map(([k, c]) => [k, (CONCEPTOS[c] && CONCEPTOS[c].label) || c])
+);
+const tipoLabel = (t) => SIRADIG_TIPOS[Number(t)] || SIRADIG_TIPOS[String(t)] || `Deducción tipo ${t}`;
 
 const onlyDigits = (s) => String(s || '').replace(/\D/g, '');
 const num = (v) => { const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : 0; };
