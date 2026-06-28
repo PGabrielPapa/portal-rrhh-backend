@@ -16,6 +16,7 @@ import alertasRoutes from './routes/alertas.routes.js';
 import provisionRoutes from './routes/provision.routes.js';
 import valoresLegalesRoutes from './routes/valoresLegales.routes.js';
 import mailRoutes from './routes/mail.routes.js';
+import novedadesRoutes from './routes/novedades.routes.js';
 import mensajesRoutes from './routes/mensajes.routes.js';
 import cbusRoutes from './routes/cbus.routes.js';
 import gananciasRoutes from './routes/ganancias.routes.js';
@@ -98,6 +99,7 @@ export function createApp() {
   app.use('/api/provision', provisionRoutes);
   app.use('/api/valores-legales', valoresLegalesRoutes);
   app.use('/api/mail', mailRoutes);
+  app.use('/api/novedades', novedadesRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

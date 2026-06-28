@@ -1092,3 +1092,19 @@ CREATE TABLE IF NOT EXISTS parametros_periodos (
   updated_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_parametros_periodos_vig ON parametros_periodos(vigencia_desde DESC);
+
+-- ── Novedades variables por período (alimentan la liquidación) ──
+CREATE TABLE IF NOT EXISTS novedades (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  anio INTEGER NOT NULL,
+  mes INTEGER NOT NULL,
+  tipo TEXT NOT NULL,                  -- he50|he100|heEx|otrosRemun|otrosNoRem|otrosExentos|otrosDesc|diasSuspension|ausencias|feriadosTrabajados|bonoProductividadExento
+  cantidad NUMERIC(12,2) NOT NULL DEFAULT 0,
+  monto NUMERIC(14,2) NOT NULL DEFAULT 0,
+  detalle TEXT,
+  origen TEXT DEFAULT 'manual',
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_novedades_periodo ON novedades(anio, mes);
+CREATE INDEX IF NOT EXISTS idx_novedades_emp ON novedades(empleado_id, anio, mes);
