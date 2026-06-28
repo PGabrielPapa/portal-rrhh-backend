@@ -104,6 +104,40 @@ router.post('/import', requireRole('rrhh', 'admin'), async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Generar novedades de horas extra a partir de las FICHADAS autorizadas del período.
+router.post('/desde-fichadas', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const anio = Number(b.anio), mes = Number(b.mes);
+    if (!anio || !mes) return res.status(400).json({ error: 'Indicá año y mes' });
+    const cond = ['f.anio=$1', 'f.mes=$2', "f.estado='autorizada'"]; const args = [anio, mes];
+    if (b.empresa) { args.push(b.empresa); cond.push(`em.nombre=$${args.length}`); }
+    const rows = (await query(
+      `SELECT f.empleado_id, f.data FROM fichadas_periodo f
+         JOIN empleados e ON e.id=f.empleado_id JOIN empresas em ON em.id=e.empresa_id
+        WHERE ${cond.join(' AND ')}`, args)).rows;
+    if (b.reemplazar !== false) {
+      // borra solo las novedades de horas extra generadas antes desde fichadas
+      await query("DELETE FROM novedades WHERE anio=$1 AND mes=$2 AND origen='fichadas'", [anio, mes]);
+    }
+    let creadas = 0, conExtra = 0;
+    for (const r of rows) {
+      const d = r.data || {};
+      const dias = Array.isArray(d.dias) ? d.dias : [];
+      let extraBruta = 0, deficit = 0;
+      for (const x of dias) { const sMin = typeof x.saldoMin === 'number' ? x.saldoMin : null; if (sMin == null) continue; if (sMin >= 30) extraBruta += sMin; else if (sMin < 0) deficit += -sMin; }
+      const liquidableMin = Math.max(0, extraBruta - deficit);
+      const horas = Math.round((liquidableMin / 60) * 100) / 100;
+      if (horas > 0) {
+        await query('INSERT INTO novedades (empleado_id, anio, mes, tipo, cantidad, monto, detalle, origen, created_by) VALUES ($1,$2,$3,$4,$5,0,$6,$7,$8)',
+          [r.empleado_id, anio, mes, 'he50', horas, 'Horas extra de fichadas (autorizadas)', 'fichadas', req.user?.email || '']);
+        creadas++; conExtra++;
+      }
+    }
+    res.json({ ok: true, fichadasAutorizadas: rows.length, conExtra, creadas });
+  } catch (e) { next(e); }
+});
+
 router.delete('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try { const r = await query('DELETE FROM novedades WHERE id=$1 RETURNING id', [req.params.id]); if (!r.rowCount) return res.status(404).json({ error: 'No encontrada' }); res.json({ ok: true }); }
   catch (e) { next(e); }

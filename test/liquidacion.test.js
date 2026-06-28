@@ -60,6 +60,12 @@ test('embargo con tope legal (20% sobre excedente SMVM)', () => {
   assert.ok(emb > 0 && emb < 9999999, 'el embargo debe quedar topeado');
 });
 
+test('SAC = 50% de la mejor remuneración del semestre', () => {
+  const r = calcularRecibo(empBase, P, { anio: 2026, mes: 6, tipo: 'sac1', calcularGanancias: false, mejorRemSAC: 1200000 });
+  const sac = (r.haberes.find((h) => /SAC/.test(h.concepto)) || {}).monto || 0;
+  assert.equal(sac, 600000);
+});
+
 console.log('\nSiRADIG (topes RG 4003)');
 test('honorarios médicos: 40% y tope 5% de ganancia neta', () => {
   const med = [{ tipo: '7', periodos: [{ mesDesde: 1, mesHasta: 6, montoMensual: 1000000 }] }];

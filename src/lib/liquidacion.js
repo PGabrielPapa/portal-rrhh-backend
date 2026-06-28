@@ -284,8 +284,12 @@ export function calcularRecibo(emp, params, opts) {
   const detalle = {};
 
   if (esSAConly) {
-    const sac = regularRemun * 0.5;
+    // SAC = 50% de la MEJOR remuneración mensual del semestre (Ley 23.041 / art. 121 LCT).
+    // Si la corrida aporta la mejor remuneración del semestre se usa esa; si no, la del mes en curso.
+    const baseSac = num(opts?.mejorRemSAC) > 0 ? num(opts.mejorRemSAC) : regularRemun;
+    const sac = baseSac * 0.5;
     haberes.push({ concepto: `SAC ${tipo === 'sac1' ? '1°' : '2°'} semestre (50% mejor remuneración)`, tipo: 'rem', monto: round2(sac) });
+    detalle.sac = { mejorRemSemestre: round2(baseSac), monto: round2(sac) };
   } else if (esVacaciones) {
     const diasCorr = anios < 5 ? 14 : anios < 10 ? 21 : anios < 20 ? 28 : 35;
     const diasVac = num(opts?.diasVac) > 0 ? num(opts.diasVac) : diasCorr;

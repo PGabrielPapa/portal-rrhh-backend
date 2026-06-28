@@ -103,6 +103,15 @@ async function getParamsConValores(anio, mes) {
 
 // ── Ajuste por neto negativo: helpers de persistencia (se recupera el mes siguiente) ──
 const _esMensual = (t) => t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2';
+const _esSAC = (t) => t === 'sac1' || t === 'sac2';
+// Mejor remuneración mensual del semestre (para el SAC), tomada de los recibos guardados.
+async function mejorRemSemestre(empleadoId, anio, tipoSAC) {
+  const desde = tipoSAC === 'sac2' ? 7 : 1, hasta = tipoSAC === 'sac2' ? 12 : 6;
+  const r = await query("SELECT data FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes BETWEEN $3 AND $4 AND tipo IN ('mensual','quincenal_1','quincenal_2')", [empleadoId, Number(anio), desde, hasta]);
+  let max = 0;
+  for (const x of r.rows) { const v = Number(x.data?.totales?.totalRemun || 0); if (v > max) max = v; }
+  return max;
+}
 async function ajustePendiente(empleadoId, anio, mes) {
   const r = await query('SELECT COALESCE(SUM(monto),0) AS m FROM ajustes_neto WHERE empleado_id=$1 AND recuperado=false AND (anio*100+mes) < ($2*100+$3)', [empleadoId, Number(anio), Number(mes)]);
   return Number(r.rows[0].m) || 0;
@@ -213,8 +222,9 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const convBasico = convBasicoDe(await convMap(), emp);
     const emb = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
     const nov = _esMensual(t) ? await novedadesOpts(empleadoId, anio, mes) : {};
+    const sacBase = _esSAC(t) ? await mejorRemSemestre(empleadoId, anio, t) : 0;
     const ajPend = _esMensual(t) ? await ajustePendiente(empleadoId, anio, mes) : 0;
-    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, ...nov, ...emb, ...extra }));
+    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, ...nov, ...emb, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -232,9 +242,10 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const convBasico = convBasicoDe(await convMap(), emp);
     const emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
     const nov = _esMensual(tipo) ? await novedadesOpts(empleadoId, anio, mes) : {};
+    const sacBase = _esSAC(tipo) ? await mejorRemSemestre(empleadoId, anio, tipo) : 0;
     let ajPend = 0;
     if (_esMensual(tipo)) { await resetAjusteNeto(empleadoId, anio, mes); ajPend = await ajustePendiente(empleadoId, anio, mes); }
-    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, ...nov, ...emb, ...extra });
+    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, ...nov, ...emb, ...extra });
     const ins = await query(
       `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, publicado)
        VALUES ($1,$2,$3,$4,$5,$6,$7,true)
@@ -350,9 +361,10 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp);
       const _emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(id, fechaPago) : {};
       const _nov = _esMensual(tipo) ? await novedadesOpts(id, anio, mes) : {};
+      const _sacBase = _esSAC(tipo) ? await mejorRemSemestre(id, anio, tipo) : 0;
       let _ajPend = 0;
       if (_esMensual(tipo)) { await resetAjusteNeto(id, anio, mes); _ajPend = await ajustePendiente(id, anio, mes); }
-      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, ..._nov, ..._emb });
+      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, ..._nov, ..._emb });
       totalNeto += recibo.totales.neto; cant++;
       const rr = await query(
         `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)
