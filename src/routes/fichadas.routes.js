@@ -190,6 +190,20 @@ router.get('/:anio/:mes/liquidables', requireRole('rrhh', 'admin'), async (req, 
   } catch (e) { next(e); }
 });
 
+// Extra neto liquidable del período (mismo criterio que /liquidables y calcLiquidable del front):
+// solo días con saldo a favor >= 30 min suman; el extra compensa primero el tiempo en contra.
+function extraNetoMin(data) {
+  const d = data || {};
+  const dias = Array.isArray(d.dias) ? d.dias : [];
+  let extraBruta = 0, deficit = 0;
+  for (const x of dias) {
+    const ss = typeof x.saldoMin === 'number' ? x.saldoMin : null;
+    if (ss == null) continue;
+    if (ss >= 30) extraBruta += ss; else if (ss < 0) deficit += -ss;
+  }
+  return Math.max(0, extraBruta - deficit);
+}
+
 // PATCH /api/fichadas/:id/aprobacion  { etapa:'rrhh'|'gerencia', accion:'aprobar'|'rechazar', obs? }
 router.patch('/:id/aprobacion', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
   try {
@@ -197,18 +211,33 @@ router.patch('/:id/aprobacion', requireRole('rrhh', 'admin', 'manager'), async (
     if (!['rrhh', 'gerencia'].includes(etapa)) return res.status(400).json({ error: 'Etapa inválida.' });
     if (!['aprobar', 'rechazar'].includes(accion)) return res.status(400).json({ error: 'Acción inválida.' });
     if (accion === 'rechazar' && !String(obs || '').trim()) return res.status(400).json({ error: 'Para rechazar, indicá un comentario.' });
-    const cur = (await query('SELECT id, empleado_id, estado FROM fichadas_periodo WHERE id=$1', [req.params.id])).rows[0];
+    const cur = (await query('SELECT id, empleado_id, estado, data FROM fichadas_periodo WHERE id=$1', [req.params.id])).rows[0];
     if (!cur) return res.status(404).json({ error: 'Novedad no encontrada.' });
 
     if (etapa === 'rrhh') {
       if (!['rrhh', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Solo RR.HH./admin.' });
       if (!['pendiente', 'observada'].includes(cur.estado)) return res.status(409).json({ error: `No se puede aceptar en estado "${cur.estado}".` });
-      const nuevo = accion === 'aprobar' ? 'aprob_rrhh' : 'observada';
+      if (accion === 'rechazar') {
+        await query(
+          `UPDATE fichadas_periodo SET estado='observada', rrhh_por=$1, rrhh_at=now(), rrhh_obs=$2,
+             ger_por=NULL, ger_at=NULL, ger_obs=NULL WHERE id=$3`,
+          [req.user.dni || null, obs, cur.id]);
+        return res.json({ ok: true, estado: 'observada' });
+      }
+      // Aprobar: si NO genera horas extra netas, queda FIRME (autorizada) sin pasar por el gerente.
+      // Si genera horas extra, queda 'aprob_rrhh' a la espera de que el gerente las autorice.
+      if (extraNetoMin(cur.data) > 0) {
+        await query(
+          `UPDATE fichadas_periodo SET estado='aprob_rrhh', rrhh_por=$1, rrhh_at=now(), rrhh_obs=NULL,
+             ger_por=NULL, ger_at=NULL, ger_obs=NULL WHERE id=$2`,
+          [req.user.dni || null, cur.id]);
+        return res.json({ ok: true, estado: 'aprob_rrhh' });
+      }
       await query(
-        `UPDATE fichadas_periodo SET estado=$1, rrhh_por=$2, rrhh_at=now(), rrhh_obs=$3,
-           ger_por=NULL, ger_at=NULL, ger_obs=NULL WHERE id=$4`,
-        [nuevo, req.user.dni || null, accion === 'rechazar' ? obs : null, cur.id]);
-      return res.json({ ok: true, estado: nuevo });
+        `UPDATE fichadas_periodo SET estado='autorizada', rrhh_por=$1, rrhh_at=now(), rrhh_obs=NULL,
+           ger_por='(sin hs. extra)', ger_at=now(), ger_obs=NULL WHERE id=$2`,
+        [req.user.dni || null, cur.id]);
+      return res.json({ ok: true, estado: 'autorizada' });
     }
     // etapa === 'gerencia' (responsable directo o CEO/admin)
     if (!['manager', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Solo gerente/admin.' });
@@ -243,15 +272,28 @@ router.post('/:anio/:mes/aprobacion-masiva', requireRole('rrhh', 'admin', 'manag
     try {
       await client.query('BEGIN');
       for (const id of ids) {
-        const cur = (await client.query('SELECT id, empleado_id, estado FROM fichadas_periodo WHERE id=$1 AND anio=$2 AND mes=$3', [id, anio, mes])).rows[0];
+        const cur = (await client.query('SELECT id, empleado_id, estado, data FROM fichadas_periodo WHERE id=$1 AND anio=$2 AND mes=$3', [id, anio, mes])).rows[0];
         if (!cur) continue;
         if (etapa === 'rrhh') {
           if (!['pendiente', 'observada'].includes(cur.estado)) continue;
-          const nuevo = accion === 'aprobar' ? 'aprob_rrhh' : 'observada';
-          await client.query(
-            `UPDATE fichadas_periodo SET estado=$1, rrhh_por=$2, rrhh_at=now(), rrhh_obs=$3,
-               ger_por=NULL, ger_at=NULL, ger_obs=NULL WHERE id=$4`,
-            [nuevo, req.user.dni || null, accion === 'rechazar' ? obs : null, cur.id]);
+          if (accion === 'rechazar') {
+            await client.query(
+              `UPDATE fichadas_periodo SET estado='observada', rrhh_por=$1, rrhh_at=now(), rrhh_obs=$2,
+                 ger_por=NULL, ger_at=NULL, ger_obs=NULL WHERE id=$3`,
+              [req.user.dni || null, obs, cur.id]);
+            n++; continue;
+          }
+          if (extraNetoMin(cur.data) > 0) {
+            await client.query(
+              `UPDATE fichadas_periodo SET estado='aprob_rrhh', rrhh_por=$1, rrhh_at=now(), rrhh_obs=NULL,
+                 ger_por=NULL, ger_at=NULL, ger_obs=NULL WHERE id=$2`,
+              [req.user.dni || null, cur.id]);
+          } else {
+            await client.query(
+              `UPDATE fichadas_periodo SET estado='autorizada', rrhh_por=$1, rrhh_at=now(), rrhh_obs=NULL,
+                 ger_por='(sin hs. extra)', ger_at=now(), ger_obs=NULL WHERE id=$2`,
+              [req.user.dni || null, cur.id]);
+          }
           n++;
         } else {
           if (dir && !dir.has(cur.empleado_id)) continue;
