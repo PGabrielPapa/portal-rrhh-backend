@@ -224,6 +224,69 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
   } catch (e) { next(e); }
 });
 
+// ════════════ CONTROLES PRE-CIERRE ════════════
+// Verifica la corrida de un período: netos negativos, aportes ≠ 17%, sueldos sobre tope SIPA,
+// variaciones bruscas vs. mes anterior y empleados activos sin recibo.
+router.get('/controles', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const d = new Date();
+    const anio = Number(req.query.anio) || d.getFullYear();
+    const mes = Number(req.query.mes) || (d.getMonth() + 1);
+    const tipos = ['mensual', 'quincenal_1', 'quincenal_2'];
+    const empresa = req.query.empresa || null;
+    const umbral = req.query.umbral != null ? Number(req.query.umbral) : 30; // % variación neto
+
+    const params = await getParams();
+    const vl = await valoresLegalesVigentes(`${anio}-${String(mes).padStart(2, '0')}-15`);
+    const topeMax = (vl && vl.topeSipaMax > 0) ? vl.topeSipaMax : (Number(params.topeAportesMax) || Infinity);
+    const baseMin = (vl && vl.topeSipaMin > 0) ? vl.topeSipaMin : (Number(params.topeAportesMin) || 0);
+    const pctEsperado = (Number(params.pctJubilacion) || 0) + (Number(params.pctObraSocial) || 0) + (Number(params.pctAnssal) || 0) + (Number(params.pctPamiEmp) || 0);
+
+    const cond = ['r.anio=$1', 'r.mes=$2', `r.tipo = ANY($3)`]; const args = [anio, mes, tipos];
+    if (empresa) { args.push(empresa); cond.push(`em.nombre = $${args.length}`); }
+    const recs = (await query(
+      `SELECT r.empleado_id, r.tipo, r.neto, r.data, e.nom, e.leg_num, em.nombre AS empresa
+         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
+        WHERE ${cond.join(' AND ')}`, args)).rows;
+
+    // Neto del mes anterior por empleado (para variación)
+    const pm = mes === 1 ? 12 : mes - 1, pa = mes === 1 ? anio - 1 : anio;
+    const prevRows = (await query(`SELECT empleado_id, SUM(neto) AS neto FROM recibos WHERE anio=$1 AND mes=$2 AND tipo = ANY($3) GROUP BY empleado_id`, [pa, pm, tipos])).rows;
+    const prevNeto = new Map(prevRows.map((x) => [x.empleado_id, Number(x.neto)]));
+
+    const issues = [];
+    const add = (sev, empleadoId, nom, leg, tipo, detalle) => issues.push({ severidad: sev, empleadoId, nom, legNum: leg, tipo, detalle });
+    const conRecibo = new Set();
+    for (const r of recs) {
+      conRecibo.add(r.empleado_id);
+      const data = r.data || {};
+      const remun = Number(data.totales?.totalRemun || 0);
+      const neto = Number(r.neto || 0);
+      if (neto <= 0) add('error', r.empleado_id, r.nom, r.leg_num, 'Neto', `Neto ${neto <= 0 ? 'negativo o cero' : ''} ($${neto.toFixed(2)})`);
+      // Aportes personales vs % esperado
+      const aportes = (data.descuentos || []).filter((x) => /Jubilaci|Obra Social|ANSSAL|INSSJP/i.test(x.concepto)).reduce((a, x) => a + Number(x.monto || 0), 0);
+      const base = Math.min(remun, topeMax);
+      if (base > 0 && pctEsperado > 0) {
+        const pctReal = aportes / base * 100;
+        if (Math.abs(pctReal - pctEsperado) > 0.3) add('warn', r.empleado_id, r.nom, r.leg_num, 'Aportes', `Aportes ${pctReal.toFixed(2)}% (esperado ${pctEsperado.toFixed(2)}%)`);
+      }
+      if (remun > topeMax && topeMax !== Infinity) add('info', r.empleado_id, r.nom, r.leg_num, 'Tope SIPA', `Remuneración $${remun.toFixed(2)} supera el tope SIPA ($${topeMax.toFixed(2)}); aporte topeado`);
+      if (remun > 0 && baseMin > 0 && remun < baseMin) add('info', r.empleado_id, r.nom, r.leg_num, 'Base mínima', `Remuneración por debajo de la base mínima ($${baseMin.toFixed(2)})`);
+      // Variación vs mes anterior
+      const prev = prevNeto.get(r.empleado_id);
+      if (prev && prev > 0) { const v = (neto - prev) / prev * 100; if (Math.abs(v) > umbral) add('warn', r.empleado_id, r.nom, r.leg_num, 'Variación', `Neto varió ${v > 0 ? '+' : ''}${v.toFixed(1)}% vs ${String(pm).padStart(2, '0')}/${pa}`); }
+    }
+    // Empleados activos sin recibo en el período
+    const condE = ['e.activo=true']; const argE = [];
+    if (empresa) { argE.push(empresa); condE.push(`em.nombre = $${argE.length}`); }
+    const activos = (await query(`SELECT e.id, e.nom, e.leg_num FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE ${condE.join(' AND ')}`, argE)).rows;
+    for (const e of activos) if (!conRecibo.has(e.id)) add('warn', e.id, e.nom, e.leg_num, 'Sin recibo', 'Empleado activo sin recibo en el período');
+
+    const resumen = { recibos: recs.length, errores: issues.filter((x) => x.severidad === 'error').length, warnings: issues.filter((x) => x.severidad === 'warn').length, info: issues.filter((x) => x.severidad === 'info').length };
+    res.json({ periodo: { anio, mes }, resumen, issues });
+  } catch (e) { next(e); }
+});
+
 // ════════════ CORRIDA (planilla por período) ════════════
 
 // POST /api/liquidacion/corrida { anio, mes, tipo, empresa? } — calcula y guarda recibos (borrador, no publicados)
