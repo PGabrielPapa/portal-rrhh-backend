@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { verificarValoresLegales } from './valoresLegales.routes.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -44,6 +45,18 @@ router.get('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
          AND (data->>'fechaFinContrato') IS NOT NULL AND (data->>'fechaFinContrato') <= $1`, [limite])).rows) {
       const f = e.data.fechaFinContrato; const d = diasEntre(f, hoy);
       out.push({ tipo: 'Contrato a plazo', titulo: `${e.nom} (leg. ${e.leg_num})`, detalle: 'Vencimiento de contrato a plazo fijo', fecha: f, dias: d, severidad: sev(d), empleadoId: e.id });
+    }
+
+    // Valores legales del período actual y el próximo (para no liquidar con datos viejos)
+    const _now = new Date();
+    for (const off of [0, 1]) {
+      const d2 = new Date(_now.getFullYear(), _now.getMonth() + off, 1);
+      const va = await verificarValoresLegales(d2.getFullYear(), d2.getMonth() + 1);
+      if (va.faltan || va.desactualizado) {
+        out.push({ tipo: 'Valores legales', titulo: `Valores legales ${String(d2.getMonth() + 1).padStart(2, '0')}/${d2.getFullYear()}`,
+          detalle: va.mensaje || 'Verificá tope SIPA, SMVM, SCVO y FFEP del período', fecha: d2.toISOString().slice(0, 10),
+          dias: off === 0 ? -1 : 0, severidad: va.faltan ? 'urgente' : 'proximo' });
+      }
     }
 
     out.sort((a, b) => a.dias - b.dias);
