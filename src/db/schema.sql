@@ -1108,3 +1108,30 @@ CREATE TABLE IF NOT EXISTS novedades (
 );
 CREATE INDEX IF NOT EXISTS idx_novedades_periodo ON novedades(anio, mes);
 CREATE INDEX IF NOT EXISTS idx_novedades_emp ON novedades(empleado_id, anio, mes);
+
+-- ── Vacaciones: programación y goce (saldo = corresponden por antigüedad − tomadas) ──
+CREATE TABLE IF NOT EXISTS vacaciones (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  anio INTEGER NOT NULL,                 -- año al que corresponden las vacaciones
+  desde DATE, hasta DATE,
+  dias INTEGER NOT NULL DEFAULT 0,
+  estado TEXT NOT NULL DEFAULT 'programada', -- programada | aprobada | gozada
+  obs TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_vacaciones_emp ON vacaciones(empleado_id, anio);
+
+-- ── Legajo digital: documentos con vencimiento (DNI, exámenes médicos, matrículas, etc.) ──
+CREATE TABLE IF NOT EXISTS legajo_docs (
+  id SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL,                    -- dni | examen_preocupacional | examen_periodico | licencia_conducir | matricula | titulo | contrato | otro
+  descripcion TEXT,
+  fecha_emision DATE, fecha_vencimiento DATE,
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,  -- base64 opcional
+  obs TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_legajo_docs_emp ON legajo_docs(empleado_id);
+CREATE INDEX IF NOT EXISTS idx_legajo_docs_venc ON legajo_docs(fecha_vencimiento);

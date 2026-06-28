@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { verificarValoresLegales } from './valoresLegales.routes.js';
+import { docsPorVencer } from './legajo.routes.js';
 import { enviarMail } from '../lib/mailer.js';
 
 const router = Router();
@@ -45,6 +46,12 @@ async function construirAlertas(dias) {
          AND (data->>'fechaFinContrato') IS NOT NULL AND (data->>'fechaFinContrato') <= $1`, [limite])).rows) {
       const f = e.data.fechaFinContrato; const d = diasEntre(f, hoy);
       out.push({ tipo: 'Contrato a plazo', titulo: `${e.nom} (leg. ${e.leg_num})`, detalle: 'Vencimiento de contrato a plazo fijo', fecha: f, dias: d, severidad: sev(d), empleadoId: e.id });
+    }
+
+    // Documentos del legajo por vencer (DNI, exámenes médicos, matrículas, etc.)
+    for (const d of await docsPorVencer(limite)) {
+      const dd = diasEntre(d.fechaVencimiento, hoy);
+      out.push({ tipo: 'Legajo', titulo: `${d.tipoLabel} — ${d.nom} (leg. ${d.legNum})`, detalle: d.descripcion || 'Documento a renovar', fecha: d.fechaVencimiento, dias: dd, severidad: sev(dd), empleadoId: d.empleadoId });
     }
 
     // Valores legales del período actual y el próximo (para no liquidar con datos viejos)

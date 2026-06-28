@@ -17,6 +17,8 @@ import provisionRoutes from './routes/provision.routes.js';
 import valoresLegalesRoutes from './routes/valoresLegales.routes.js';
 import mailRoutes from './routes/mail.routes.js';
 import novedadesRoutes from './routes/novedades.routes.js';
+import vacacionesRoutes from './routes/vacaciones.routes.js';
+import legajoRoutes from './routes/legajo.routes.js';
 import mensajesRoutes from './routes/mensajes.routes.js';
 import cbusRoutes from './routes/cbus.routes.js';
 import gananciasRoutes from './routes/ganancias.routes.js';
@@ -100,6 +102,8 @@ export function createApp() {
   app.use('/api/valores-legales', valoresLegalesRoutes);
   app.use('/api/mail', mailRoutes);
   app.use('/api/novedades', novedadesRoutes);
+  app.use('/api/vacaciones', vacacionesRoutes);
+  app.use('/api/legajo-docs', legajoRoutes);
 
   app.use(notFound);
   app.use(errorHandler);
