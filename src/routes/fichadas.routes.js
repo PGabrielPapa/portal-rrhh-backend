@@ -311,6 +311,18 @@ router.post('/:anio/:mes/aprobacion-masiva', requireRole('rrhh', 'admin', 'manag
   } catch (e) { next(e); }
 });
 
+// GET /api/fichadas/mias/:anio/:mes — la fichada del PROPIO usuario para el período (pantalla de inicio).
+router.get('/mias/:anio/:mes', async (req, res, next) => {
+  try {
+    const anio = Number(req.params.anio), mes = Number(req.params.mes);
+    if (!anio || !mes) return res.status(400).json({ error: 'Período inválido.' });
+    const row = (await query(
+      `SELECT id, anio, mes, data, estado, rrhh_at, ger_at FROM fichadas_periodo WHERE empleado_id=$1 AND anio=$2 AND mes=$3`,
+      [req.user.id, anio, mes])).rows[0];
+    res.json(row || null);
+  } catch (e) { next(e); }
+});
+
 // GET /api/fichadas/:anio/:mes — novedades importadas del período (panel RR.HH., con estado de aprobación).
 router.get('/:anio/:mes', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
