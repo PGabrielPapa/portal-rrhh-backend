@@ -1019,3 +1019,17 @@ CREATE TABLE IF NOT EXISTS ganancias_apertura (
   CONSTRAINT uq_gan_apertura UNIQUE (empleado_id, anio)
 );
 CREATE INDEX IF NOT EXISTS idx_gan_apertura ON ganancias_apertura(anio);
+
+-- ── Acumuladores configurables (inspirado en Tango Sueldos) ──
+CREATE TABLE IF NOT EXISTS acumuladores (
+  id SERIAL PRIMARY KEY,
+  codigo TEXT NOT NULL UNIQUE,
+  nombre TEXT NOT NULL,
+  tipo TEXT NOT NULL DEFAULT 'MENSUAL',          -- MENSUAL | ANUAL_FISCAL | RANGO
+  afecta_ganancias BOOLEAN NOT NULL DEFAULT false,
+  activo BOOLEAN NOT NULL DEFAULT true,
+  orden INTEGER NOT NULL DEFAULT 0,
+  reglas JSONB NOT NULL DEFAULT '[]'::jsonb,      -- [{seccion,tipoLinea,patron,signo}]
+  updated_by TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
