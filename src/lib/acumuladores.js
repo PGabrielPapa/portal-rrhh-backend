@@ -49,6 +49,12 @@ export const DEFAULTS = [
     reglas: [{ seccion: 'descuentos', tipoLinea: '*', patron: 'Ganancias', signo: 1 }] },
   { codigo: 'REM_GRAV_ACUM', nombre: 'Remuneración gravada (acum.)', tipo: 'ANUAL_FISCAL', afecta_ganancias: true, orden: 110,
     reglas: [{ seccion: 'haberes', tipoLinea: 'rem', patron: '', signo: 1 }] },
+  { codigo: 'BASE_IMPONIBLE', nombre: 'Base imponible (seg. social)', tipo: 'MENSUAL', afecta_ganancias: false, orden: 120,
+    reglas: [{ seccion: 'haberes', tipoLinea: 'rem', patron: '', signo: 1 }] },
+  { codigo: 'HS_EXTRA', nombre: 'Horas extra (acum.)', tipo: 'ANUAL_FISCAL', afecta_ganancias: false, orden: 130,
+    reglas: [{ seccion: 'haberes', tipoLinea: '*', patron: 'Horas? extra|Hora extra', signo: 1 }] },
+  { codigo: 'SAC_BASE', nombre: 'SAC percibido (acum.)', tipo: 'ANUAL_FISCAL', afecta_ganancias: false, orden: 140,
+    reglas: [{ seccion: 'haberes', tipoLinea: '*', patron: 'SAC|aguinaldo', signo: 1 }] },
 ];
 
 // ¿Una línea de recibo cumple alguna regla? Devuelve el signo (o 0 si no aplica).

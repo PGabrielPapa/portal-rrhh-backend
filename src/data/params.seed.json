@@ -1,7 +1,7 @@
 {
   "pctJubilacion": 11,
   "pctObraSocial": 3,
-  "pctAnssal": 0.5,
+  "pctAnssal": 0,
   "pctPamiEmp": 3,
   "pctSindicatoEmp": 2,
   "nombreSindicato": "UOYEP",
@@ -24,7 +24,7 @@
     "ASIMRA": 0,
     "FC": 0
   },
-  "smvmMensual": 363000,
+  "smvmMensual": 367800,
   "f931TopeJub": 0,
   "f931TopeOS": 0,
   "gan_topePctHonorariosMed": 40,
@@ -33,5 +33,8 @@
   "gan_pctAlquilerDeducible": 40,
   "gan_pctServDomesticoMniMax": 100,
   "gan_pctEducacionMni": 40,
-  "gan_pctCorredoresViajantes": 40
+  "gan_pctCorredoresViajantes": 40,
+  "topeAportesMax": 4414652.38,
+  "topeAportesMin": 0,
+  "mesesPeriodoPrueba": 6
 }

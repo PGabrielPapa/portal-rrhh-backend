@@ -10,6 +10,8 @@ const diasEntre = (a, b) => Math.round((new Date(a).getTime() - new Date(b).getT
 router.get('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const horizonte = Number(req.query.dias) || 30; // ventana de aviso (días)
+    const pParams = (await query('SELECT data FROM parametros_liq WHERE id=1')).rows[0]?.data || {};
+    const mesesPP = Number(pParams.mesesPeriodoPrueba) || 6; // Ley Bases 27.742: 6 meses
     const hoy = new Date().toISOString().slice(0, 10);
     const limite = new Date(Date.now() + horizonte * 864e5).toISOString().slice(0, 10);
     const out = [];
@@ -31,10 +33,10 @@ router.get('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
     // Período de prueba (LCT 92 bis: 3 meses desde el ingreso)
     for (const e of (await query(
       `SELECT id, nom, leg_num, ingreso FROM empleados WHERE activo=true AND ingreso IS NOT NULL
-         AND (ingreso + INTERVAL '3 months')::date <= $1 AND (ingreso + INTERVAL '3 months')::date >= $2`, [limite, hoy])).rows) {
-      const finPP = new Date(new Date(e.ingreso).getTime()); finPP.setMonth(finPP.getMonth() + 3);
+         AND (ingreso + ($3 || ' months')::interval)::date <= $1 AND (ingreso + ($3 || ' months')::interval)::date >= $2`, [limite, hoy, mesesPP])).rows) {
+      const finPP = new Date(new Date(e.ingreso).getTime()); finPP.setMonth(finPP.getMonth() + mesesPP);
       const f = finPP.toISOString().slice(0, 10); const d = diasEntre(f, hoy);
-      out.push({ tipo: 'Período de prueba', titulo: `${e.nom} (leg. ${e.leg_num})`, detalle: 'Fin del período de prueba (definir continuidad)', fecha: f, dias: d, severidad: sev(d), empleadoId: e.id });
+      out.push({ tipo: 'Período de prueba', titulo: `${e.nom} (leg. ${e.leg_num})`, detalle: `Fin del período de prueba (${mesesPP} meses — Ley Bases)`, fecha: f, dias: d, severidad: sev(d), empleadoId: e.id });
     }
     // Contratos a plazo fijo (si el legajo tiene data.fechaFinContrato)
     for (const e of (await query(

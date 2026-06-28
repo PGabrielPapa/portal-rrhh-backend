@@ -107,6 +107,21 @@ async function main() {
     );
     console.log('[seed] parámetros de liquidación: ok');
 
+    // Migración legal idempotente: corrige defaults desactualizados SIN pisar personalizaciones del usuario.
+    try {
+      const pr = (await client.query('SELECT data FROM parametros_liq WHERE id=1')).rows[0]?.data || {};
+      const fix = {};
+      if (Number(pr.pctAnssal) === 0.5) fix.pctAnssal = 0;                 // ANSSAL/FSR va dentro del 3% OS (evita 17,5%)
+      if (Number(pr.smvmMensual) === 363000 || pr.smvmMensual == null) fix.smvmMensual = 367800; // SMVM jun-2026
+      if (!(Number(pr.topeAportesMax) > 0)) fix.topeAportesMax = 4414652.38; // base máx SIPA jun-2026
+      if (pr.mesesPeriodoPrueba == null) fix.mesesPeriodoPrueba = 6;        // Ley Bases 27.742
+      if (Object.keys(fix).length) {
+        await client.query('UPDATE parametros_liq SET data = data || $1::jsonb WHERE id=1', [JSON.stringify(fix)]);
+        console.log('[seed] correcciones legales aplicadas:', Object.keys(fix).join(', '));
+      }
+    } catch (e) { console.warn('[seed] correcciones legales:', e.message); }
+
+
     // Catálogo de conceptos COMPLETO (réplica de la vanilla). Idempotente.
     const conceptos = JSON.parse(fs.readFileSync(path.join(dataDir, 'conceptos.seed.json'), 'utf8'));
     const tieneNuevo = await client.query("SELECT 1 FROM conceptos WHERE codigo='20000' LIMIT 1");
