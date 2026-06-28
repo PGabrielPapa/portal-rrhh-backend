@@ -195,11 +195,14 @@ router.post('/:id/acuse', async (req, res, next) => {
 router.post('/:id/enviar-mail', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const r = (await query(
-      `SELECT r.anio, r.mes, r.tipo, r.neto, r.data, e.nom, e.email, em.nombre AS empresa
+      `SELECT r.anio, r.mes, r.tipo, r.neto, r.data, e.nom, e.email, e.data AS edata, em.nombre AS empresa
          FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id WHERE r.id=$1`, [req.params.id])).rows[0];
     if (!r) return res.status(404).json({ error: 'Recibo no encontrado' });
-    const to = (req.body?.to || r.email || '').trim();
-    if (!to) return res.status(400).json({ error: 'El empleado no tiene e-mail cargado' });
+    // Prioridad de destino: mail laboral -> mail personal -> e-mail general del legajo.
+    const ed = r.edata || {};
+    const destino = (req.body?.to || ed.email_laboral || ed.email_personal || r.email || '').trim();
+    const to = destino;
+    if (!to) return res.status(400).json({ error: 'El empleado no tiene mail laboral, personal ni general cargado' });
     const $ = (n) => '$ ' + Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 });
     const MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
     const fila = (c, m) => `<tr><td style="padding:2px 8px">${c}</td><td style="padding:2px 8px;text-align:right;font-family:monospace">${$(m)}</td></tr>`;
