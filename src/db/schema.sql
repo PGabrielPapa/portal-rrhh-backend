@@ -1174,3 +1174,16 @@ CREATE TABLE IF NOT EXISTS lugar_trabajo_hist (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_lug_hist_emp ON lugar_trabajo_hist(empleado_id);
+
+-- ── Histórico general de cambios del legajo (categoría, convenio, sindicato, domicilio, etc.) ──
+CREATE TABLE IF NOT EXISTS legajo_cambios (
+  id              SERIAL PRIMARY KEY,
+  empleado_id     INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  campo           TEXT,
+  etiqueta        TEXT,
+  valor_anterior  TEXT,
+  valor_nuevo     TEXT,
+  created_by      TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_legajo_cambios_emp ON legajo_cambios(empleado_id);

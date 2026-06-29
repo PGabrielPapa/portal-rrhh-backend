@@ -132,6 +132,24 @@ router.get('/:id/lugares', requireRole('rrhh', 'admin'), async (req, res, next) 
   } catch (e) { next(e); }
 });
 
+// GET /api/empleados/centros — lista de centros de operaciones (para el desplegable de lugar de trabajo).
+router.get('/centros', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT id, codigo, denominacion FROM centros_operaciones ORDER BY denominacion');
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+
+// GET /api/empleados/:id/cambios — histórico general de cambios del legajo.
+router.get('/:id/cambios', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT id, campo, etiqueta, valor_anterior, valor_nuevo, created_by, created_at
+         FROM legajo_cambios WHERE empleado_id = $1 ORDER BY created_at DESC, id DESC`, [req.params.id]);
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+
 router.get('/cumpleanios', async (req, res, next) => {
   try {
     const { rows } = await query(
@@ -287,6 +305,24 @@ router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
         }
       } catch (e) { /* no romper el guardado */ }
       const sv = (v) => v == null ? '' : String(v);
+      // Histórico general de cambios del legajo (categoría, convenio, sindicato, domicilio, etc.).
+      try {
+        const dom = (d) => [d.dom_calle, d.dom_nro, d.dom_piso ? 'Piso ' + d.dom_piso : '', d.dom_depto ? 'Dto ' + d.dom_depto : '', d.dom_torre, d.dom_bloque, d.dom_loc, d.dom_prov, d.dom_cp].filter(Boolean).join(' ');
+        const cambios = [
+          ['Categoría escala', sv(before.cat), sv(aft.cat)],
+          ['Tramo escala', sv(before.tramo), sv(aft.tramo)],
+          ['Categoría de convenio', sv(bd.categoria_convenio), sv(ad.categoria_convenio)],
+          ['CCT / Convenio', sv(bd.cod_convenio), sv(ad.cod_convenio)],
+          ['Afiliación sindical', sv(bd.cod_sindicato), sv(ad.cod_sindicato)],
+          ['Función / Tarea', sv(bd.tarea), sv(ad.tarea)],
+          ['Condición', sv(bd.condicion), sv(ad.condicion)],
+          ['Descripción de categoría', sv(bd.desc_categoria), sv(ad.desc_categoria)],
+          ['Domicilio', dom(bd), dom(ad)],
+        ].filter((c) => c[1] !== c[2]);
+        for (const [etq, antv, newv] of cambios) {
+          await query('INSERT INTO legajo_cambios (empleado_id, campo, etiqueta, valor_anterior, valor_nuevo, created_by) VALUES ($1,$2,$3,$4,$5,$6)', [req.params.id, etq, etq, antv || null, newv || null, req.user.dni]);
+        }
+      } catch (e) { /* no romper el guardado */ }
       const map = [
         ['funcion', 'Función', sv(bd.tarea), sv(ad.tarea)],
         ['cat_escala', 'Categoría escala', sv(before.cat), sv(aft.cat)],
