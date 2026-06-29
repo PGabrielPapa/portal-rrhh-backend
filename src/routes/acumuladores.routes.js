@@ -59,36 +59,47 @@ router.get('/consulta', requireRole('rrhh', 'admin'), async (req, res, next) => 
   try {
     await seedSiVacio();
     const def = hoy();
-    const anio = Number(req.query.anio) || def.anio, mes = Number(req.query.mes) || def.mes;
-    const mesDesde = Number(req.query.mesDesde) || 1, mesHasta = Number(req.query.mesHasta) || mes;
+    const anio = Number(req.query.anio) || def.anio;
+    let meses = String(req.query.meses || '').split(',').map(Number).filter((m) => m >= 1 && m <= 12);
+    if (!meses.length) meses = [Number(req.query.mes) || def.mes];
+    meses = [...new Set(meses)].sort((a, b) => a - b);
     const empresaId = req.query.empresaId ? Number(req.query.empresaId) : null;
-    const soloCodigo = req.query.codigo ? String(req.query.codigo) : null;
 
-    const acums = (await query('SELECT * FROM acumuladores WHERE activo=true' + (soloCodigo ? ' AND codigo=$1' : '') + ' ORDER BY orden, nombre', soloCodigo ? [soloCodigo] : [])).rows.map(mapRow);
+    const acums = (await query('SELECT * FROM acumuladores WHERE activo=true ORDER BY orden, nombre')).rows.map(mapRow);
 
     const cond = ['e.activo = true']; const args = [];
     if (empresaId) { args.push(empresaId); cond.push(`e.empresa_id = $${args.length}`); }
     const emps = (await query(`SELECT e.id, e.nom, e.leg_num, em.nombre AS empresa FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')} ORDER BY e.nom`, args)).rows;
 
-    // Traer todos los recibos del año de una vez.
-    const recibos = (await query(
-      `SELECT empleado_id, mes, tipo, data FROM recibos WHERE anio=$1 AND tipo = ANY($2)`, [anio, TIPOS_RECIBO])).rows;
+    const recibos = (await query('SELECT empleado_id, mes, tipo, data FROM recibos WHERE anio=$1 AND tipo = ANY($2)', [anio, TIPOS_RECIBO])).rows;
     const porEmp = new Map();
     for (const r of recibos) { if (!porEmp.has(r.empleado_id)) porEmp.set(r.empleado_id, []); porEmp.get(r.empleado_id).push(r); }
 
-    const filas = emps.map((e) => {
-      const recs = porEmp.get(e.id) || [];
-      const valores = {};
-      for (const a of acums) {
-        const ventana = recibosDeVentana(recs, a.tipo, mes, mesDesde, mesHasta);
-        valores[a.codigo] = sumarAcumulador(ventana, a.reglas);
-      }
-      return { empleadoId: e.id, legNum: e.leg_num, nom: e.nom, empresa: e.empresa, valores };
-    });
+    const porEmpleado = [];
+    const porLiquidacion = [];
+    const totales = {}; for (const a of acums) totales[a.codigo] = 0;
+    const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
-    const totales = {};
-    for (const a of acums) totales[a.codigo] = Math.round(filas.reduce((s, f) => s + (f.valores[a.codigo] || 0), 0) * 100) / 100;
-    res.json({ periodo: { anio, mes, mesDesde, mesHasta }, acumuladores: acums.map((a) => ({ codigo: a.codigo, nombre: a.nombre, tipo: a.tipo, afectaGanancias: a.afectaGanancias })), filas, totales });
+    for (const m of meses) {
+      const totMes = {}; for (const a of acums) totMes[a.codigo] = 0;
+      let cuenta = 0;
+      for (const e of emps) {
+        const recs = porEmp.get(e.id) || [];
+        if (!recs.some((r) => Number(r.mes) === m)) continue;  // detalle por período: solo si hubo liquidación ese mes
+        cuenta++;
+        const valores = {};
+        for (const a of acums) {
+          const v = sumarAcumulador(recibosDeVentana(recs, a.tipo, m, 1, m), a.reglas);
+          valores[a.codigo] = v; totMes[a.codigo] += v;
+        }
+        porEmpleado.push({ empleadoId: e.id, legNum: e.leg_num, nom: e.nom, empresa: e.empresa, mes: m, valores });
+      }
+      for (const a of acums) { totMes[a.codigo] = r2(totMes[a.codigo]); totales[a.codigo] += totMes[a.codigo]; }
+      porLiquidacion.push({ mes: m, empleados: cuenta, valores: totMes });
+    }
+    for (const a of acums) totales[a.codigo] = r2(totales[a.codigo]);
+
+    res.json({ anio, meses, acumuladores: acums.map((a) => ({ codigo: a.codigo, nombre: a.nombre, tipo: a.tipo, afectaGanancias: a.afectaGanancias })), porEmpleado, porLiquidacion, totales });
   } catch (e) { next(e); }
 });
 
