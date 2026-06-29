@@ -204,4 +204,16 @@ router.put('/empresas/:id/centros', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// PUT /api/admin/centros/:id/empresas  { empresaIds: [] } — vincula un centro a una o varias empresas.
+router.put('/centros/:id/empresas', async (req, res, next) => {
+  try {
+    const centroId = Number(req.params.id);
+    const ids = Array.isArray(req.body?.empresaIds) ? req.body.empresaIds.map(Number).filter(Boolean) : [];
+    await query('DELETE FROM empresa_centros WHERE centro_id = $1', [centroId]);
+    for (const eid of ids) await query('INSERT INTO empresa_centros (empresa_id, centro_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [eid, centroId]);
+    await audit(req.user.dni, 'centro_empresas', `${ids.length} empresa(s)`, String(centroId));
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 export default router;
