@@ -68,6 +68,28 @@ export const MAPA_TIPOS_DEFAULT = {
   99: 'otras',
 };
 
+// Deriva cónyuge / hijos / hijos incapacitados desde las cargas DECLARADAS en el SiRADIG (F.572).
+// Solo cuentan las cargas efectivamente declaradas (no la tabla `familiares`). Respeta el % de
+// deducción (custodia compartida) y el mes de inicio. Bajo la ley vigente solo son deducibles
+// cónyuge/unión convivencial e hijos (comunes e incapacitados); otros parentescos no computan.
+const CONYUGE_CODES_SIR = new Set(['1', '51']);
+const HIJO_CODES_SIR = new Set(['3', '30', '103']);
+const HIJO_INC_CODES_SIR = new Set(['31', '32']);
+export function cargasDesdeSiradig(cargas, mes = 12) {
+  let tieneConyuge = false, nHijos = 0, nHijosInc = 0;
+  const m = Number(mes) || 12;
+  for (const c of (Array.isArray(cargas) ? cargas : [])) {
+    const code = String(c.parentesco || '').trim();
+    if ((Number(c.mesDesde) || 1) > m) continue;
+    const pRaw = Number(String(c.porcentajeDeduccion || '').replace(',', '.'));
+    const pct = pRaw > 0 ? pRaw / 100 : 1;
+    if (CONYUGE_CODES_SIR.has(code)) tieneConyuge = true;
+    else if (HIJO_INC_CODES_SIR.has(code)) nHijosInc += pct;
+    else if (HIJO_CODES_SIR.has(code)) nHijos += pct;
+  }
+  return { tieneConyuge, nHijos, nHijosInc };
+}
+
 // Tabla 3 (parentesco) del Manual del Desarrollador SiRADIG — para mostrar cargas de familia.
 export const PARENTESCO = {
   1: 'Cónyuge', 3: 'Hijo/a', 30: 'Hijastro/a', 31: 'Hijo/a incapacitado', 32: 'Hijastro/a incapacitado',

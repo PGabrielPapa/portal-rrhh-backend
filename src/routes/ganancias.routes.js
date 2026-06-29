@@ -3,7 +3,7 @@ import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { calcularRecibo, factorNoHabitual, TIPOS_SAC, TIPOS_NO_HABITUAL_B, calcularGananciasAcum } from '../lib/liquidacion.js';
 import { ganTablaParaFecha, mapGanRow } from '../lib/gananciasParams.js';
-import { calcularDeduccionesSiradig } from '../lib/siradigTopes.js';
+import { calcularDeduccionesSiradig, cargasDesdeSiradig } from '../lib/siradigTopes.js';
 import { requireRole } from '../middleware/auth.js';
 
 const router = Router();
@@ -63,12 +63,12 @@ async function f1357For(empleadoId, anio, mes, anualizada) {
   const r = er.rows[0];
   const emp = { legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} };
   const params = (await query('SELECT data FROM parametros_liq WHERE id = 1')).rows[0]?.data || {};
-  const fams = (await query('SELECT tipo, discapacidad, vigencia_hasta FROM familiares WHERE empleado_id = $1', [empleadoId])).rows.filter((x) => !x.vigencia_hasta);
-  const esConyuge = (t) => ['conyuge', 'cónyuge', 'concubino', 'concubina'].includes(String(t || '').toLowerCase());
-  const esHijo = (t) => ['hijo', 'hija', 'hijastro', 'hijastra'].includes(String(t || '').toLowerCase());
-  const tieneConyuge = fams.some((x) => esConyuge(x.tipo));
-  const nroHijosMenores = fams.filter((x) => esHijo(x.tipo) && !x.discapacidad).length;
-  const nroHijosIncapacitados = fams.filter((x) => esHijo(x.tipo) && x.discapacidad).length;
+  // Cargas de familia: SOLO las declaradas por el empleado en el SiRADIG (F.572); NO se usa la tabla familiares.
+  const sir = (await query('SELECT cargas_familia, deducciones FROM siradig_presentaciones WHERE empleado_id=$1 AND anio=$2', [empleadoId, Number(anio)])).rows[0] || null;
+  const _cf = cargasDesdeSiradig(sir?.cargas_familia || [], Number(mes));
+  const tieneConyuge = _cf.tieneConyuge;
+  const nroHijosMenores = _cf.nHijos;
+  const nroHijosIncapacitados = _cf.nHijosInc;
 
   const fechaRef = `${anio}-${String(mes).padStart(2, '0')}-15`;
   const ganTabla = await ganTablaParaFecha(fechaRef);
@@ -104,8 +104,7 @@ async function f1357For(empleadoId, anio, mes, anualizada) {
     tieneConyuge, nroHijosMenores, nroHijosIncapacitados,
     ganTabla, mes: Number(mes), anualizada,
   };
-  // SiRADIG: deducciones declaradas (última presentación del año), con topes RG 4003 sobre el acumulado fiscal.
-  const sir = (await query('SELECT deducciones FROM siradig_presentaciones WHERE empleado_id=$1 AND anio=$2', [empleadoId, Number(anio)])).rows[0] || null;
+  // SiRADIG: deducciones declaradas (ya traídas arriba), con topes RG 4003 sobre el acumulado fiscal.
   const gan0 = calcularGananciasAcum(comp); // base (sin SiRADIG) para el tope del 5% de ganancia neta
   let sirCalc = null;
   if (sir) {
@@ -261,12 +260,11 @@ router.get('/anual', async (req, res, next) => {
     // Familiares por empleado (cargas)
     const items = [];
     for (const [empId, e] of Object.entries(porEmp)) {
-      const fams = (await query('SELECT tipo, discapacidad, vigencia_hasta FROM familiares WHERE empleado_id=$1', [empId])).rows.filter((x) => !x.vigencia_hasta);
-      const esC = (tp) => ['conyuge', 'cónyuge', 'concubino', 'concubina'].includes(String(tp || '').toLowerCase());
-      const esH = (tp) => ['hijo', 'hija', 'hijastro', 'hijastra'].includes(String(tp || '').toLowerCase());
-      const cargas = (fams.some((x) => esC(x.tipo)) ? Number(ganTabla.cargaConyugeAnual || 0) : 0)
-        + fams.filter((x) => esH(x.tipo) && !x.discapacidad).length * Number(ganTabla.cargaHijoAnual || 0)
-        + fams.filter((x) => esH(x.tipo) && x.discapacidad).length * Number(ganTabla.cargaHijoIncAnual || 0);
+      const sircf = (await query('SELECT cargas_familia FROM siradig_presentaciones WHERE empleado_id=$1 AND anio=$2', [empId, Number(anio)])).rows[0];
+      const cf = cargasDesdeSiradig(sircf?.cargas_familia || [], 12);
+      const cargas = (cf.tieneConyuge ? Number(ganTabla.cargaConyugeAnual || 0) : 0)
+        + cf.nHijos * Number(ganTabla.cargaHijoAnual || 0)
+        + cf.nHijosInc * Number(ganTabla.cargaHijoIncAnual || 0);
       const remSujeta = Math.max(0, e.remun - e.aportes - Number(ganTabla.mniAnual || 0) - Number(ganTabla.dedEspAnual || 0) - Number(ganTabla.dedEsp2Anual || 0) - cargas);
       const impuestoDet = r2(impuestoEscala(remSujeta, ganTabla.escala));
       const diferencia = r2(impuestoDet - e.retenido);
