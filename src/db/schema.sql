@@ -1139,3 +1139,24 @@ CREATE INDEX IF NOT EXISTS idx_legajo_docs_venc ON legajo_docs(fecha_vencimiento
 -- ── 2FA (TOTP) para usuarios ──
 ALTER TABLE empleados ADD COLUMN IF NOT EXISTS totp_secret TEXT;
 ALTER TABLE empleados ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
+
+-- ── Centros de operaciones (locaciones donde operan las empresas) ──
+CREATE TABLE IF NOT EXISTS centros_operaciones (
+  id           SERIAL PRIMARY KEY,
+  codigo       TEXT NOT NULL UNIQUE,
+  denominacion TEXT NOT NULL,
+  calle        TEXT,
+  numero       TEXT,
+  localidad    TEXT,
+  provincia    TEXT,
+  cp           TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Vínculo N:N: una empresa puede tener varios centros y un centro puede ser compartido por varias empresas.
+CREATE TABLE IF NOT EXISTS empresa_centros (
+  empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  centro_id  INTEGER NOT NULL REFERENCES centros_operaciones(id) ON DELETE CASCADE,
+  PRIMARY KEY (empresa_id, centro_id)
+);
+CREATE INDEX IF NOT EXISTS idx_empresa_centros_emp ON empresa_centros(empresa_id);
+CREATE INDEX IF NOT EXISTS idx_empresa_centros_cen ON empresa_centros(centro_id);

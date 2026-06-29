@@ -88,6 +88,11 @@ router.get('/auditoria', async (req, res, next) => {
 router.get('/empresas', async (req, res, next) => {
   try {
     const { rows } = await query('SELECT id, nombre, slug, cuit, logo, firma, data FROM empresas ORDER BY nombre');
+    const links = (await query(
+      `SELECT ec.empresa_id, c.id, c.codigo, c.denominacion
+         FROM empresa_centros ec JOIN centros_operaciones c ON c.id = ec.centro_id
+        ORDER BY c.denominacion`)).rows;
+    for (const e of rows) e.centros = links.filter((l) => l.empresa_id === e.id).map((l) => ({ id: l.id, codigo: l.codigo, denominacion: l.denominacion }));
     res.json(rows);
   } catch (e) { next(e); }
 });
@@ -130,6 +135,71 @@ router.delete('/empresas/:id', async (req, res, next) => {
     const r = await query('DELETE FROM empresas WHERE id = $1 RETURNING nombre', [req.params.id]);
     if (!r.rowCount) return res.status(404).json({ error: 'Empresa no encontrada' });
     await audit(req.user.dni, 'empresa_baja', r.rows[0].nombre, String(req.params.id));
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ── Centros de operaciones (ABM) ──
+// GET /api/admin/centros — listado con la cantidad de empresas vinculadas.
+router.get('/centros', async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT c.*, COALESCE(cnt.n, 0)::int AS empresas
+         FROM centros_operaciones c
+         LEFT JOIN (SELECT centro_id, COUNT(*) AS n FROM empresa_centros GROUP BY centro_id) cnt ON cnt.centro_id = c.id
+        ORDER BY c.denominacion`);
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+
+// POST /api/admin/centros — alta de centro.
+router.post('/centros', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!b.codigo || !String(b.codigo).trim()) return res.status(400).json({ error: 'El código es obligatorio' });
+    if (!b.denominacion || !String(b.denominacion).trim()) return res.status(400).json({ error: 'La denominación es obligatoria' });
+    const r = await query(
+      `INSERT INTO centros_operaciones (codigo, denominacion, calle, numero, localidad, provincia, cp)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [String(b.codigo).trim(), String(b.denominacion).trim(), b.calle || null, b.numero || null, b.localidad || null, b.provincia || null, b.cp || null]);
+    await audit(req.user.dni, 'centro_alta', String(b.codigo), String(r.rows[0].id));
+    res.status(201).json({ ok: true, id: r.rows[0].id });
+  } catch (e) { if (e.code === '23505') return res.status(409).json({ error: 'Ya existe un centro con ese código' }); next(e); }
+});
+
+// PATCH /api/admin/centros/:id — edición.
+router.patch('/centros/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const campos = ['codigo', 'denominacion', 'calle', 'numero', 'localidad', 'provincia', 'cp'];
+    const sets = [], params = [];
+    for (const c of campos) if (b[c] !== undefined) { params.push(b[c] === '' ? null : b[c]); sets.push(`${c} = $${params.length}`); }
+    if (!sets.length) return res.status(400).json({ error: 'Nada para actualizar' });
+    params.push(req.params.id);
+    await query(`UPDATE centros_operaciones SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
+    await audit(req.user.dni, 'centro_editado', b.codigo || '', String(req.params.id));
+    res.json({ ok: true });
+  } catch (e) { if (e.code === '23505') return res.status(409).json({ error: 'Ya existe un centro con ese código' }); next(e); }
+});
+
+// DELETE /api/admin/centros/:id — baja (desvincula de las empresas por cascade).
+router.delete('/centros/:id', async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM centros_operaciones WHERE id = $1 RETURNING codigo', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Centro no encontrado' });
+    await audit(req.user.dni, 'centro_baja', r.rows[0].codigo, String(req.params.id));
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// PUT /api/admin/empresas/:id/centros  { centroIds: [] } — define los centros vinculados a una empresa.
+router.put('/empresas/:id/centros', async (req, res, next) => {
+  try {
+    const empresaId = Number(req.params.id);
+    const ids = Array.isArray(req.body?.centroIds) ? req.body.centroIds.map(Number).filter(Boolean) : [];
+    await query('DELETE FROM empresa_centros WHERE empresa_id = $1', [empresaId]);
+    for (const cid of ids) await query('INSERT INTO empresa_centros (empresa_id, centro_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [empresaId, cid]);
+    await audit(req.user.dni, 'empresa_centros', `${ids.length} centro(s)`, String(empresaId));
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
