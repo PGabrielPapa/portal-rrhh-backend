@@ -56,6 +56,14 @@ async function acumular(empleadoId, anio, mes) {
   return a;
 }
 
+// Agrega el detalle SiRADIG por concepto (sumando meses) para las vistas consolidadas.
+function aggSiradig(f) {
+  const det = f?.dedPersonales?.siradig?.detalle || [];
+  const m = {};
+  for (const d of det) { if (!d.clasificado || !d.computable) continue; const k = d.conceptoLabel || 'Otras deducciones'; m[k] = (m[k] || 0) + d.computable; }
+  return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([label, computable]) => ({ label, computable: r2(computable) }));
+}
+
 async function f1357For(empleadoId, anio, mes, anualizada) {
   const er = await query(
     `SELECT e.*, em.nombre AS empresa_nombre FROM empleados e JOIN empresas em ON em.id = e.empresa_id WHERE e.id = $1`, [empleadoId]);
@@ -452,7 +460,7 @@ router.get('/final-anual', requireRole('rrhh', 'admin'), async (req, res, next) 
       const aDevolver = f.determinacion.devolucion;        // saldo a favor del empleado
       if (impuesto === 0 && retenido === 0) continue;       // no alcanzado, no listar
       filas.push({ empleadoId: e.id, legNum: f.empleado.legNum, nom: f.empleado.nom, empresa: f.empleado.empresa, cuil: f.empleado.cuil,
-        gravado: f.gravadas.totalGravada, dedGenerales: f.dedGenerales.total, dedPersonales: f.dedPersonales.total, dedSiradig: f.dedPersonales.dedSiradig || 0,
+        gravado: f.gravadas.totalGravada, dedGenerales: f.dedGenerales.total, dedPersonales: f.dedPersonales.total, dedSiradig: f.dedPersonales.dedSiradig || 0, siradigDetalle: aggSiradig(f),
         impuesto, retenido, aRetener, aDevolver, siradigSinClasificar: f.dedPersonales.siradig?.sinClasificar || 0 });
     }
     const tot = filas.reduce((a, r) => ({ impuesto: a.impuesto + r.impuesto, retenido: a.retenido + r.retenido, aRetener: a.aRetener + r.aRetener, aDevolver: a.aDevolver + r.aDevolver }), { impuesto: 0, retenido: 0, aRetener: 0, aDevolver: 0 });
@@ -477,7 +485,7 @@ router.get('/control', requireRole('rrhh', 'admin'), async (req, res, next) => {
       filas.push({
         empleadoId: e.id, legNum: f.empleado.legNum, nom: f.empleado.nom, empresa: f.empleado.empresa, cuil: f.empleado.cuil,
         gravado: f.gravadas.totalGravada, dedGenerales: f.dedGenerales.total, dedPersonales: f.dedPersonales.total,
-        dedSiradig: f.dedPersonales.dedSiradig || 0, siradigSinClasificar: f.dedPersonales.siradig?.sinClasificar || 0,
+        dedSiradig: f.dedPersonales.dedSiradig || 0, siradigSinClasificar: f.dedPersonales.siradig?.sinClasificar || 0, siradigDetalle: aggSiradig(f),
         remSujeta: f.determinacion.remSujeta, impuesto: f.determinacion.impuestoDeterminado,
         retenidoAnterior: f.determinacion.retenidoAnterior, aRetener: f.determinacion.impuestoARetener, devolucion: f.determinacion.devolucion,
       });
