@@ -1160,3 +1160,17 @@ CREATE TABLE IF NOT EXISTS empresa_centros (
 );
 CREATE INDEX IF NOT EXISTS idx_empresa_centros_emp ON empresa_centros(empresa_id);
 CREATE INDEX IF NOT EXISTS idx_empresa_centros_cen ON empresa_centros(centro_id);
+
+-- ── Histórico de lugar de trabajo del empleado (legajo) ──
+CREATE TABLE IF NOT EXISTS lugar_trabajo_hist (
+  id          SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  centro_id   INTEGER REFERENCES centros_operaciones(id) ON DELETE SET NULL,
+  lugar       TEXT,
+  desde       DATE,
+  hasta       DATE,
+  motivo      TEXT,
+  created_by  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_lug_hist_emp ON lugar_trabajo_hist(empleado_id);

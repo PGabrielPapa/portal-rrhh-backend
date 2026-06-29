@@ -121,6 +121,17 @@ router.get('/equipo', async (req, res, next) => {
 
 // GET /api/empleados/:id
 // GET /api/empleados/cumpleanios — próximos cumpleaños de compañeros (cualquier rol)
+// GET /api/empleados/:id/lugares — histórico de lugar de trabajo (legajo).
+router.get('/:id/lugares', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT h.id, h.lugar, h.desde, h.hasta, h.motivo, h.created_by, h.created_at, c.codigo AS centro_codigo
+         FROM lugar_trabajo_hist h LEFT JOIN centros_operaciones c ON c.id = h.centro_id
+        WHERE h.empleado_id = $1 ORDER BY (h.hasta IS NULL) DESC, h.desde DESC NULLS LAST, h.id DESC`, [req.params.id]);
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+
 router.get('/cumpleanios', async (req, res, next) => {
   try {
     const { rows } = await query(
@@ -264,6 +275,17 @@ router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
     // Sincronizar período vigente + histórico de función/categoría (solo lo que cambió en esta edición).
     try {
       const aft = out.rows[0]; const bd = before.data || {}; const ad = aft.data || {};
+      // Histórico de lugar de trabajo: si cambió, cierro el período abierto y abro uno nuevo.
+      try {
+        const aLug = bd.lugar == null ? '' : String(bd.lugar).trim();
+        const nLug = ad.lugar == null ? '' : String(ad.lugar).trim();
+        if (nLug && nLug !== aLug) {
+          const hoy = new Date().toISOString().slice(0, 10);
+          await query('UPDATE lugar_trabajo_hist SET hasta=$1 WHERE empleado_id=$2 AND hasta IS NULL', [hoy, req.params.id]);
+          const cen = (await query('SELECT id FROM centros_operaciones WHERE denominacion=$1 LIMIT 1', [nLug])).rows[0];
+          await query('INSERT INTO lugar_trabajo_hist (empleado_id, centro_id, lugar, desde, created_by) VALUES ($1,$2,$3,$4,$5)', [req.params.id, cen?.id || null, nLug, hoy, req.user.dni]);
+        }
+      } catch (e) { /* no romper el guardado */ }
       const sv = (v) => v == null ? '' : String(v);
       const map = [
         ['funcion', 'Función', sv(bd.tarea), sv(ad.tarea)],

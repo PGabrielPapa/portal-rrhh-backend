@@ -365,6 +365,27 @@ async function main() {
       }
       console.log(`[seed] familiares→personas: ${nf} nuevas`);
     } catch (e) { console.warn('[seed] familiares→personas:', e.message); }
+    // ── Centros de operaciones desde el lugar de trabajo + histórico inicial (idempotente) ──
+    {
+      const norm = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 28) || 'CENTRO';
+      const exist = (await client.query('SELECT id, codigo, denominacion FROM centros_operaciones')).rows;
+      const byDenom = new Map(exist.map((c) => [c.denominacion, c.id]));
+      const usedCodes = new Set(exist.map((c) => c.codigo));
+      const uniqueCode = (base) => { let c = base; let i = 2; while (usedCodes.has(c)) c = `${base}-${i++}`; usedCodes.add(c); return c; };
+      const emps = (await client.query("SELECT id, empresa_id, ingreso, btrim(data->>'lugar') AS lugar FROM empleados WHERE coalesce(btrim(data->>'lugar'),'') <> ''")).rows;
+      for (const e of emps) {
+        let cid = byDenom.get(e.lugar);
+        if (!cid) {
+          const ins = await client.query('INSERT INTO centros_operaciones (codigo, denominacion) VALUES ($1,$2) RETURNING id', [uniqueCode(norm(e.lugar)), e.lugar]);
+          cid = ins.rows[0].id; byDenom.set(e.lugar, cid);
+        }
+        await client.query('INSERT INTO empresa_centros (empresa_id, centro_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [e.empresa_id, cid]);
+        const tiene = await client.query('SELECT 1 FROM lugar_trabajo_hist WHERE empleado_id=$1 LIMIT 1', [e.id]);
+        if (!tiene.rowCount) await client.query('INSERT INTO lugar_trabajo_hist (empleado_id, centro_id, lugar, desde, created_by) VALUES ($1,$2,$3,$4,$5)', [e.id, cid, e.lugar, e.ingreso || null, 'seed']);
+      }
+      console.log(`[seed] centros de operaciones: ${byDenom.size} · empleados con lugar: ${emps.length}`);
+    }
+
     await client.query('COMMIT');
     console.log(`[seed] empleados cargados: ${ok} · omitidos: ${skip}`);
     console.log('[seed] contraseña inicial = DNI (cambio forzado en primer login).');
