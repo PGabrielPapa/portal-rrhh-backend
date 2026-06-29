@@ -1187,3 +1187,9 @@ CREATE TABLE IF NOT EXISTS legajo_cambios (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_legajo_cambios_emp ON legajo_cambios(empleado_id);
+
+-- ── Auditorías/inspecciones: plazos y resolución final ──
+ALTER TABLE chs_auditorias ADD COLUMN IF NOT EXISTS plazo_ejecucion  DATE;
+ALTER TABLE chs_auditorias ADD COLUMN IF NOT EXISTS fecha_ejecucion  DATE;
+ALTER TABLE chs_auditorias ADD COLUMN IF NOT EXISTS resolucion       TEXT;
+ALTER TABLE chs_auditorias ADD COLUMN IF NOT EXISTS fecha_resolucion DATE;

@@ -290,7 +290,13 @@ const mapAud = (r) => ({ id: r.id, fecha: r.fecha, tipo: r.tipo, responsable: r.
 
 router.get('/auditorias', async (req, res, next) => {
   try {
-    const { rows } = await query('SELECT id, fecha, tipo, responsable, sector, observaciones, no_conformidades, acciones, estado, archivo_nombre, created_by, created_at FROM chs_auditorias ORDER BY fecha DESC NULLS LAST, id DESC');
+    const { rows } = await query(`SELECT id, fecha, tipo, responsable, sector, observaciones,
+              no_conformidades AS "noConformidades", acciones, estado,
+              plazo_ejecucion AS "plazoEjecucion", fecha_ejecucion AS "fechaEjecucion",
+              resolucion, fecha_resolucion AS "fechaResolucion",
+              archivo_nombre AS "archivoNombre", (archivo_data IS NOT NULL) AS "tieneArchivo",
+              created_by, created_at
+         FROM chs_auditorias ORDER BY fecha DESC NULLS LAST, id DESC`);
     res.json(rows.map(mapAud));
   } catch (e) { next(e); }
 });
@@ -299,9 +305,9 @@ router.post('/auditorias', async (req, res, next) => {
   try {
     const b = req.body || {}; const [an, am, ad] = archivoCols(b.archivo);
     const { rows } = await query(
-      `INSERT INTO chs_auditorias (fecha, tipo, responsable, sector, observaciones, no_conformidades, acciones, estado, archivo_nombre, archivo_mime, archivo_data, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-      [b.fecha || null, b.tipo || null, b.responsable || null, b.sector || null, b.observaciones || null, b.noConformidades || null, JSON.stringify(b.acciones || []), b.estado || 'Abierta', an, am, ad, req.user.dni]);
+      `INSERT INTO chs_auditorias (fecha, tipo, responsable, sector, observaciones, no_conformidades, acciones, estado, plazo_ejecucion, fecha_ejecucion, resolucion, fecha_resolucion, archivo_nombre, archivo_mime, archivo_data, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+      [b.fecha || null, b.tipo || null, b.responsable || null, b.sector || null, b.observaciones || null, b.noConformidades || null, JSON.stringify(b.acciones || []), b.estado || 'Abierta', b.plazoEjecucion || null, b.fechaEjecucion || null, b.resolucion || null, b.fechaResolucion || null, an, am, ad, req.user.dni]);
     res.status(201).json({ ok: true, id: rows[0].id });
   } catch (e) { next(e); }
 });
@@ -309,8 +315,8 @@ router.post('/auditorias', async (req, res, next) => {
 router.put('/auditorias/:id', async (req, res, next) => {
   try {
     const b = req.body || {};
-    const sets = ['fecha=$1', 'tipo=$2', 'responsable=$3', 'sector=$4', 'observaciones=$5', 'no_conformidades=$6', 'acciones=$7', 'estado=$8', 'updated_at=now()'];
-    const params = [b.fecha || null, b.tipo || null, b.responsable || null, b.sector || null, b.observaciones || null, b.noConformidades || null, JSON.stringify(b.acciones || []), b.estado || 'Abierta'];
+    const sets = ['fecha=$1', 'tipo=$2', 'responsable=$3', 'sector=$4', 'observaciones=$5', 'no_conformidades=$6', 'acciones=$7', 'estado=$8', 'plazo_ejecucion=$9', 'fecha_ejecucion=$10', 'resolucion=$11', 'fecha_resolucion=$12', 'updated_at=now()'];
+    const params = [b.fecha || null, b.tipo || null, b.responsable || null, b.sector || null, b.observaciones || null, b.noConformidades || null, JSON.stringify(b.acciones || []), b.estado || 'Abierta', b.plazoEjecucion || null, b.fechaEjecucion || null, b.resolucion || null, b.fechaResolucion || null];
     if (b.archivo && b.archivo.data) { params.push(b.archivo.nombre || 'archivo', b.archivo.mime || 'application/octet-stream', b.archivo.data); sets.push(`archivo_nombre=$${params.length - 2}`, `archivo_mime=$${params.length - 1}`, `archivo_data=$${params.length}`); }
     else if (b.quitarArchivo) { sets.push('archivo_nombre=NULL', 'archivo_mime=NULL', 'archivo_data=NULL'); }
     params.push(req.params.id);
