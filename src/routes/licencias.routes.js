@@ -44,7 +44,7 @@ router.get('/vacaciones-info', async (req, res, next) => {
 });
 
 router.get('/mias', async (req, res, next) => {
-  try { const { rows } = await query('SELECT id, empleado_id, tipo, desde, hasta, dias, motivo, estado, resuelto_por, resuelto_at, created_at, justificacion, comprobante_nombre, comprobante_mime, (comprobante_data IS NOT NULL) AS tiene_comprobante FROM licencias WHERE empleado_id = $1 ORDER BY created_at DESC', [req.user.id]); res.json(rows); }
+  try { const { rows } = await query('SELECT id, empleado_id, tipo, desde, hasta, dias, motivo, estado, resuelto_por, resuelto_at, created_at, justificacion, comprobante_nombre, comprobante_mime, (comprobante_data IS NOT NULL) AS tiene_comprobante FROM licencias WHERE empleado_id = $1 AND desde >= CURRENT_DATE - INTERVAL \'2 years\' ORDER BY created_at DESC', [req.user.id]); res.json(rows); }
   catch (e) { next(e); }
 });
 
@@ -56,12 +56,13 @@ router.get('/', async (req, res, next) => {
       if (estado) { params.push(estado); cond.push(`l.estado = $${params.length}`); }
       if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
       if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
+      cond.push("l.desde >= CURRENT_DATE - INTERVAL '2 years'");
       const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
       const { rows } = await query(
         `SELECT l.id, l.empleado_id, l.tipo, l.desde, l.hasta, l.dias, l.motivo, l.estado, l.resuelto_por, l.resuelto_at, l.created_at, l.justificacion, l.comprobante_nombre, l.comprobante_mime, (l.comprobante_data IS NOT NULL) AS tiene_comprobante, e.nom, e.leg_num, em.nombre AS empresa FROM licencias l JOIN empleados e ON e.id=l.empleado_id JOIN empresas em ON em.id=e.empresa_id ${where} ORDER BY (l.estado='pendiente') DESC, l.created_at DESC`, params);
       return res.json(rows);
     }
-    const { rows } = await query('SELECT id, empleado_id, tipo, desde, hasta, dias, motivo, estado, resuelto_por, resuelto_at, created_at, justificacion, comprobante_nombre, comprobante_mime, (comprobante_data IS NOT NULL) AS tiene_comprobante FROM licencias WHERE empleado_id=$1 ORDER BY created_at DESC', [req.user.id]);
+    const { rows } = await query('SELECT id, empleado_id, tipo, desde, hasta, dias, motivo, estado, resuelto_por, resuelto_at, created_at, justificacion, comprobante_nombre, comprobante_mime, (comprobante_data IS NOT NULL) AS tiene_comprobante FROM licencias WHERE empleado_id=$1 AND desde >= CURRENT_DATE - INTERVAL \'2 years\' ORDER BY created_at DESC', [req.user.id]);
     res.json(rows);
   } catch (e) { next(e); }
 });

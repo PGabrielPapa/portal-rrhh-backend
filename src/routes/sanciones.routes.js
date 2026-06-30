@@ -9,14 +9,14 @@ const gestiona = (r) => ['manager', 'rrhh', 'admin'].includes(r);
 const COLS = 's.id, s.empleado_id, s.tipo, s.fecha, s.dias, s.descripcion, s.created_by, s.created_at, s.falta, s.estado, s.resuelto_por, s.fecha_notificacion, s.fecha_cumplimiento, s.notif_nombre, (s.notif_data IS NOT NULL) AS tiene_notif';
 
 router.get('/mias', async (req, res, next) => {
-  try { const { rows } = await query(`SELECT ${COLS} FROM sanciones s WHERE s.empleado_id = $1 ORDER BY s.fecha DESC`, [req.user.id]); res.json(rows); }
+  try { const { rows } = await query(`SELECT ${COLS} FROM sanciones s WHERE s.empleado_id = $1 AND s.fecha >= CURRENT_DATE - INTERVAL '2 years' ORDER BY s.fecha DESC`, [req.user.id]); res.json(rows); }
   catch (e) { next(e); }
 });
 
 router.get('/', async (req, res, next) => {
   try {
     if (!gestiona(req.user.role)) {
-      const { rows } = await query(`SELECT ${COLS} FROM sanciones s WHERE s.empleado_id = $1 ORDER BY s.fecha DESC`, [req.user.id]);
+      const { rows } = await query(`SELECT ${COLS} FROM sanciones s WHERE s.empleado_id = $1 AND s.fecha >= CURRENT_DATE - INTERVAL '2 years' ORDER BY s.fecha DESC`, [req.user.id]);
       return res.json(rows);
     }
     const { empresa, q, estado } = req.query; const cond = [], params = [];
@@ -24,6 +24,7 @@ router.get('/', async (req, res, next) => {
     if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
     if (estado) { params.push(estado); cond.push(`s.estado = $${params.length}`); }
     if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
+    cond.push("s.fecha >= CURRENT_DATE - INTERVAL '2 years'");
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const { rows } = await query(
       `SELECT ${COLS}, e.nom, e.leg_num, em.nombre AS empresa FROM sanciones s

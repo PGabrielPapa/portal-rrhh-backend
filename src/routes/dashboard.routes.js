@@ -54,13 +54,22 @@ router.get('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
       `SELECT mes, COALESCE(SUM(neto),0) AS neto FROM recibos WHERE anio=$1 AND tipo IN ('mensual','quincenal_1','quincenal_2') GROUP BY mes ORDER BY mes`, [anio])).rows
       .map((x) => ({ mes: x.mes, neto: Number(x.neto) }));
 
+    let cambiosDatos = [];
+    try {
+      cambiosDatos = (await query(
+        `SELECT c.etiqueta, c.valor_anterior, c.valor_nuevo, c.created_at, e.nom, e.leg_num
+           FROM cambios_perfil c JOIN empleados e ON e.id = c.empleado_id
+          WHERE c.origen = 'empleado' AND c.created_at >= now() - interval '30 days'
+          ORDER BY c.created_at DESC LIMIT 50`)).rows
+        .map((r) => ({ nom: r.nom, legNum: r.leg_num, etiqueta: r.etiqueta, anterior: r.valor_anterior, nuevo: r.valor_nuevo, fecha: r.created_at }));
+    } catch (e) { /* tabla opcional */ }
     res.json({
       periodo: { anio, mes },
       headcount: activos.length, totalEmpleados: emp.length,
       masaBruta, costoLaboral, contribPct, sueldoProm, antiguedadProm, altas, bajas,
       ausentismo: { dias: ausen.dias, casos: ausen.casos },
       porEmpresa: Object.values(porEmpresa).sort((a, b) => b.headcount - a.headcount),
-      genero, evolucion: evo,
+      genero, evolucion: evo, cambiosDatos,
     });
   } catch (e) { next(e); }
 });
