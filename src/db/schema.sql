@@ -1193,3 +1193,13 @@ ALTER TABLE chs_auditorias ADD COLUMN IF NOT EXISTS plazo_ejecucion  DATE;
 ALTER TABLE chs_auditorias ADD COLUMN IF NOT EXISTS fecha_ejecucion  DATE;
 ALTER TABLE chs_auditorias ADD COLUMN IF NOT EXISTS resolucion       TEXT;
 ALTER TABLE chs_auditorias ADD COLUMN IF NOT EXISTS fecha_resolucion DATE;
+
+-- ── Definiciones de reportes guardadas (Generador de reportes) ──
+CREATE TABLE IF NOT EXISTS reportes_definiciones (
+  id          SERIAL PRIMARY KEY,
+  nombre      TEXT NOT NULL,
+  config      JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

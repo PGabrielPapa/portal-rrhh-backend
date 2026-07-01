@@ -667,4 +667,32 @@ router.get('/dataset/:key', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── Reportes guardados (definiciones reutilizables) ──
+router.get('/definiciones', async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT id, nombre, config, created_by, created_at FROM reportes_definiciones ORDER BY nombre');
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+router.post('/definiciones', async (req, res, next) => {
+  try {
+    const { id, nombre, config } = req.body || {};
+    if (!nombre || !String(nombre).trim()) return res.status(400).json({ error: 'El nombre es obligatorio' });
+    if (id) {
+      const r = await query('UPDATE reportes_definiciones SET nombre=$1, config=$2, updated_at=now() WHERE id=$3 RETURNING id', [String(nombre).trim(), JSON.stringify(config || {}), id]);
+      if (!r.rowCount) return res.status(404).json({ error: 'Reporte no encontrado' });
+      return res.json({ ok: true, id: Number(id) });
+    }
+    const r = await query('INSERT INTO reportes_definiciones (nombre, config, created_by) VALUES ($1,$2,$3) RETURNING id', [String(nombre).trim(), JSON.stringify(config || {}), req.user.dni]);
+    res.status(201).json({ ok: true, id: r.rows[0].id });
+  } catch (e) { next(e); }
+});
+router.delete('/definiciones/:id', async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM reportes_definiciones WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'No encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 export default router;

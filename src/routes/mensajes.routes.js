@@ -42,7 +42,10 @@ router.post('/', async (req, res, next) => {
 router.delete('/:id', async (req, res, next) => {
   try {
     const r = await query(
-      `DELETE FROM mensajes WHERE id=$1 AND direccion='a_rrhh' AND remitente_id=$2 RETURNING id`,
+      `DELETE FROM mensajes WHERE id=$1 AND (
+          (direccion='a_rrhh' AND remitente_id=$2)
+          OR (direccion='a_empleado' AND empleado_id=$2)
+       ) RETURNING id`,
       [req.params.id, req.user.id]
     );
     if (!r.rowCount) return res.status(404).json({ error: 'Mensaje no encontrado' });
