@@ -77,7 +77,7 @@ export async function getFiltros() {
 }
 
 // "6/18/2026" (M/D/YYYY) → "2026-06-18". Tolera ya-ISO.
-function fechaISO(v) {
+export function fechaISO(v) {
   const s = String(v || '').trim();
   let m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
   if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; // m[1]=mes, m[2]=día
