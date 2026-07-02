@@ -5,7 +5,7 @@
 
 // Tabla 4 (topes) — valores ANUALES 2026 (Manual F.1359 v2.0, confeccionada 04/05/2026).
 export const TABLA4_DEFAULT = {
-  gni: 5151802.50,          // Ganancia No Imponible (tope servicio doméstico)
+  gni: 5151802.50,          // Ganancia No Imponible (tope: personal doméstico y alquiler inquilino 40%)
   gni40: 2060721.00,        // 40% GNI (tope alquiler casa-habitación inc. h / educación)
   seguroMuerte: 753472.14,  // Seguros muerte/mixtos + FCI con fines de retiro (tope CONJUNTO)
   seguroRetiro: 753472.14,  // Seguros de retiro privados (SSN)
@@ -34,8 +34,10 @@ export const CONCEPTOS = {
   // Topes ligados a la GNI
   servicio_domestico:    { label: 'Personal doméstico', regla: 'tope_gni' },
   servicios_educativos:  { label: 'Gastos de educación', regla: 'tope_40gni' }, // tope "según Tabla 4" — 40% GNI (a confirmar con asesor)
-  // El monto del SiRADIG YA viene topeado por ARCA → se computa tal cual
-  alquiler_h_40:         { label: 'Alquiler casa habitación (inquilino 40%)', regla: 'sin_tope' },
+  // Alquiler de casa-habitación (inquilino): 40% de lo pagado con TOPE = Ganancia No Imponible
+  // (art. 85 inc. h Ley de Ganancias / RG 4003; el monto del SiRADIG ya es el 40% deducible).
+  alquiler_h_40:         { label: 'Alquiler casa habitación (inquilino 40%)', regla: 'tope_gni' },
+  // Deducción adicional del 10% del alquiler (RG 5521): sin tope.
   alquiler_10:           { label: 'Alquiler casa habitación (inquilino 10%)', regla: 'sin_tope' },
   alquiler_propietario:  { label: 'Alquiler casa habitación (propietario)', regla: 'sin_tope' },
   // Conceptos especiales (sin tope porcentual; se computan según lo declarado/validado)

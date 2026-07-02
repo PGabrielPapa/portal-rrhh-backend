@@ -78,6 +78,13 @@ test('hipotecario topeado a valor fijo (20.000 anual prorrateado)', () => {
   const r = calcularDeduccionesSiradig({ deducciones: hip, mes: 6, gravadoTotal: 20000000, aportesTotal: 3400000 });
   assert.equal(r.detalle[0].computable, 10000); // 20000 * 6/12
 });
+test('alquiler inquilino 40% topeado a la Ganancia No Imponible', () => {
+  // declara 600.000/mes ene-jun => 3.600.000 acumulado a junio; tope = GNI*6/12 = 2.575.901,25
+  const alq = [{ tipo: '22', periodos: [{ mesDesde: 1, mesHasta: 6, montoMensual: 600000 }] }];
+  const r = calcularDeduccionesSiradig({ deducciones: alq, mes: 6, gravadoTotal: 40000000, aportesTotal: 6800000 });
+  assert.equal(r.detalle[0].concepto, 'alquiler_h_40');
+  assert.equal(r.detalle[0].computable, 2575901.25); // topeado a GNI prorrateada
+});
 test('tipo sin clasificar no se deduce', () => {
   const x = [{ tipo: '999', periodos: [{ mesDesde: 1, mesHasta: 6, montoMensual: 50000 }] }];
   const r = calcularDeduccionesSiradig({ deducciones: x, mes: 6, gravadoTotal: 20000000, aportesTotal: 3400000 });
