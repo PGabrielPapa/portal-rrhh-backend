@@ -18,12 +18,10 @@ router.get('/candidatos', requireRole('manager', 'admin'), async (req, res, next
     const tarea = String(req.query.tarea || '');
     const cond = ['e.activo = true', 'e.id <> $1'];
     const params = [req.user.id];
-    // El gerente solo puede delegar en su equipo (organigrama) o en otros gerentes.
-    if (req.user.role === 'manager') {
-      const ids = [...await idsEquipoDe(req.user.id)];
-      if (ids.length) { params.push(ids); cond.push(`(e.id = ANY($${params.length}::int[]) OR e.role = 'manager')`); }
-      else { cond.push(`e.role = 'manager'`); }
-    }
+    // Solo se puede delegar en el propio equipo (organigrama) o en otros gerentes.
+    const ids = [...await idsEquipoDe(req.user.id)];
+    if (ids.length) { params.push(ids); cond.push(`(e.id = ANY($${params.length}::int[]) OR e.role = 'manager')`); }
+    else { cond.push(`e.role = 'manager'`); }
     if (tarea === 'adelantos') cond.push(`e.role = 'manager'`);
     const { rows } = await query(
       `SELECT e.id, e.nom, e.leg_num, e.role, em.nombre AS empresa
