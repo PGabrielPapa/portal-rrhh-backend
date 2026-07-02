@@ -4,7 +4,7 @@
 // Credenciales SIEMPRE por variables de entorno (nunca en código ni git).
 import { config } from '../config.js';
 import { parseExtendido } from './fichadasProsoft.js';
-import { procesarParsed } from './fichadasProcesar.js';
+import { procesarParsed, getFeriadosSet } from './fichadasProcesar.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -119,7 +119,8 @@ export async function getMesParseado(anio, mes) {
 // de liquidación (anio/mes) indicado. soloPendientes evita pisar lo ya aprobado.
 export async function importarRango(desde, hasta, anio, mes, { confirmar = false, soloPendientes = false, importadoPor = null } = {}) {
   const datos = await getResumen(desde, hasta);
-  const parsed = parseExtendido(datosToAoa(datos));
+  const feriados = await getFeriadosSet(desde, hasta);
+  const parsed = parseExtendido(datosToAoa(datos), { desde, hasta, feriados });
   const result = await procesarParsed({
     parsed, anio, mes, confirmar, soloPendientes, desde, hasta,
     origen: 'prosoft-api', importadoPor,

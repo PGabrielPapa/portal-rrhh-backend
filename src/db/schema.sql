@@ -747,6 +747,57 @@ ALTER TABLE fichadas_periodo ADD COLUMN IF NOT EXISTS ger_at   TIMESTAMPTZ;
 ALTER TABLE fichadas_periodo ADD COLUMN IF NOT EXISTS ger_obs  TEXT;          -- observación si el gerente rechaza
 CREATE INDEX IF NOT EXISTS idx_fichadas_estado ON fichadas_periodo(anio, mes, estado);
 
+-- ── Feriados (días no laborables) ──
+-- Se usan para no marcar injustificado un día hábil que en realidad es feriado.
+-- Editable: RR.HH. puede sumar provinciales o de la empresa. Seed = nacionales AR 2026.
+CREATE TABLE IF NOT EXISTS feriados (
+  fecha       DATE PRIMARY KEY,
+  descripcion TEXT,
+  tipo        TEXT NOT NULL DEFAULT 'nacional'
+);
+INSERT INTO feriados (fecha, descripcion, tipo) VALUES
+  ('2026-01-01','Año Nuevo','nacional'),
+  ('2026-02-16','Carnaval','nacional'),
+  ('2026-02-17','Carnaval','nacional'),
+  ('2026-03-23','No laborable turístico','turistico'),
+  ('2026-03-24','Día de la Memoria','nacional'),
+  ('2026-04-02','Malvinas','nacional'),
+  ('2026-04-03','Viernes Santo','nacional'),
+  ('2026-05-01','Día del Trabajador','nacional'),
+  ('2026-05-25','Revolución de Mayo','nacional'),
+  ('2026-06-15','Paso a la Inmortalidad Gral. Güemes (trasladado)','nacional'),
+  ('2026-06-20','Paso a la Inmortalidad Gral. Belgrano','nacional'),
+  ('2026-07-09','Día de la Independencia','nacional'),
+  ('2026-07-10','No laborable turístico','turistico'),
+  ('2026-08-17','Paso a la Inmortalidad Gral. San Martín','nacional'),
+  ('2026-10-12','Día del Respeto a la Diversidad Cultural','nacional'),
+  ('2026-11-23','Día de la Soberanía Nacional (trasladado)','nacional'),
+  ('2026-12-07','No laborable turístico','turistico'),
+  ('2026-12-08','Inmaculada Concepción de María','nacional'),
+  ('2026-12-25','Navidad','nacional')
+ON CONFLICT (fecha) DO NOTHING;
+
+-- ── Delegaciones ──
+-- Un gerente delega una tarea de aprobación (adelantos | fichadas | licencias |
+-- evaluaciones) en otro empleado (coordinador u otro gerente). El delegado opera
+-- esa tarea sobre el equipo del gerente. Temporal (hasta) o permanente (hasta NULL).
+CREATE TABLE IF NOT EXISTS delegaciones (
+  id           SERIAL PRIMARY KEY,
+  delegante_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  delegado_id  INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  tarea        TEXT NOT NULL,                         -- adelantos | fichadas | licencias | evaluaciones
+  desde        DATE,                                  -- NULL = desde ya
+  hasta        DATE,                                  -- NULL = permanente
+  estado       TEXT NOT NULL DEFAULT 'activa',        -- activa | revocada
+  nota         TEXT,
+  creado_por   TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revocada_por TEXT,
+  revocada_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_deleg_delegado  ON delegaciones(delegado_id, estado);
+CREATE INDEX IF NOT EXISTS idx_deleg_delegante ON delegaciones(delegante_id, estado);
+
 -- Log de cada importación (auditoría): cuántos cruzaron, sin match, a revisar.
 CREATE TABLE IF NOT EXISTS fichadas_importaciones (
   id            SERIAL PRIMARY KEY,

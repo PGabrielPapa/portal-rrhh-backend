@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { idsEquipoDe } from '../lib/equipo.js';
+import { equipoEfectivo, tieneDelegacion, notaDelegacion } from '../lib/delegaciones.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -50,9 +51,10 @@ router.get('/mias', async (req, res, next) => {
 
 router.get('/', async (req, res, next) => {
   try {
-    if (gestiona(req.user.role)) {
+    if (gestiona(req.user.role) || await tieneDelegacion(req.user, 'licencias')) {
       const { estado, empresa, q } = req.query; const cond = [], params = [];
-      if (req.user.role === 'manager') { const _ids = [...await idsEquipoDe(req.user.id)]; if (!_ids.length) return res.json([]); params.push(_ids); cond.push(`e.id = ANY($${params.length})`); }
+      // Gerente o delegado → acotado a su equipo (propio + delegado). RR.HH./admin ven todo.
+      if (req.user.role !== 'rrhh' && req.user.role !== 'admin') { const _ids = [...await equipoEfectivo(req.user, 'licencias')]; if (!_ids.length) return res.json([]); params.push(_ids); cond.push(`e.id = ANY($${params.length})`); }
       if (estado) { params.push(estado); cond.push(`l.estado = $${params.length}`); }
       if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
       if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
@@ -126,18 +128,21 @@ router.post('/justificar', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-router.patch('/:id', requireRole('manager', 'rrhh', 'admin'), async (req, res, next) => {
+router.patch('/:id', async (req, res, next) => {
   try {
     const estado = (req.body || {}).estado;
     if (!['aprobada', 'rechazada'].includes(estado)) return res.status(400).json({ error: 'Estado inválido' });
-    // P1 — Un gerente solo resuelve licencias de SU equipo (organigrama). RR.HH./admin, cualquiera.
-    if (req.user.role === 'manager') {
+    if (!(gestiona(req.user.role) || await tieneDelegacion(req.user, 'licencias'))) return res.status(403).json({ error: 'No tenés permisos para resolver licencias.' });
+    // Gerente o delegado: solo su equipo (propio + delegado). RR.HH./admin: cualquiera.
+    if (req.user.role !== 'rrhh' && req.user.role !== 'admin') {
       const cur = (await query('SELECT empleado_id FROM licencias WHERE id=$1', [req.params.id])).rows[0];
       if (!cur) return res.status(404).json({ error: 'La licencia no existe' });
-      const ids = await idsEquipoDe(req.user.id);
+      const ids = await equipoEfectivo(req.user, 'licencias');
       if (!ids.has(cur.empleado_id)) return res.status(403).json({ error: 'Esa licencia no corresponde a tu equipo.' });
     }
-    const r = await query(`UPDATE licencias SET estado=$1, resuelto_por=$2, resuelto_at=now() WHERE id=$3 AND estado='pendiente' RETURNING id`, [estado, req.user.dni, req.params.id]);
+    const notaL = await notaDelegacion(req.user, 'licencias');
+    const resueltoPor = notaL ? `${req.user.dni} (${notaL})` : req.user.dni;
+    const r = await query(`UPDATE licencias SET estado=$1, resuelto_por=$2, resuelto_at=now() WHERE id=$3 AND estado='pendiente' RETURNING id`, [estado, resueltoPor, req.params.id]);
     if (!r.rowCount) return res.status(409).json({ error: 'La licencia no existe o ya fue resuelta' });
     res.json({ ok: true, estado });
   } catch (e) { next(e); }
@@ -167,7 +172,7 @@ router.get('/:id/comprobante', async (req, res, next) => {
     if (!lic || !lic.comprobante_data) return res.status(404).json({ error: 'No hay comprobante para esta licencia' });
     const esGlobal = req.user.role === 'rrhh' || req.user.role === 'admin';
     let ok = esGlobal || lic.empleado_id === req.user.id;
-    if (!ok && req.user.role === 'manager') ok = (await idsEquipoDe(req.user.id)).has(lic.empleado_id);
+    if (!ok && (req.user.role === 'manager' || await tieneDelegacion(req.user, 'licencias'))) ok = (await equipoEfectivo(req.user, 'licencias')).has(lic.empleado_id);
     if (!ok) return res.status(403).json({ error: 'No autorizado' });
     const buf = Buffer.from(lic.comprobante_data, 'base64');
     res.setHeader('Content-Type', lic.comprobante_mime || 'application/octet-stream');

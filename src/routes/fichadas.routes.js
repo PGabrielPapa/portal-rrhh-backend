@@ -14,7 +14,8 @@ import { parseExtendido, normLegajo, minToHhmm } from '../lib/fichadasProsoft.js
 import { buildXlsx, buildPdf, nombreMes } from '../lib/fichadasExport.js';
 import { idsDirectosDe } from '../lib/equipo.js';
 import { getValidador } from '../lib/organigrama.js';
-import { procesarParsed } from '../lib/fichadasProcesar.js';
+import { equipoEfectivo, esGestorDeTarea, notaDelegacion } from '../lib/delegaciones.js';
+import { procesarParsed, getFeriadosSet } from '../lib/fichadasProcesar.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -42,7 +43,8 @@ router.post('/importar', requireRole('rrhh', 'admin'), upload.single('archivo'),
       return res.status(400).json({ error: 'No pude leer el Excel. ¿Es el "Reporte Marcas Extendido" de Pro-Soft?' });
     }
 
-    const parsed = parseExtendido(rows);
+    const feriados = await getFeriadosSet(desde, hasta);
+    const parsed = parseExtendido(rows, { desde, hasta, feriados });
     if (parsed.columnasFaltantes.length) {
       return res.status(400).json({ error: `Al Excel le faltan columnas esperadas: ${parsed.columnasFaltantes.join(', ')}. Asegurate de exportar el "Extendido".` });
     }
@@ -118,14 +120,17 @@ function responsableDe(e) {
 
 // GET /api/fichadas/equipo/:anio/:mes — cola del 2º control (responsable directo / CEO-admin).
 // (Debe ir ANTES de /:anio/:mes.)
-router.get('/equipo/:anio/:mes', requireRole('manager', 'admin'), async (req, res, next) => {
+router.get('/equipo/:anio/:mes', async (req, res, next) => {
   try {
+    if (!await esGestorDeTarea(req.user, 'fichadas')) return res.status(403).json({ error: 'No tenés acceso a las fichadas del equipo.' });
     const anio = Number(req.params.anio), mes = Number(req.params.mes);
     if (!anio || !mes) return res.status(400).json({ error: 'Período inválido.' });
     const cond = ['f.anio = $1', 'f.mes = $2', `f.estado IN ('aprob_rrhh','autorizada','observada')`];
     const params = [anio, mes];
-    if (req.user.role === 'manager') {
-      const ids = [...await idsDirectosDe(req.user.id)];
+    // Alcance: directos propios (si es gerente) + subárbol de quienes le delegaron fichadas.
+    // Admin ve todo (sin filtro por equipo).
+    if (req.user.role !== 'admin') {
+      const ids = [...await equipoEfectivo(req.user, 'fichadas', idsDirectosDe)];
       if (!ids.length) return res.json([]);
       params.push(ids);
       cond.push(`f.empleado_id = ANY($${params.length}::int[])`);
@@ -239,23 +244,25 @@ router.patch('/:id/aprobacion', requireRole('rrhh', 'admin', 'manager'), async (
         [req.user.dni || null, cur.id]);
       return res.json({ ok: true, estado: 'autorizada' });
     }
-    // etapa === 'gerencia' (responsable directo o CEO/admin)
-    if (!['manager', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Solo gerente/admin.' });
-    if (req.user.role === 'manager') {
-      const ids = await idsDirectosDe(req.user.id);
-      if (!ids.has(cur.empleado_id)) return res.status(403).json({ error: 'Ese empleado no es tu reporte directo.' });
+    // etapa === 'gerencia' (responsable directo, CEO/admin o delegado)
+    if (!await esGestorDeTarea(req.user, 'fichadas')) return res.status(403).json({ error: 'Solo gerente/admin o delegado.' });
+    if (req.user.role !== 'admin') {
+      const ids = await equipoEfectivo(req.user, 'fichadas', idsDirectosDe);
+      if (!ids.has(cur.empleado_id)) return res.status(403).json({ error: 'Ese empleado no está en tu equipo (ni delegado).' });
     }
     if (cur.estado !== 'aprob_rrhh') return res.status(409).json({ error: `No se puede en estado "${cur.estado}" (RR.HH. debe aprobar primero).` });
     const nuevo = accion === 'aprobar' ? 'autorizada' : 'observada';
+    const notaG = await notaDelegacion(req.user, 'fichadas');
+    const gerPor = notaG ? `${req.user.dni || ''} (${notaG})` : (req.user.dni || null);
     await query(
       `UPDATE fichadas_periodo SET estado=$1, ger_por=$2, ger_at=now(), ger_obs=$3 WHERE id=$4`,
-      [nuevo, req.user.dni || null, accion === 'rechazar' ? obs : null, cur.id]);
+      [nuevo, gerPor, accion === 'rechazar' ? obs : null, cur.id]);
     return res.json({ ok: true, estado: nuevo });
   } catch (e) { next(e); }
 });
 
 // POST /api/fichadas/:anio/:mes/aprobacion-masiva  { etapa, accion, ids:[fichadaId...], obs? }
-router.post('/:anio/:mes/aprobacion-masiva', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
+router.post('/:anio/:mes/aprobacion-masiva', async (req, res, next) => {
   try {
     const anio = Number(req.params.anio), mes = Number(req.params.mes);
     const { etapa, accion, ids, obs } = req.body || {};
@@ -264,9 +271,11 @@ router.post('/:anio/:mes/aprobacion-masiva', requireRole('rrhh', 'admin', 'manag
     if (accion === 'rechazar' && !String(obs || '').trim()) return res.status(400).json({ error: 'Para rechazar, indicá un comentario.' });
     if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'No seleccionaste novedades.' });
     if (etapa === 'rrhh' && !['rrhh', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Solo RR.HH./admin.' });
-    if (etapa === 'gerencia' && !['manager', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Solo gerente/admin.' });
+    if (etapa === 'gerencia' && !await esGestorDeTarea(req.user, 'fichadas')) return res.status(403).json({ error: 'Solo gerente/admin o delegado.' });
 
-    const dir = (etapa === 'gerencia' && req.user.role === 'manager') ? await idsDirectosDe(req.user.id) : null;
+    const dir = (etapa === 'gerencia' && req.user.role !== 'admin') ? await equipoEfectivo(req.user, 'fichadas', idsDirectosDe) : null;
+    const notaG = etapa === 'gerencia' ? await notaDelegacion(req.user, 'fichadas') : null;
+    const gerPorMasa = notaG ? `${req.user.dni || ''} (${notaG})` : (req.user.dni || null);
     const client = await pool.connect();
     let n = 0;
     try {
@@ -301,7 +310,7 @@ router.post('/:anio/:mes/aprobacion-masiva', requireRole('rrhh', 'admin', 'manag
           const nuevo = accion === 'aprobar' ? 'autorizada' : 'observada';
           await client.query(
             `UPDATE fichadas_periodo SET estado=$1, ger_por=$2, ger_at=now(), ger_obs=$3 WHERE id=$4`,
-            [nuevo, req.user.dni || null, accion === 'rechazar' ? obs : null, cur.id]);
+            [nuevo, gerPorMasa, accion === 'rechazar' ? obs : null, cur.id]);
           n++;
         }
       }

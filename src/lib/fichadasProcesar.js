@@ -5,6 +5,16 @@
 import { pool, query } from '../db.js';
 import { normLegajo, minToHhmm } from './fichadasProsoft.js';
 
+// Feriados (YYYY-MM-DD) dentro de un rango, como Set. Se pasan a parseExtendido
+// para no exigir jornada ni marcar injustificado en días feriados.
+export async function getFeriadosSet(desde, hasta) {
+  if (!desde || !hasta) return new Set();
+  const { rows } = await query(
+    `SELECT to_char(fecha, 'YYYY-MM-DD') AS d FROM feriados WHERE fecha BETWEEN $1 AND $2`,
+    [desde, hasta]);
+  return new Set(rows.map((r) => r.d));
+}
+
 // Da formato de presentación a un agregado por empleado.
 function vista(a) {
   return {

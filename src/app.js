@@ -46,6 +46,7 @@ import domicilioRoutes from './routes/domicilio.routes.js';
 import familiaresRoutes from './routes/familiares.routes.js';
 import fichadasRoutes from './routes/fichadas.routes.js';
 import prosoftRoutes from './routes/prosoft.routes.js';
+import delegacionesRoutes from './routes/delegaciones.routes.js';
 import arcaRoutes from './routes/arca.routes.js';
 import obraSocialRoutes from './routes/obraSocial.routes.js';
 
@@ -91,6 +92,7 @@ export function createApp() {
   app.use('/api/familiares', familiaresRoutes);
   app.use('/api/fichadas', fichadasRoutes);
   app.use('/api/prosoft', prosoftRoutes);
+  app.use('/api/delegaciones', delegacionesRoutes);
   app.use('/api/chs', chsRoutes);
   app.use('/api/personas', personasRoutes);
   app.use('/api/siradig', siradigRoutes);

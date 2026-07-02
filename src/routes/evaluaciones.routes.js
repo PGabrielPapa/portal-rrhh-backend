@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { idsEquipoDe } from '../lib/equipo.js';
+import { equipoEfectivo, tieneDelegacion } from '../lib/delegaciones.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -9,12 +10,12 @@ const gestiona = (r) => ['manager', 'rrhh', 'admin'].includes(r);
 
 router.get('/', async (req, res, next) => {
   try {
-    if (!gestiona(req.user.role)) {
+    if (!(gestiona(req.user.role) || await tieneDelegacion(req.user, 'evaluaciones'))) {
       const { rows } = await query('SELECT * FROM evaluaciones WHERE empleado_id = $1 ORDER BY created_at DESC', [req.user.id]);
       return res.json(rows);
     }
     const { empresa, q } = req.query; const cond = [], params = [];
-    if (req.user.role === 'manager') { const _ids = [...await idsEquipoDe(req.user.id)]; if (!_ids.length) return res.json([]); params.push(_ids); cond.push(`e.id = ANY($${params.length})`); }
+    if (req.user.role !== 'rrhh' && req.user.role !== 'admin') { const _ids = [...await equipoEfectivo(req.user, 'evaluaciones')]; if (!_ids.length) return res.json([]); params.push(_ids); cond.push(`e.id = ANY($${params.length})`); }
     if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
     if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
@@ -32,13 +33,14 @@ router.get('/mias', async (req, res, next) => {
   catch (e) { next(e); }
 });
 
-router.post('/', requireRole('manager', 'rrhh', 'admin'), async (req, res, next) => {
+router.post('/', async (req, res, next) => {
   try {
+    if (!(gestiona(req.user.role) || await tieneDelegacion(req.user, 'evaluaciones'))) return res.status(403).json({ error: 'No tenés permisos para cargar evaluaciones.' });
     const { empleadoId, periodo, tipo, calificacion, comentarios, datos } = req.body || {};
     if (!empleadoId || !periodo) return res.status(400).json({ error: 'empleado y período son obligatorios' });
-    // Un gerente solo evalúa a su equipo (organigrama). RR.HH./admin, a cualquiera.
-    if (req.user.role === 'manager') {
-      const ids = await idsEquipoDe(req.user.id);
+    // Gerente o delegado: solo su equipo (propio + delegado). RR.HH./admin, a cualquiera.
+    if (req.user.role !== 'rrhh' && req.user.role !== 'admin') {
+      const ids = await equipoEfectivo(req.user, 'evaluaciones');
       if (!ids.has(Number(empleadoId))) return res.status(403).json({ error: 'Solo podés evaluar a integrantes de tu equipo.' });
     }
     // Promedio de la matriz de competencias (1-5) si viene cargada
@@ -81,9 +83,10 @@ router.patch('/periodo/:anio/cerrar', requireRole('rrhh', 'admin'), async (req, 
 });
 
 // ── Pendientes del gerente: período anual abierto + recordatorios de período de prueba (60/120/170 días) ──
-router.get('/pendientes', requireRole('manager', 'rrhh', 'admin'), async (req, res, next) => {
+router.get('/pendientes', async (req, res, next) => {
   try {
-    const ids = [...await idsEquipoDe(req.user.id)];
+    if (!(gestiona(req.user.role) || await tieneDelegacion(req.user, 'evaluaciones'))) return res.status(403).json({ error: 'Sin permisos.' });
+    const ids = [...await equipoEfectivo(req.user, 'evaluaciones')];
     const anual = (await query("SELECT anio, abierto FROM evaluacion_periodos WHERE tipo='anual' AND abierto=true ORDER BY anio DESC LIMIT 1")).rows[0] || null;
     if (!ids.length) return res.json({ anual, equipoCount: 0, prueba: [] });
     const emps = (await query("SELECT id, nom, leg_num, ingreso FROM empleados WHERE id = ANY($1) AND activo=true AND ingreso IS NOT NULL", [ids])).rows;

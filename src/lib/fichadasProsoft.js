@@ -77,14 +77,26 @@ const fechaISO = (v) => {
   return s.slice(0, 10);
 };
 
+const DOW = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+const diaSemanaISO = (iso) => { const [y, m, d] = String(iso).split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); };
+const esDiaHabil = (iso) => { const w = diaSemanaISO(iso); return w >= 1 && w <= 5; };
+function* rangoFechas(desde, hasta) {
+  const [y, m, d] = String(desde).split('-').map(Number);
+  const cur = new Date(Date.UTC(y, m - 1, d));
+  for (let iso = cur.toISOString().slice(0, 10); iso <= hasta; cur.setUTCDate(cur.getUTCDate() + 1), iso = cur.toISOString().slice(0, 10)) yield iso;
+}
+
 /**
  * @param {Array<Array>} rows  Filas de la hoja (la primera es el encabezado).
- * @returns {{ porLegajo: Object, filas: number, legajos: number, columnasFaltantes: string[] }}
+ * @param {{desde?:string, hasta?:string, feriados?:Set<string>|string[]}} [opts]
+ * @returns {{ porLegajo, filas, legajos, columnasFaltantes }}
  */
-export function parseExtendido(rows) {
+export function parseExtendido(rows, opts = {}) {
   if (!Array.isArray(rows) || rows.length < 2) {
     return { porLegajo: {}, filas: 0, legajos: 0, columnasFaltantes: ['(archivo vacío)'] };
   }
+  const feriados = opts.feriados instanceof Set ? opts.feriados : new Set(opts.feriados || []);
+  const { desde, hasta } = opts;
   // Mapa nombre-de-columna → índice (tolerante a espacios/mayúsculas).
   const header = rows[0].map((h) => normKey(h));
   const idxOf = (label) => header.indexOf(normKey(label));
@@ -130,13 +142,15 @@ export function parseExtendido(rows) {
     const a = acc[leg];
 
     const hsNetas = hhmmToMin(cell(r, 'hsNetas'));
-    const hsNormal = hhmmToMin(cell(r, 'hsNormal'));
-    const esLaborable = hsNormal > 0;                 // Pro-Soft: 0 en finde/feriado
-    // Jornada esperada según el TURNO del empleado (9 hs por defecto; 10 hs en
-    // "Hormigon/ mamposteria Leloir"). NO se usa "Hs Normal" como jornada porque
-    // ese campo del reloj varía con lo trabajado. En finde/feriado (Hs Normal=0) → 0.
+    const fecha = fechaISO(cell(r, 'fecha'));
+    // Día laborable = lunes a viernes y NO feriado. Ya NO se usa "Hs Normal" del
+    // reloj (viene 0 para varios empleados y marcaba todo como finde/feriado).
+    const esLaborable = esDiaHabil(fecha) && !feriados.has(fecha);
+    // Jornada esperada según el TURNO (9 hs por defecto; 10 hs en "Hormigon/
+    // mamposteria Leloir"). En finde/feriado → 0.
     const jornadaTurno = JORNADA_POR_TURNO[normTurno(cell(r, 'turno'))] || JORNADA_DEFAULT;
     const jornadaDia = esLaborable ? jornadaTurno : 0;
+    a.jornadaTurnoMin = jornadaTurno; // se usa para completar días faltantes
     const e50 = hhmmToMin(cell(r, 'extra50'));
     const e100 = hhmmToMin(cell(r, 'extra100'));
     const tarde = hhmmToMin(cell(r, 'tarde'));
@@ -145,7 +159,6 @@ export function parseExtendido(rows) {
     const esLicencia = comentario.length > 0 && !esHomeOffice;
     const algunaMarca = ['e1', 's1', 'e2', 's2', 'e3', 's3', 'e4', 's4'].some((k) => norm(cell(r, k)));
     const marcaCompleta = !esLicencia && !!norm(cell(r, 'e1')) && !!norm(cell(r, 's1')) && hsNetas > 0;
-    const fecha = fechaISO(cell(r, 'fecha'));
     const entrada = norm(cell(r, 'e1')) || norm(cell(r, 'e2')) || norm(cell(r, 'e3')) || norm(cell(r, 'e4'));
     const salida = norm(cell(r, 's4')) || norm(cell(r, 's3')) || norm(cell(r, 's2')) || norm(cell(r, 's1'));
     const extraDiaMin = e50 + e100;
@@ -206,6 +219,26 @@ export function parseExtendido(rows) {
           tardeMin: tarde, completa: marcaCompleta, estado, comentario: '',
         });
       }
+    }
+  }
+
+  // Completar días hábiles faltantes del rango (ausencias totales, sin fila en
+  // Pro-Soft) como 'sin-marca' → luego el cruce los marca injustificados si no
+  // hay licencia. Se saltan fin de semana y feriados.
+  if (desde && hasta) {
+    for (const a of Object.values(acc)) {
+      const existentes = new Set(a.dias.map((d) => d.fecha));
+      const jd = a.jornadaTurnoMin || JORNADA_DEFAULT;
+      for (const iso of rangoFechas(desde, hasta)) {
+        if (!esDiaHabil(iso) || feriados.has(iso) || existentes.has(iso)) continue;
+        a.dias.push({
+          fecha: iso, dia: DOW[diaSemanaISO(iso)], entrada: '', salida: '',
+          hsNetasMin: 0, hsNormalMin: jd, saldoMin: null,
+          extra50Min: 0, extra100Min: 0, extraComputa: false, tardeMin: 0,
+          completa: false, estado: 'sin-marca', comentario: '',
+        });
+      }
+      a.dias.sort((x, y) => x.fecha.localeCompare(y.fecha));
     }
   }
 

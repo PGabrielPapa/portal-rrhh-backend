@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { idsEquipoDe } from '../lib/equipo.js';
+import { equipoEfectivo, notaDelegacion } from '../lib/delegaciones.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -14,7 +15,7 @@ router.get('/', async (req, res, next) => {
     if (puedeAprobar(req.user.role)) {
       const cond = [], params = [];
       if (req.user.role === 'manager') {
-        const ids = [...await idsEquipoDe(req.user.id)];
+        const ids = [...await equipoEfectivo(req.user, 'adelantos')]; // propio + delegado
         if (!ids.length) return res.json([]);
         params.push(ids); cond.push(`a.empleado_id = ANY($${params.length})`);
       }
@@ -98,11 +99,13 @@ router.patch('/:id/recomendacion', requireRole('manager', 'rrhh', 'admin'), asyn
     if (!cur) return res.status(404).json({ error: 'El adelanto no existe' });
     if (cur.estado !== 'pendiente') return res.status(409).json({ error: 'El adelanto ya fue resuelto por RR.HH.' });
     if (req.user.role === 'manager') {
-      const ids = await idsEquipoDe(req.user.id);
+      const ids = await equipoEfectivo(req.user, 'adelantos');
       if (!ids.has(cur.empleado_id)) return res.status(403).json({ error: 'Ese adelanto no corresponde a tu equipo.' });
     }
+    const notaA = await notaDelegacion(req.user, 'adelantos');
+    const recPor = notaA ? `${req.user.dni} (${notaA})` : req.user.dni;
     await query('UPDATE anticipos SET recomendacion=$1, recomendado_por=$2, recomendado_at=now() WHERE id=$3',
-      [rec, req.user.dni, req.params.id]);
+      [rec, recPor, req.params.id]);
     res.json({ ok: true, recomendacion: rec });
   } catch (e) { next(e); }
 });
@@ -136,7 +139,7 @@ router.get('/:id/cuotas', async (req, res, next) => {
     if (!a) return res.status(404).json({ error: 'Adelanto no encontrado' });
     const esGlobal = req.user.role === 'rrhh' || req.user.role === 'admin';
     let ok = esGlobal || a.empleado_id === req.user.id;
-    if (!ok && req.user.role === 'manager') ok = (await idsEquipoDe(req.user.id)).has(a.empleado_id);
+    if (!ok && req.user.role === 'manager') ok = (await equipoEfectivo(req.user, 'adelantos')).has(a.empleado_id);
     if (!ok) return res.status(403).json({ error: 'Sin permiso' });
     const { rows } = await query('SELECT nro, anio, mes, monto, created_at FROM anticipo_cuotas WHERE anticipo_id=$1 ORDER BY anio, mes', [req.params.id]);
     res.json(rows);
