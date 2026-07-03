@@ -18,6 +18,8 @@ router.get('/', async (req, res, next) => {
         const ids = [...await equipoEfectivo(req.user, 'adelantos')]; // propio + delegado
         if (!ids.length) return res.json([]);
         params.push(ids); cond.push(`a.empleado_id = ANY($${params.length})`);
+        // El gerente solo ve los adelantos del año en curso.
+        cond.push("a.created_at >= date_trunc('year', CURRENT_DATE)");
       }
       const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
       const { rows } = await query(
