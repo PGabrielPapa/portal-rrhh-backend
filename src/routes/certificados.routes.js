@@ -21,8 +21,8 @@ router.get('/', async (req, res, next) => {
     if (estado) { params.push(estado); cond.push(`c.estado = $${params.length}`); }
     if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
     if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
-    // Los emitidos (generados) solo se muestran si tienen menos de 15 días corridos; los pendientes/rechazados siempre.
-    cond.push("(c.estado <> 'generado' OR COALESCE(c.generado_at, c.created_at) >= CURRENT_DATE - INTERVAL '15 days')");
+    // Emitidos y rechazados: solo si tienen menos de 15 días corridos. Los pendientes siempre se muestran.
+    cond.push("(c.estado = 'pendiente' OR COALESCE(c.generado_at, c.created_at) >= CURRENT_DATE - INTERVAL '15 days')");
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const { rows } = await query(
       `SELECT c.*, e.nom, e.leg_num, em.nombre AS empresa FROM certificados c
