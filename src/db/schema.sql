@@ -1266,3 +1266,15 @@ CREATE TABLE IF NOT EXISTS beneficios_hist (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_benef_hist_ben ON beneficios_hist(beneficio_id);
+
+-- ── Histórico de elementos de trabajo (entrega / devolución / pérdida / rotura) ──
+CREATE TABLE IF NOT EXISTS elementos_hist (
+  id SERIAL PRIMARY KEY,
+  elemento_id INTEGER REFERENCES elementos_trabajo(id) ON DELETE CASCADE,
+  empleado_id INTEGER,
+  evento TEXT NOT NULL,
+  detalle TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_elem_hist ON elementos_hist(elemento_id);
