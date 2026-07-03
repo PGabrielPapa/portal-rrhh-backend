@@ -267,7 +267,7 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
 router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const b = req.body || {};
-    const before = (await query('SELECT cat, tramo, role, data FROM empleados WHERE id=$1', [req.params.id])).rows[0] || {};
+    const before = (await query('SELECT nom, email, cuil, ingreso, bruto, neto, cat, tramo, role, activo, data FROM empleados WHERE id=$1', [req.params.id])).rows[0] || {};
     // Tilde "Administrador": marca -> role admin; desmarca -> employee solo si era admin (no pisa manager/rrhh).
     if (b.esAdmin !== undefined && ['admin', 'rrhh'].includes(req.user.role)) {
       if (!b.esAdmin && Number(req.params.id) === req.user.id) return res.status(400).json({ error: 'No podés quitarte el rol admin a vos mismo' });
@@ -305,20 +305,29 @@ router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
         }
       } catch (e) { /* no romper el guardado */ }
       const sv = (v) => v == null ? '' : String(v);
-      // Histórico general de cambios del legajo (categoría, convenio, sindicato, domicilio, etc.).
-      try {
+      // Histórico general del legajo: registra CUALQUIER cambio de un empleado ACTIVO.
+      if (aft.activo) try {
+        const svd = (v) => v instanceof Date ? v.toISOString().slice(0, 10) : sv(v);
+        const LABELS = { nom: 'Nombre', email: 'E-mail (sistema)', cuil: 'CUIL', ingreso: 'Fecha de ingreso', bruto: 'Bruto', neto: 'Neto', cat: 'Categoría escala', tramo: 'Tramo escala', role: 'Rol',
+          tarea: 'Función / Tarea', desc_categoria: 'Descripción de categoría', condicion: 'Condición', categoria_convenio: 'Categoría de convenio', cod_convenio: 'CCT / Convenio', cod_sindicato: 'Afiliación sindical',
+          estado_civil: 'Estado civil', sexo: 'Sexo', fecha_nac: 'Fecha de nacimiento', nacionalidad: 'Nacionalidad',
+          email_laboral: 'Mail laboral', email_personal: 'Mail personal', tel_laboral: 'Teléfono laboral', tel_personal: 'Teléfono personal',
+          contacto_nombre: 'Contacto emergencia — nombre', contacto_tel: 'Contacto emergencia — teléfono', contacto_vinculo: 'Contacto emergencia — vínculo',
+          basico: 'Básico', sueldo: 'Sueldo', complemento: 'Complemento', norem: 'No remunerativo', antiguedad_monto: 'Adicional antigüedad',
+          os_codigo: 'Obra social (cód.)', os_nombre: 'Obra social', cod_os: 'Obra social (cód.)', desc_os: 'Obra social', adicionalPresentismo: 'Adicional presentismo' };
         const dom = (d) => [d.dom_calle, d.dom_nro, d.dom_piso ? 'Piso ' + d.dom_piso : '', d.dom_depto ? 'Dto ' + d.dom_depto : '', d.dom_torre, d.dom_bloque, d.dom_loc, d.dom_prov, d.dom_cp].filter(Boolean).join(' ');
-        const cambios = [
-          ['Categoría escala', sv(before.cat), sv(aft.cat)],
-          ['Tramo escala', sv(before.tramo), sv(aft.tramo)],
-          ['Categoría de convenio', sv(bd.categoria_convenio), sv(ad.categoria_convenio)],
-          ['CCT / Convenio', sv(bd.cod_convenio), sv(ad.cod_convenio)],
-          ['Afiliación sindical', sv(bd.cod_sindicato), sv(ad.cod_sindicato)],
-          ['Función / Tarea', sv(bd.tarea), sv(ad.tarea)],
-          ['Condición', sv(bd.condicion), sv(ad.condicion)],
-          ['Descripción de categoría', sv(bd.desc_categoria), sv(ad.desc_categoria)],
-          ['Domicilio', dom(bd), dom(ad)],
-        ].filter((c) => c[1] !== c[2]);
+        const cambios = [];
+        for (const k of ['nom', 'email', 'cuil', 'ingreso', 'bruto', 'neto', 'cat', 'tramo', 'role']) {
+          if (svd(before[k]) !== svd(aft[k])) cambios.push([LABELS[k] || k, svd(before[k]), svd(aft[k])]);
+        }
+        if (dom(bd) !== dom(ad)) cambios.push(['Domicilio', dom(bd), dom(ad)]);
+        const omit = new Set(['lugar', 'foto', 'modulosOcultos', 'comite_hys', 'centroCodigo', 'centroId']);
+        for (const k of new Set([...Object.keys(bd), ...Object.keys(ad)])) {
+          if (k.startsWith('dom_') || omit.has(k)) continue;
+          if (bd[k] !== null && typeof bd[k] === 'object') continue;
+          if (ad[k] !== null && typeof ad[k] === 'object') continue;
+          if (sv(bd[k]) !== sv(ad[k])) cambios.push([LABELS[k] || k, sv(bd[k]), sv(ad[k])]);
+        }
         for (const [etq, antv, newv] of cambios) {
           await query('INSERT INTO legajo_cambios (empleado_id, campo, etiqueta, valor_anterior, valor_nuevo, created_by) VALUES ($1,$2,$3,$4,$5,$6)', [req.params.id, etq, etq, antv || null, newv || null, req.user.dni]);
         }
