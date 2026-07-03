@@ -29,8 +29,10 @@ router.get('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
     const porEmpresa = {};
     for (const x of activos) {
       const k = x.empresa || '—';
-      porEmpresa[k] = porEmpresa[k] || { empresa: k, headcount: 0, masaBruta: 0 };
+      porEmpresa[k] = porEmpresa[k] || { empresa: k, headcount: 0, masaBruta: 0, genero: {} };
       porEmpresa[k].headcount++; porEmpresa[k].masaBruta = r2(porEmpresa[k].masaBruta + Number(x.bruto || 0));
+      const gk = (x.data?.sexo || x.data?.genero || 'Sin dato');
+      porEmpresa[k].genero[gk] = (porEmpresa[k].genero[gk] || 0) + 1;
     }
     // Distribución por género
     const genero = {};
