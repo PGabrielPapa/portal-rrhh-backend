@@ -1254,3 +1254,15 @@ CREATE TABLE IF NOT EXISTS reportes_definiciones (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ── Histórico de beneficios (asignación / baja / reactivación / edición) ──
+CREATE TABLE IF NOT EXISTS beneficios_hist (
+  id SERIAL PRIMARY KEY,
+  beneficio_id INTEGER REFERENCES beneficios(id) ON DELETE CASCADE,
+  empleado_id INTEGER,
+  evento TEXT NOT NULL,
+  detalle TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_benef_hist_ben ON beneficios_hist(beneficio_id);
