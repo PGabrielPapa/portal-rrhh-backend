@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { idsEquipoDe } from '../lib/equipo.js';
+import { getValidador } from '../lib/organigrama.js';
 import { equipoEfectivo, tieneDelegacion } from '../lib/delegaciones.js';
 
 const router = Router();
@@ -20,10 +21,16 @@ router.get('/', async (req, res, next) => {
     if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const { rows } = await query(
-      `SELECT v.*, e.nom, e.leg_num, em.nombre AS empresa, e.data->>'validador' AS validador, e.data->>'areaOrg' AS area_org FROM evaluaciones v
+      `SELECT v.*, e.nom, e.leg_num, e.cat AS emp_cat, em.nombre AS empresa, e.data AS emp_data FROM evaluaciones v
          JOIN empleados e ON e.id = v.empleado_id JOIN empresas em ON em.id = e.empresa_id
          ${where} ORDER BY v.created_at DESC`, params);
-    res.json(rows);
+    res.json(rows.map((r) => {
+      const d = r.emp_data || {};
+      let gv = { area: '', validador: '' };
+      try { gv = getValidador({ nom: r.nom, lugar: d.lugar, validador: d.validador, areaOrg: d.areaOrg, area: d.area, cat: r.emp_cat, emp: r.empresa }); } catch (e) { /* */ }
+      const { emp_data, emp_cat, ...rest } = r;
+      return { ...rest, gerencia: gv.area || '—', validador: gv.validador || '' };
+    }));
   } catch (e) { next(e); }
 });
 
