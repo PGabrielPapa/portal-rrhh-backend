@@ -20,7 +20,7 @@ router.get('/', async (req, res, next) => {
     if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(e.nom) LIKE $${i} OR e.leg_num LIKE $${i})`); }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const { rows } = await query(
-      `SELECT v.*, e.nom, e.leg_num, em.nombre AS empresa FROM evaluaciones v
+      `SELECT v.*, e.nom, e.leg_num, em.nombre AS empresa, e.data->>'validador' AS validador, e.data->>'areaOrg' AS area_org FROM evaluaciones v
          JOIN empleados e ON e.id = v.empleado_id JOIN empresas em ON em.id = e.empresa_id
          ${where} ORDER BY v.created_at DESC`, params);
     res.json(rows);
