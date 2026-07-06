@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { query } from '../db.js';
+import { query, pool } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { calcularRecibo, factorNoHabitual, TIPOS_SAC, TIPOS_NO_HABITUAL_B } from '../lib/liquidacion.js';
 import { ganTablaParaFecha } from '../lib/gananciasParams.js';
@@ -14,9 +14,9 @@ import { paramsParaFecha } from './parametros.routes.js';
 const router = Router();
 router.use(requireAuth);
 
-async function registrarCuotas(cuotas, anio, mes, reciboId, corridaId) {
+async function registrarCuotas(cuotas, anio, mes, reciboId, corridaId, db = query) {
   for (const c of (cuotas || [])) {
-    await query(
+    await db(
       `INSERT INTO anticipo_cuotas (anticipo_id, recibo_id, corrida_id, anio, mes, nro, monto)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (anticipo_id, anio, mes)
@@ -167,11 +167,11 @@ async function resetAjusteNeto(empleadoId, anio, mes) { // idempotencia al re-li
   await query('UPDATE ajustes_neto SET recuperado=false, recuperado_anio=NULL, recuperado_mes=NULL WHERE empleado_id=$1 AND recuperado_anio=$2 AND recuperado_mes=$3', [empleadoId, Number(anio), Number(mes)]);
   await query('DELETE FROM ajustes_neto WHERE empleado_id=$1 AND anio=$2 AND mes=$3', [empleadoId, Number(anio), Number(mes)]);
 }
-async function commitAjusteNeto(empleadoId, anio, mes, recibo) {
+async function commitAjusteNeto(empleadoId, anio, mes, recibo, db = query) {
   const rec = Number(recibo?.detalle?.ajusteNetoRecuperado) || 0;
-  if (rec > 0) await query('UPDATE ajustes_neto SET recuperado=true, recuperado_anio=$2, recuperado_mes=$3 WHERE empleado_id=$1 AND recuperado=false AND (anio*100+mes) < ($2*100+$3)', [empleadoId, Number(anio), Number(mes)]);
+  if (rec > 0) await db('UPDATE ajustes_neto SET recuperado=true, recuperado_anio=$2, recuperado_mes=$3 WHERE empleado_id=$1 AND recuperado=false AND (anio*100+mes) < ($2*100+$3)', [empleadoId, Number(anio), Number(mes)]);
   const gen = Number(recibo?.detalle?.ajusteNetoNegativo) || 0;
-  if (gen > 0) await query('INSERT INTO ajustes_neto (empleado_id, anio, mes, monto) VALUES ($1,$2,$3,$4)', [empleadoId, Number(anio), Number(mes), gen]);
+  if (gen > 0) await db('INSERT INTO ajustes_neto (empleado_id, anio, mes, monto) VALUES ($1,$2,$3,$4)', [empleadoId, Number(anio), Number(mes), gen]);
 }
 
 const round2c = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -295,17 +295,25 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     let ajPend = 0;
     if (_esMensual(tipo)) { await resetAjusteNeto(empleadoId, anio, mes); ajPend = await ajustePendiente(empleadoId, anio, mes); }
     const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, ...nov, ...varProm, ...emb, ...extra });
-    const ins = await query(
-      `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, publicado)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,true)
-       ON CONFLICT (empleado_id, anio, mes, tipo)
-       DO UPDATE SET neto=EXCLUDED.neto, data=EXCLUDED.data, created_by=EXCLUDED.created_by, publicado=true, created_at=now()
-       RETURNING id`,
-      [empleadoId, Number(anio), Number(mes), tipo, recibo.totales.neto, JSON.stringify(recibo), req.user.dni]
-    );
-    await registrarCuotas(cuotas, anio, mes, ins.rows[0].id, null);
-    if (_esMensual(tipo)) await commitAjusteNeto(empleadoId, anio, mes, recibo);
-    res.json({ ok: true, id: ins.rows[0].id, recibo });
+    const client = await pool.connect();
+    let reciboId;
+    try {
+      await client.query('BEGIN');
+      const db = client.query.bind(client);
+      const ins = await db(
+        `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, publicado)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,true)
+         ON CONFLICT (empleado_id, anio, mes, tipo)
+         DO UPDATE SET neto=EXCLUDED.neto, data=EXCLUDED.data, created_by=EXCLUDED.created_by, publicado=true, created_at=now()
+         RETURNING id`,
+        [empleadoId, Number(anio), Number(mes), tipo, recibo.totales.neto, JSON.stringify(recibo), req.user.dni]
+      );
+      reciboId = ins.rows[0].id;
+      await registrarCuotas(cuotas, anio, mes, reciboId, null, db);
+      if (_esMensual(tipo)) await commitAjusteNeto(empleadoId, anio, mes, recibo, db);
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+    res.json({ ok: true, id: reciboId, recibo });
   } catch (e) { next(e); }
 });
 
@@ -397,37 +405,43 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const ganTabla = await ganTablaParaFecha(fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sMap = await sindMap();
     const cMap = await convMap();
-    const cr = await query(
-      `INSERT INTO corridas (anio, mes, tipo, empresa, estado, creado_por) VALUES ($1,$2,$3,$4,'borrador',$5) RETURNING id`,
-      [Number(anio), Number(mes), tipo, empresa || null, req.user.dni]
-    );
-    const corridaId = cr.rows[0].id;
-    let totalNeto = 0, cant = 0;
-    for (const { id } of emps) {
-      const emp = await getEmp(id);
-      const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
-      const acumGan = await acumGananciasDe(id, anio, mes);
-      const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp);
-      const _emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(id, fechaPago) : {};
-      const _nov = _esMensual(tipo) ? { ...await novedadesOpts(id, anio, mes), ...await licenciasSinGoceOpts(id, anio, mes) } : {};
-      const _varProm = (tipo === 'vacaciones' || _esMensual(tipo)) ? await promedioVariablesMes(id, anio, mes) : {};
-      const _sacBase = _esSAC(tipo) ? await mejorRemSemestre(id, anio, tipo) : 0;
-      let _ajPend = 0;
-      if (_esMensual(tipo)) { await resetAjusteNeto(id, anio, mes); _ajPend = await ajustePendiente(id, anio, mes); }
-      const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, ..._nov, ..._varProm, ..._emb });
-      totalNeto += recibo.totales.neto; cant++;
-      const rr = await query(
-        `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false)
-         ON CONFLICT (empleado_id, anio, mes, tipo)
-         DO UPDATE SET neto=EXCLUDED.neto, data=EXCLUDED.data, created_by=EXCLUDED.created_by, corrida_id=EXCLUDED.corrida_id, publicado=false, created_at=now()
-         RETURNING id`,
-        [id, Number(anio), Number(mes), tipo, recibo.totales.neto, JSON.stringify(recibo), req.user.dni, corridaId]
+    const client = await pool.connect();
+    let corridaId, totalNeto = 0, cant = 0;
+    try {
+      await client.query('BEGIN');
+      const db = client.query.bind(client);
+      const cr = await db(
+        `INSERT INTO corridas (anio, mes, tipo, empresa, estado, creado_por) VALUES ($1,$2,$3,$4,'borrador',$5) RETURNING id`,
+        [Number(anio), Number(mes), tipo, empresa || null, req.user.dni]
       );
-      await registrarCuotas(cuotas, anio, mes, rr.rows[0].id, corridaId);
-      if (_esMensual(tipo)) await commitAjusteNeto(id, anio, mes, recibo);
-    }
-    await query('UPDATE corridas SET total_neto=$1, cant=$2 WHERE id=$3', [totalNeto, cant, corridaId]);
+      corridaId = cr.rows[0].id;
+      for (const { id } of emps) {
+        const emp = await getEmp(id);
+        const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
+        const acumGan = await acumGananciasDe(id, anio, mes);
+        const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp);
+        const _emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(id, fechaPago) : {};
+        const _nov = _esMensual(tipo) ? { ...await novedadesOpts(id, anio, mes), ...await licenciasSinGoceOpts(id, anio, mes) } : {};
+        const _varProm = (tipo === 'vacaciones' || _esMensual(tipo)) ? await promedioVariablesMes(id, anio, mes) : {};
+        const _sacBase = _esSAC(tipo) ? await mejorRemSemestre(id, anio, tipo) : 0;
+        let _ajPend = 0;
+        if (_esMensual(tipo)) { await resetAjusteNeto(id, anio, mes); _ajPend = await ajustePendiente(id, anio, mes); }
+        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, ..._nov, ..._varProm, ..._emb });
+        totalNeto += recibo.totales.neto; cant++;
+        const rr = await db(
+          `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false)
+           ON CONFLICT (empleado_id, anio, mes, tipo)
+           DO UPDATE SET neto=EXCLUDED.neto, data=EXCLUDED.data, created_by=EXCLUDED.created_by, corrida_id=EXCLUDED.corrida_id, publicado=false, created_at=now()
+           RETURNING id`,
+          [id, Number(anio), Number(mes), tipo, recibo.totales.neto, JSON.stringify(recibo), req.user.dni, corridaId]
+        );
+        await registrarCuotas(cuotas, anio, mes, rr.rows[0].id, corridaId, db);
+        if (_esMensual(tipo)) await commitAjusteNeto(id, anio, mes, recibo, db);
+      }
+      await db('UPDATE corridas SET total_neto=$1, cant=$2 WHERE id=$3', [totalNeto, cant, corridaId]);
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
     res.status(201).json({ ok: true, id: corridaId, cant, totalNeto, avisoValores: verVal.desactualizado ? verVal.mensaje : null });
   } catch (e) { next(e); }
 });
@@ -491,9 +505,14 @@ router.delete('/corrida/:id', requireRole('rrhh', 'admin'), async (req, res, nex
     const c = (await query('SELECT estado FROM corridas WHERE id=$1', [req.params.id])).rows[0];
     if (!c) return res.status(404).json({ error: 'Corrida no encontrada' });
     if (c.estado === 'publicada') return res.status(409).json({ error: 'No se puede borrar una corrida publicada' });
-    await query('DELETE FROM anticipo_cuotas WHERE corrida_id=$1', [req.params.id]);
-    await query('DELETE FROM recibos WHERE corrida_id=$1', [req.params.id]);
-    await query('DELETE FROM corridas WHERE id=$1', [req.params.id]);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM anticipo_cuotas WHERE corrida_id=$1', [req.params.id]);
+      await client.query('DELETE FROM recibos WHERE corrida_id=$1', [req.params.id]);
+      await client.query('DELETE FROM corridas WHERE id=$1', [req.params.id]);
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
