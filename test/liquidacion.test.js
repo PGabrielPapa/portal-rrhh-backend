@@ -71,6 +71,18 @@ test('licencia sin goce (art. 78 CCT 130/75): descuenta días y NO hace perder p
   assert.ok(pres(base) === 0 || pres(aus) < pres(base), 'control: las ausencias injustificadas sí afectan el presentismo');
 });
 
+test('vacaciones: adiciona el promedio de variables (art. 155 inc. c LCT)', () => {
+  const r = calcularRecibo(empBase, P, { anio: 2026, mes: 6, tipo: 'vacaciones', calcularGanancias: false, diasVac: 14, promedioVariablesMes: 250000 });
+  const plus = (r.haberes.find((h) => h.concepto.includes('Promedio de variables s/vacaciones')) || {}).monto || 0;
+  assert.equal(plus, Math.round((250000 / 25) * 14 * 100) / 100);
+});
+
+test('enfermedad: adiciona el promedio de variables por los días de licencia (art. 208 LCT)', () => {
+  const r = calcularRecibo(empBase, P, { anio: 2026, mes: 6, tipo: 'mensual', calcularGanancias: false, diasEnfermedad: 6, promedioVariablesMes: 300000 });
+  const plus = (r.haberes.find((h) => h.concepto.includes('Promedio de variables s/licencia por enfermedad')) || {}).monto || 0;
+  assert.equal(plus, Math.round((300000 / 30) * 6 * 100) / 100);
+});
+
 test('SAC = 50% de la mejor remuneración del semestre', () => {
   const r = calcularRecibo(empBase, P, { anio: 2026, mes: 6, tipo: 'sac1', calcularGanancias: false, mejorRemSAC: 1200000 });
   const sac = (r.haberes.find((h) => /SAC/.test(h.concepto)) || {}).monto || 0;

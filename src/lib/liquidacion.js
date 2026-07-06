@@ -296,6 +296,13 @@ export function calcularRecibo(emp, params, opts) {
     const valorDia = (regularRemun + noRem) / 25; // Art. 155 LCT
     haberes.push({ concepto: `Vacaciones (${diasVac} días × $${round2(valorDia)})`, tipo: 'rem', monto: round2(diasVac * valorDia) });
     detalle.vacaciones = { dias: diasVac, valorDia: round2(valorDia), diasCorresponden: diasCorr };
+    // Art. 155 inc. c) LCT: si hay remuneraciones variables, se adiciona el promedio (del año / último semestre).
+    const promVarVac = num(opts?.promedioVariablesMes);
+    if (promVarVac > 0) {
+      const vVar = round2((promVarVac / 25) * diasVac);
+      haberes.push({ concepto: `Promedio de variables s/vacaciones (${diasVac} días — art. 155 inc. c LCT)`, tipo: 'rem', monto: vVar });
+      detalle.vacaciones.promedioVariables = vVar;
+    }
   } else if (esFinal) {
     const fEg = opts?.fechaEgreso;
     const diaEgreso = parseDate(fEg)?.getDate() || 30;
@@ -418,6 +425,10 @@ export function calcularRecibo(emp, params, opts) {
     // Horas extra exentas de Ganancias (Art. 82 LIG) — remunerativas para aportes
     const heEx = num(opts?.hsExtrasExentas);
     if (heEx > 0) haberes.push({ concepto: `Horas extra exentas Ganancias (${heEx} hs)`, tipo: 'rem', monto: round2((basico / 200) * 1.5 * heEx) });
+    // Art. 208 LCT: durante la licencia por enfermedad inculpable se mantiene el promedio
+    // de las remuneraciones variables del último semestre por los días de licencia.
+    const dEnf = num(opts?.diasEnfermedad), promVarEnf = num(opts?.promedioVariablesMes);
+    if (dEnf > 0 && promVarEnf > 0) haberes.push({ concepto: `Promedio de variables s/licencia por enfermedad (${dEnf} días — art. 208 LCT)`, tipo: 'rem', monto: round2((promVarEnf / 30) * dEnf) });
     // Conceptos exentos (no tributan aportes ni Ganancias): bono productividad, indemnizaciones, otros
     if (num(opts?.bonoProductividadExento) > 0) haberes.push({ concepto: 'Bono productividad (exento)', tipo: 'exento', monto: round2(num(opts.bonoProductividadExento)) });
     if (num(opts?.indemnizaciones) > 0) haberes.push({ concepto: 'Indemnizaciones (exento)', tipo: 'exento', monto: round2(num(opts.indemnizaciones)) });
