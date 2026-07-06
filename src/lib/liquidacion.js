@@ -376,9 +376,17 @@ export function calcularRecibo(emp, params, opts) {
   const descuentos = [];
   const topeMax = num(p.topeAportesMax) > 0 ? num(p.topeAportesMax) : Infinity;
   const topeMin = num(p.topeAportesMin) > 0 ? num(p.topeAportesMin) : 0;
-  const baseAportes = Math.min(Math.max(totalRemun, topeMin), topeMax);
+  const baseAportes = Math.min(Math.max(totalRemun, topeMin), topeMax);   // base SIPA (jubilación + INSSJP)
+  // Obra Social: MISMO tope y base que SIPA para jornada completa. En jornada PARCIAL
+  // (art. 92 ter LCT / Ley 24.465) los aportes y contribuciones de OS se calculan sobre la
+  // remuneración de un trabajador de JORNADA COMPLETA de la misma categoría (data.remFullTime);
+  // si no está cargada, el piso es la base mínima (equivalente a la jornada completa mínima).
+  const esParcial = d.jornadaParcial === true || d.jornadaParcial === 'si' || d.jornadaParcial === '1';
+  const remOs = esParcial ? Math.max(totalRemun, num(d.remFullTime) || topeMin) : totalRemun;
+  const baseAportesOs = Math.min(Math.max(remOs, topeMin), topeMax);
   const ap = (pct) => round2(baseAportes * num(pct) / 100);
-  const aJub = ap(p.pctJubilacion), aOS = ap(p.pctObraSocial), aAnssal = ap(p.pctAnssal), aPami = ap(p.pctPamiEmp), aSind = esFC ? 0 : ap(p.pctSindicatoEmp);
+  const apOs = (pct) => round2(baseAportesOs * num(pct) / 100);
+  const aJub = ap(p.pctJubilacion), aOS = apOs(p.pctObraSocial), aAnssal = apOs(p.pctAnssal), aPami = ap(p.pctPamiEmp), aSind = esFC ? 0 : ap(p.pctSindicatoEmp);
   if (aJub > 0) descuentos.push({ concepto: 'Jubilación', monto: aJub });
   if (aOS > 0) descuentos.push({ concepto: 'Obra Social', monto: aOS });
   if (aAnssal > 0) descuentos.push({ concepto: 'ANSSAL', monto: aAnssal });
@@ -504,7 +512,7 @@ export function calcularRecibo(emp, params, opts) {
   const detr = (tipo === 'mensual') ? num(p.detraccionContrib) : (esQuincenal ? num(p.detraccionContrib) * 0.5 : 0);
   const baseSegSoc = Math.max(0, totalRemun - detr);
   const coSeg = (pct) => round2(baseSegSoc * num(pct) / 100);
-  const cJub = coSeg(p.pctJubPatronal), cOS = co(p.pctOsPatronal), cPami = coSeg(p.pctPamiPatronal), cFne = coSeg(p.pctDesempleo), cArt = co(p.pctArt), cSind = esFC ? 0 : co(p.pctSindicatoPatronal);
+  const cJub = coSeg(p.pctJubPatronal), cOS = round2(baseAportesOs * num(p.pctOsPatronal) / 100), cPami = coSeg(p.pctPamiPatronal), cFne = coSeg(p.pctDesempleo), cArt = co(p.pctArt), cSind = esFC ? 0 : co(p.pctSindicatoPatronal);
   const scvo = round2(num(p.scvoPercapita));  // Seguro de Vida Obligatorio (Dto. 1567/74), prima per cápita
   const ffep = round2(num(p.ffep));            // Fondo Fiduciario de Enfermedades Profesionales (SRT), suma fija por trabajador
   if (cJub > 0) contribuciones.push({ concepto: 'Jubilación patronal (SIPA)', monto: cJub });

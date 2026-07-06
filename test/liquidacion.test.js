@@ -91,6 +91,13 @@ test('detracción de base en contribuciones patronales (Ley 27.541) — solo seg
   assert.equal(cont(con, /Obra Social patronal/), cont(sin, /Obra Social patronal/), 'OS patronal NO cambia');
 });
 
+test('jornada parcial: OS sobre jornada completa (art. 92 ter LCT); SIPA sobre lo real', () => {
+  const full = calcularRecibo({ ...empBase, bruto: 400000 }, P, { anio: 2026, mes: 6, tipo: 'mensual', calcularGanancias: false });
+  const parc = calcularRecibo({ ...empBase, bruto: 400000, data: { jornadaParcial: true, remFullTime: 900000 } }, P, { anio: 2026, mes: 6, tipo: 'mensual', calcularGanancias: false });
+  assert.ok(aporte(parc, /Obra Social/) > aporte(full, /Obra Social/), 'OS del parcial se calcula sobre jornada completa (mayor)');
+  assert.equal(aporte(parc, /Jubilación/), aporte(full, /Jubilación/), 'Jubilación (SIPA) se calcula sobre la remuneración real');
+});
+
 test('SAC = 50% de la mejor remuneración del semestre', () => {
   const r = calcularRecibo(empBase, P, { anio: 2026, mes: 6, tipo: 'sac1', calcularGanancias: false, mejorRemSAC: 1200000 });
   const sac = (r.haberes.find((h) => /SAC/.test(h.concepto)) || {}).monto || 0;
