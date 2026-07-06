@@ -50,7 +50,8 @@ router.get('/organigrama', async (req, res, next) => {
     const empresas = [...new Set(emps.map((e) => e.empresa).filter(Boolean))].sort();
     const ocupanteDTO = (e) => {
       const d = e.data || {};
-      return { id: e.id, nom: e.nom, legNum: e.leg_num, empresa: e.empresa, cat: e.cat, tramo: e.tramo,
+      // No se exponen categoría ni tramo (insinúan banda salarial); el organigrama es visible a todos.
+      return { id: e.id, nom: e.nom, legNum: e.leg_num, empresa: e.empresa,
         lugar: d.lugar || '', tarea: d.tarea || d.desc_categoria || '', foto: d.foto || '' };
     };
     const pasa = (e) => !filtro || String(e.empresa || '').toUpperCase() === filtro;

@@ -17,6 +17,15 @@ try {
   console.error('[boot] error aplicando el esquema:', e.message);
 }
 
+// Claves foráneas faltantes (auditoría #6): limpia huérfanos y agrega las FKs (idempotente).
+try {
+  const { migrarFKs } = await import('./db/migrateFKs.js');
+  const r = await migrarFKs();
+  if (r.agregadas) console.log(`[boot] claves foráneas agregadas ✓ (${r.agregadas})`);
+} catch (e) {
+  console.error('[boot] migración de FKs:', e.message);
+}
+
 // Organigrama por puesto: siembra inicial de la tabla `puestos` desde el
 // organigrama vigente (idempotente; no hace nada si ya hay puestos cargados).
 try {
