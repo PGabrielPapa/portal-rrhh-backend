@@ -127,4 +127,20 @@ router.get('/:id/notificacion', async (req, res, next) => {
     res.send(buf);
   } catch (e) { next(e); }
 });
+// DELETE /api/sanciones/:id — RR.HH./admin cualquiera; gerente solo las de su equipo.
+router.delete('/:id', requireRole('manager', 'rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const sr = await query('SELECT empleado_id FROM sanciones WHERE id=$1', [req.params.id]);
+    const s = sr.rows[0];
+    if (!s) return res.status(404).json({ error: 'Sanción no encontrada' });
+    const esRRHH = ['rrhh', 'admin'].includes(req.user.role);
+    if (!esRRHH) {
+      const ids = await idsEquipoDe(req.user.id);
+      if (!ids.has(s.empleado_id)) return res.status(403).json({ error: 'Solo podés borrar sanciones de integrantes de tu equipo.' });
+    }
+    await query('DELETE FROM sanciones WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 export default router;
