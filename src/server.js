@@ -40,7 +40,24 @@ const app = createApp();
 const server = app.listen(config.port, () => {
   console.log(`[api] Portal RR.HH. escuchando en :${config.port}`);
   programarProsoftDiario();
+  programarValoresLegalesDiario();
 });
+
+// Actualización automática diaria de valores legales (SMVM, topes SIPA, SCVO, FFEP)
+// desde el calendario oficial, sin intervención manual. Corre una vez por día.
+function programarValoresLegalesDiario() {
+  const correr = async () => {
+    try {
+      const { autoActualizarValores } = await import('./routes/valoresLegales.routes.js');
+      const r = await autoActualizarValores();
+      console.log(`[valores-legales] actualización diaria OK (${r.creadas} nuevos, ${r.actualizadas} actualizados).`);
+    } catch (e) {
+      console.error('[valores-legales] actualización diaria falló:', e.message);
+    }
+  };
+  setInterval(correr, 24 * 3600 * 1000);
+  console.log('[valores-legales] actualización automática diaria activada.');
+}
 
 // Importación automática diaria desde Pro-Soft (si PROSOFT_AUTO=true).
 // Trae el mes en curso sin pisar los períodos ya aprobados (soloPendientes).

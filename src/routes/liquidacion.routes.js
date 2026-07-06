@@ -286,7 +286,7 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     // Chequeo OBLIGATORIO: SMVM y topes SIPA actualizados para el período (auto-actualiza desde el calendario y bloquea si faltan o están vencidos).
     try { await autoActualizarValores(); } catch (e) { /* si falla la auto-actualización, igual valida lo cargado */ }
     const verValG = await verificarValoresLegales(anio, mes);
-    if (verValG.faltan || verValG.desactualizado) return res.status(409).json({ error: verValG.mensaje + ' (Actualizá los valores legales del período en «Valores legales» antes de liquidar.)' });
+    if (verValG.faltan) return res.status(409).json({ error: verValG.mensaje });
     const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
     const acumGan = await acumGananciasDe(empleadoId, anio, mes);
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
@@ -404,7 +404,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     if (empresa && await periodoCerrado(empresa, anio, mes)) return res.status(409).json({ error: `El período ${String(mes).padStart(2,'0')}/${anio} de ${empresa} está cerrado` });
     try { await autoActualizarValores(); } catch (e) { /* no bloquea la corrida */ }
     const verVal = await verificarValoresLegales(anio, mes);
-    if (verVal.faltan || verVal.desactualizado) return res.status(409).json({ error: verVal.mensaje + ' (Actualizá los valores legales del período en «Valores legales» antes de liquidar.)' });
+    if (verVal.faltan) return res.status(409).json({ error: verVal.mensaje });
     const params = await getParamsConValores(anio, mes);
     const ganTabla = await ganTablaParaFecha(fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sMap = await sindMap();
