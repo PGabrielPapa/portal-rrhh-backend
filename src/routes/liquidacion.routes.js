@@ -8,6 +8,7 @@ import { idsEquipoDe } from '../lib/equipo.js';
 
 import { embargosOpts } from './embargos.routes.js';
 import { novedadesOpts } from './novedades.routes.js';
+import { esSinGoce } from '../lib/licenciasReglas.js';
 import { valoresLegalesVigentes, verificarValoresLegales, autoActualizarValores } from './valoresLegales.routes.js';
 import { paramsParaFecha } from './parametros.routes.js';
 const router = Router();
@@ -116,6 +117,26 @@ async function ajustePendiente(empleadoId, anio, mes) {
   const r = await query('SELECT COALESCE(SUM(monto),0) AS m FROM ajustes_neto WHERE empleado_id=$1 AND recuperado=false AND (anio*100+mes) < ($2*100+$3)', [empleadoId, Number(anio), Number(mes)]);
   return Number(r.rows[0].m) || 0;
 }
+// Días de licencia SIN goce de haberes (aprobadas) que caen dentro del mes → descuento en la liquidación.
+async function licenciasSinGoceOpts(empleadoId, anio, mes) {
+  try {
+    const { rows } = await query(
+      `SELECT desde, hasta, tipo FROM licencias
+        WHERE empleado_id=$1 AND estado='aprobada'
+          AND EXTRACT(YEAR FROM desde) <= $2 AND EXTRACT(YEAR FROM hasta) >= $2`, [empleadoId, Number(anio)]);
+    const mStart = new Date(Number(anio), Number(mes) - 1, 1);
+    const mEnd = new Date(Number(anio), Number(mes), 0);
+    let dias = 0;
+    for (const r of rows) {
+      if (!esSinGoce(r.tipo)) continue;
+      const d = new Date(r.desde), h = new Date(r.hasta);
+      const a = d > mStart ? d : mStart;
+      const b = h < mEnd ? h : mEnd;
+      if (b >= a) dias += Math.floor((b - a) / 86400000) + 1;
+    }
+    return dias > 0 ? { diasLicenciaSinGoce: dias } : {};
+  } catch { return {}; }
+}
 async function resetAjusteNeto(empleadoId, anio, mes) { // idempotencia al re-liquidar el período
   await query('UPDATE ajustes_neto SET recuperado=false, recuperado_anio=NULL, recuperado_mes=NULL WHERE empleado_id=$1 AND recuperado_anio=$2 AND recuperado_mes=$3', [empleadoId, Number(anio), Number(mes)]);
   await query('DELETE FROM ajustes_neto WHERE empleado_id=$1 AND anio=$2 AND mes=$3', [empleadoId, Number(anio), Number(mes)]);
@@ -221,7 +242,7 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
     const convBasico = convBasicoDe(await convMap(), emp);
     const emb = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
-    const nov = _esMensual(t) ? await novedadesOpts(empleadoId, anio, mes) : {};
+    const nov = _esMensual(t) ? { ...await novedadesOpts(empleadoId, anio, mes), ...await licenciasSinGoceOpts(empleadoId, anio, mes) } : {};
     const sacBase = _esSAC(t) ? await mejorRemSemestre(empleadoId, anio, t) : 0;
     const ajPend = _esMensual(t) ? await ajustePendiente(empleadoId, anio, mes) : 0;
     res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, ...nov, ...emb, ...extra }));
@@ -241,7 +262,7 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
     const convBasico = convBasicoDe(await convMap(), emp);
     const emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
-    const nov = _esMensual(tipo) ? await novedadesOpts(empleadoId, anio, mes) : {};
+    const nov = _esMensual(tipo) ? { ...await novedadesOpts(empleadoId, anio, mes), ...await licenciasSinGoceOpts(empleadoId, anio, mes) } : {};
     const sacBase = _esSAC(tipo) ? await mejorRemSemestre(empleadoId, anio, tipo) : 0;
     let ajPend = 0;
     if (_esMensual(tipo)) { await resetAjusteNeto(empleadoId, anio, mes); ajPend = await ajustePendiente(empleadoId, anio, mes); }
@@ -360,7 +381,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       const acumGan = await acumGananciasDe(id, anio, mes);
       const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp);
       const _emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(id, fechaPago) : {};
-      const _nov = _esMensual(tipo) ? await novedadesOpts(id, anio, mes) : {};
+      const _nov = _esMensual(tipo) ? { ...await novedadesOpts(id, anio, mes), ...await licenciasSinGoceOpts(id, anio, mes) } : {};
       const _sacBase = _esSAC(tipo) ? await mejorRemSemestre(id, anio, tipo) : 0;
       let _ajPend = 0;
       if (_esMensual(tipo)) { await resetAjusteNeto(id, anio, mes); _ajPend = await ajustePendiente(id, anio, mes); }

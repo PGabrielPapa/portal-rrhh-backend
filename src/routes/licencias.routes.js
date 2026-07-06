@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { idsEquipoDe } from '../lib/equipo.js';
+import { reglaDe } from '../lib/licenciasReglas.js';
 import { equipoEfectivo, tieneDelegacion, notaDelegacion } from '../lib/delegaciones.js';
 
 const router = Router();
@@ -99,9 +100,11 @@ router.post('/', async (req, res, next) => {
     const { tipo, desde, hasta, motivo } = req.body || {};
     if (!tipo || !desde || !hasta) return res.status(400).json({ error: 'Tipo, desde y hasta son obligatorios' });
     if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
-    // Imprevisibles: no se solicitan con anticipación (RR.HH. las registra).
+    // Imprevisibles: enfermedad PROPIA y fallecimientos los registra RR.HH.
+    // (nacimiento y enfermedad de familiar a cargo sí puede solicitarlas el empleado).
     const tl = String(tipo).toLowerCase();
-    if (tl.startsWith('enfermedad') || tl.startsWith('fallecimiento') || tl.includes('nacimiento')) {
+    const esFamiliar = tl.includes('familiar');
+    if ((tl.startsWith('enfermedad') && !esFamiliar) || tl.startsWith('fallecimiento')) {
       return res.status(400).json({ error: `${tipo} es una licencia imprevisible y no puede solicitarse con anticipación; debe registrarla RR.HH. (o justificarla con comprobante).` });
     }
     const dias = diasEntre(desde, hasta);
@@ -109,6 +112,18 @@ router.post('/', async (req, res, next) => {
       const info = await getVacInfo(req.user.id);
       if (dias > info.disponible) {
         return res.status(400).json({ error: `Excede tu saldo de vacaciones: pedís ${dias} día(s) y tenés ${info.disponible} disponible(s) (saldo del año ${info.saldoEsteAnio} + saldo anterior ${info.saldoAnteriores}).` });
+      }
+    }
+    // Topes de licencias especiales (planilla del grupo + LCT/CCT).
+    const regla = reglaDe(tipo);
+    if (regla) {
+      if (regla.anual) {
+        const yr = new Date(desde + 'T12:00:00').getFullYear();
+        const prev = (await query("SELECT tipo, dias FROM licencias WHERE empleado_id=$1 AND estado IN ('aprobada','pendiente') AND EXTRACT(YEAR FROM desde)=$2", [req.user.id, yr])).rows;
+        let tomados = 0; for (const r of prev) { const rg = reglaDe(r.tipo); if (rg && rg.key === regla.key) tomados += Number(r.dias) || 0; }
+        if (tomados + dias > regla.tope) return res.status(400).json({ error: `Supera el máximo de ${regla.tope} día(s)/año de ${regla.nombre} (${regla.base}). Ya lleva ${tomados} este año y pedís ${dias}.` });
+      } else if (dias > regla.tope) {
+        return res.status(400).json({ error: `El máximo para ${regla.nombre} es ${regla.tope} día(s) (${regla.base}); estás pidiendo ${dias}.` });
       }
     }
     const ins = await query(

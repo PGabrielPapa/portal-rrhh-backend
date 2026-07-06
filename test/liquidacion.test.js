@@ -60,6 +60,17 @@ test('embargo con tope legal (20% sobre excedente SMVM)', () => {
   assert.ok(emb > 0 && emb < 9999999, 'el embargo debe quedar topeado');
 });
 
+test('licencia sin goce (art. 78 CCT 130/75): descuenta días y NO hace perder presentismo', () => {
+  const base = calcularRecibo(empBase, P, { anio: 2026, mes: 6, tipo: 'mensual', calcularGanancias: false });
+  const sg = calcularRecibo(empBase, P, { anio: 2026, mes: 6, tipo: 'mensual', calcularGanancias: false, diasLicenciaSinGoce: 5 });
+  const aus = calcularRecibo(empBase, P, { anio: 2026, mes: 6, tipo: 'mensual', calcularGanancias: false, ausenciasInjustificadas: 5 });
+  const pres = (rec) => (rec.haberes || []).filter((h) => /presentismo/i.test(h.concepto)).reduce((a, h) => a + h.monto, 0);
+  assert.ok(sg.descuentos.some((d) => /sin goce/i.test(d.concepto)), 'debe figurar la línea de licencia sin goce');
+  assert.equal(pres(sg), pres(base), 'la licencia sin goce NO hace perder el presentismo');
+  assert.ok(sg.totales.neto < base.totales.neto, 'el neto baja por los días sin goce');
+  assert.ok(pres(base) === 0 || pres(aus) < pres(base), 'control: las ausencias injustificadas sí afectan el presentismo');
+});
+
 test('SAC = 50% de la mejor remuneración del semestre', () => {
   const r = calcularRecibo(empBase, P, { anio: 2026, mes: 6, tipo: 'sac1', calcularGanancias: false, mejorRemSAC: 1200000 });
   const sac = (r.haberes.find((h) => /SAC/.test(h.concepto)) || {}).monto || 0;

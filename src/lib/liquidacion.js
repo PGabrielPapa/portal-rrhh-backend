@@ -509,6 +509,10 @@ export function calcularRecibo(emp, params, opts) {
     if (dSusp > 0) descuentos.push({ concepto: `Suspensión disciplinaria (${dSusp} días)`, monto: round2(valorDia * dSusp) });
     const dAus = num(opts?.ausenciasInjustificadas);
     if (dAus > 0) descuentos.push({ concepto: `Ausencias injustificadas (${dAus} días)`, monto: round2(valorDia * dAus) });
+    // Licencia SIN goce de haberes (p. ej. enfermedad de familiar a cargo, art. 78 CCT 130/75).
+    // NO hace perder el presentismo (es licencia convencional), por eso va aparte de las ausencias.
+    const dSG = num(opts?.diasLicenciaSinGoce);
+    if (dSG > 0) descuentos.push({ concepto: `Licencia sin goce de haberes (${dSG} días — art. 78 CCT 130/75)`, monto: round2(valorDia * dSG) });
     if (num(opts?.otrosDesc) > 0) descuentos.push({ concepto: opts?.otrosDescLabel || 'Otros descuentos', monto: round2(num(opts.otrosDesc)) });
 
     // Neto disponible para topes de embargo.
