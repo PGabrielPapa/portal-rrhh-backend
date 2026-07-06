@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { idsEquipoDe } from '../lib/equipo.js';
-import { reglaDe } from '../lib/licenciasReglas.js';
+import { reglaDe, topeExamen, REGLAS } from '../lib/licenciasReglas.js';
 import { equipoEfectivo, tieneDelegacion, notaDelegacion } from '../lib/delegaciones.js';
 
 const router = Router();
@@ -45,6 +45,26 @@ router.get('/vacaciones-info', async (req, res, next) => {
   try { res.json(await getVacInfo(req.user.id)); } catch (e) { next(e); }
 });
 
+// GET /licencias/mis-saldos — saldos de licencias especiales del empleado (tope, tomados y disponible).
+router.get('/mis-saldos', async (req, res, next) => {
+  try {
+    const yr = new Date().getFullYear();
+    const nt = (await query("SELECT data->>'nivelTitulo' AS nt FROM empleados WHERE id=$1", [req.user.id])).rows[0]?.nt || '';
+    const prev = (await query("SELECT tipo, dias, estado FROM licencias WHERE empleado_id=$1 AND EXTRACT(YEAR FROM desde)=$2", [req.user.id, yr])).rows;
+    const especiales = REGLAS.map((r) => {
+      const tope = r.key === 'examen' ? topeExamen(nt) : r.tope;
+      const row = { key: r.key, nombre: r.nombre, base: r.base, anual: r.anual, sinGoce: r.sinGoce, tope };
+      if (r.anual) {
+        let tomados = 0, pend = 0;
+        for (const l of prev) { const rg = reglaDe(l.tipo); if (rg && rg.key === r.key) { if (l.estado === 'aprobada') tomados += Number(l.dias) || 0; else if (l.estado === 'pendiente') pend += Number(l.dias) || 0; } }
+        row.tomados = tomados; row.pendientes = pend; row.disponible = Math.max(0, tope - tomados - pend);
+      }
+      return row;
+    });
+    res.json({ anio: yr, nivelTitulo: nt, especiales });
+  } catch (e) { next(e); }
+});
+
 // GET /licencias/equipo-saldos — resumen de licencias del equipo del gerente,
 // con saldo de vacaciones de cada integrante (para el Tablero del equipo).
 router.get('/equipo-saldos', async (req, res, next) => {
@@ -58,11 +78,13 @@ router.get('/equipo-saldos', async (req, res, next) => {
               (SELECT COALESCE(SUM(l.dias),0)::int FROM licencias l WHERE l.empleado_id=e.id AND (lower(l.tipo) LIKE '%examen%' OR lower(l.tipo) LIKE '%estudio%') AND l.estado='aprobada' AND EXTRACT(YEAR FROM l.desde)=EXTRACT(YEAR FROM CURRENT_DATE)) AS examen_anio
          FROM empleados e JOIN empresas em ON em.id=e.empresa_id
         WHERE e.id = ANY($1) AND e.activo=true ORDER BY e.nom`, [ids]);
+    const niveles = {};
+    for (const r0 of (await query("SELECT id, data->>'nivelTitulo' AS nt FROM empleados WHERE id = ANY($1)", [ids])).rows) niveles[r0.id] = r0.nt;
     const out = [];
     for (const r of rows) {
       const v = await getVacInfo(r.id);
       out.push({ id: r.id, nom: r.nom, legNum: r.leg_num, empresa: r.empresa,
-        pendientes: r.pendientes, aprobadasAnio: r.aprobadas_anio, examenAnio: r.examen_anio,
+        pendientes: r.pendientes, aprobadasAnio: r.aprobadas_anio, examenAnio: r.examen_anio, examenTope: topeExamen(niveles[r.id]),
         antiguedad: v.antiguedad, corresponden: v.corresponden, tomados: v.tomadosEsteAnio,
         saldoEsteAnio: v.saldoEsteAnio, saldoAnteriores: v.saldoAnteriores, disponible: v.disponible });
     }
@@ -119,9 +141,11 @@ router.post('/', async (req, res, next) => {
     if (regla) {
       if (regla.anual) {
         const yr = new Date(desde + 'T12:00:00').getFullYear();
+        let tope = regla.tope;
+        if (regla.key === 'examen') { const nt = (await query("SELECT data->>'nivelTitulo' AS nt FROM empleados WHERE id=$1", [req.user.id])).rows[0]?.nt; tope = topeExamen(nt); }
         const prev = (await query("SELECT tipo, dias FROM licencias WHERE empleado_id=$1 AND estado IN ('aprobada','pendiente') AND EXTRACT(YEAR FROM desde)=$2", [req.user.id, yr])).rows;
         let tomados = 0; for (const r of prev) { const rg = reglaDe(r.tipo); if (rg && rg.key === regla.key) tomados += Number(r.dias) || 0; }
-        if (tomados + dias > regla.tope) return res.status(400).json({ error: `Supera el máximo de ${regla.tope} día(s)/año de ${regla.nombre} (${regla.base}). Ya lleva ${tomados} este año y pedís ${dias}.` });
+        if (tomados + dias > tope) return res.status(400).json({ error: `Supera el máximo de ${tope} día(s)/año de ${regla.nombre} (${regla.base}). Ya lleva ${tomados} este año y pedís ${dias}.` });
       } else if (dias > regla.tope) {
         return res.status(400).json({ error: `El máximo para ${regla.nombre} es ${regla.tope} día(s) (${regla.base}); estás pidiendo ${dias}.` });
       }

@@ -32,6 +32,13 @@ export function reglaDe(tipo) {
   return REGLAS.find((r) => r.match(t)) || null;
 }
 
+// Tope anual de licencia por examen/estudio según el nivel de estudios del legajo:
+// secundario → 10 días/año; terciario o universitario → 20 días/año (planilla del grupo).
+// Si no hay nivel cargado se aplica el máximo (20), a favor del trabajador.
+export function topeExamen(nivelTitulo) {
+  return norm(nivelTitulo) === 'secundario' ? 10 : 20;
+}
+
 // true si el tipo de licencia es SIN goce de haberes (impacta la liquidación).
 export function esSinGoce(tipo) {
   const r = reglaDe(tipo);
