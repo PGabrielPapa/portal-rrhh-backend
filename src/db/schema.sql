@@ -1278,3 +1278,24 @@ CREATE TABLE IF NOT EXISTS elementos_hist (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_elem_hist ON elementos_hist(elemento_id);
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- ORGANIGRAMA POR PUESTO
+-- La dependencia jerárquica se define por PUESTO (no por persona ni empresa).
+-- Un puesto reporta a otro puesto (reporta_a). Un empleado se asigna a un
+-- puesto (puesto_id) y un mismo puesto puede tener varios ocupantes.
+-- Cambio de gerente = reasignar la persona al puesto; la cadena se mantiene.
+-- ─────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS puestos (
+  id         SERIAL PRIMARY KEY,
+  codigo     TEXT UNIQUE,
+  nombre     TEXT NOT NULL,
+  area       TEXT,
+  reporta_a  INTEGER REFERENCES puestos(id) ON DELETE SET NULL,
+  go_to_hr   BOOLEAN NOT NULL DEFAULT false,
+  orden      INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_puestos_reporta ON puestos(reporta_a);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS puesto_id INTEGER REFERENCES puestos(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_empleados_puesto ON empleados(puesto_id);

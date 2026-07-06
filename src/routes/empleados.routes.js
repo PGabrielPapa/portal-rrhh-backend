@@ -25,6 +25,7 @@ function mapRow(r) {
     email: r.email,
     empresa: r.empresa_nombre,
     empresaId: r.empresa_id,
+    puestoId: r.puesto_id,
     cat: r.cat,
     tramo: r.tramo,
     ingreso: r.ingreso,
@@ -234,7 +235,7 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
     if (!empresaId) return res.status(400).json({ error: `Empresa no encontrada: ${empresa}` });
     // El legajo lo asigna el sistema (siguiente por empresa), para evitar repeticiones.
     const legAsignado = await nextLegajo(client, empresaId);
-    const core = ['empresa','legNum','leg','dni','cuil','nom','email','cat','tramo','ingreso','bruto','neto','role'];
+    const core = ['empresa','legNum','leg','dni','cuil','nom','email','cat','tramo','ingreso','bruto','neto','role','puestoId','esAdmin'];
     const data = {}; for (const k of Object.keys(b)) if (!core.includes(k)) data[k] = b[k];
     const { rows } = await client.query(
       `INSERT INTO empleados (empresa_id, leg_num, dni, cuil, nom, email, cat, tramo, ingreso, bruto, neto, es_alta, role, data)
@@ -243,6 +244,7 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
        b.cat || null, b.tramo || null, b.ingreso || null, b.bruto || 0, b.neto || 0,
        ((b.esAdmin && ['admin', 'rrhh'].includes(req.user.role)) ? 'admin' : (b.role || 'employee')), JSON.stringify(data)]
     );
+    if (b.puestoId) { try { await client.query('UPDATE empleados SET puesto_id=$1 WHERE id=$2', [b.puestoId, rows[0].id]); } catch (e) { /* puesto opcional */ } }
     // Capa Personas/Períodos: ligar el empleado a una persona y abrir su período (no rompe el alta si falla).
     try {
       const empId = rows[0].id;
@@ -276,13 +278,13 @@ router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
     }
     // Columnas núcleo editables (identidad empresa+legajo+dni NO se cambia acá).
     const fields = { nom: b.nom, email: b.email, cat: b.cat, tramo: b.tramo, cuil: b.cuil,
-      ingreso: b.ingreso, bruto: b.bruto, neto: b.neto };
+      ingreso: b.ingreso, bruto: b.bruto, neto: b.neto, puesto_id: b.puestoId };
     const sets = [], params = [];
     for (const [k, v] of Object.entries(fields)) {
       if (v !== undefined) { params.push(k === 'nom' ? String(v).toUpperCase() : (v === '' ? null : v)); sets.push(`${k} = $${params.length}`); }
     }
     // Resto de campos (domicilio, tarea, sindicato, básico, etc.) → se mergean en data jsonb.
-    const exclude = ['empresa', 'legNum', 'leg', 'dni', 'cuil', 'nom', 'email', 'cat', 'tramo', 'ingreso', 'bruto', 'neto', 'role', 'id', 'uid', 'empresaId', 'activo', 'esAlta'];
+    const exclude = ['empresa', 'legNum', 'leg', 'dni', 'cuil', 'nom', 'email', 'cat', 'tramo', 'ingreso', 'bruto', 'neto', 'role', 'id', 'uid', 'empresaId', 'activo', 'esAlta', 'puestoId', 'puesto_id', 'puesto'];
     const data = {}; for (const k of Object.keys(b)) if (!exclude.includes(k)) data[k] = b[k];
     if (Object.keys(data).length) { params.push(JSON.stringify(data)); sets.push(`data = data || $${params.length}::jsonb`); }
     if (!sets.length) return res.status(400).json({ error: 'Nada para actualizar' });

@@ -17,6 +17,16 @@ try {
   console.error('[boot] error aplicando el esquema:', e.message);
 }
 
+// Organigrama por puesto: siembra inicial de la tabla `puestos` desde el
+// organigrama vigente (idempotente; no hace nada si ya hay puestos cargados).
+try {
+  const { migrarPuestos } = await import('./db/migratePuestos.js');
+  const r = await migrarPuestos();
+  if (!r.skip) console.log(`[boot] puestos sembrados desde el organigrama ✓ (${r.creados} puestos)`);
+} catch (e) {
+  console.error('[boot] migración de puestos:', e.message);
+}
+
 // Actualización automática de valores legales (tope SIPA, SMVM, SCVO, FFEP) según el calendario publicado.
 try {
   const { autoActualizarValores } = await import('./routes/valoresLegales.routes.js');
