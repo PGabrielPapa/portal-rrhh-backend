@@ -181,4 +181,20 @@ router.get('/:id/comprobante', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// DELETE /api/licencias/:id — borra una licencia. RR.HH./admin cualquiera; el gerente, solo las de su equipo.
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const cur = (await query('SELECT empleado_id FROM licencias WHERE id=$1', [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'Licencia no encontrada' });
+    const esRRHH = ['rrhh', 'admin'].includes(req.user.role);
+    if (!esRRHH) {
+      if (req.user.role !== 'manager') return res.status(403).json({ error: 'No autorizado' });
+      const ids = await idsEquipoDe(req.user.id);
+      if (!ids.has(cur.empleado_id)) return res.status(403).json({ error: 'Esa licencia no es de tu equipo.' });
+    }
+    await query('DELETE FROM licencias WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 export default router;
