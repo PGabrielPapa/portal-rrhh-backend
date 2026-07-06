@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { validarAdjunto } from '../lib/adjuntos.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -39,6 +40,7 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.empleadoId || !b.tipo) return res.status(400).json({ error: 'Empleado y tipo son obligatorios' });
+    if (b.archivoData) { const v = validarAdjunto({ nombre: b.archivoNombre, mime: b.archivoMime, data: b.archivoData }); if (!v.ok) return res.status(400).json({ error: v.error }); }
     const r = await query('INSERT INTO legajo_docs (empleado_id, tipo, descripcion, fecha_emision, fecha_vencimiento, archivo_nombre, archivo_mime, archivo_data, obs, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
       [b.empleadoId, b.tipo, b.descripcion || null, b.fechaEmision || null, b.fechaVencimiento || null, b.archivoNombre || null, b.archivoMime || null, b.archivoData || null, b.obs || null, req.user?.email || '']);
     res.status(201).json({ ok: true, id: r.rows[0].id });

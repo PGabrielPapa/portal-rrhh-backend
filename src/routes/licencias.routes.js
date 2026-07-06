@@ -3,6 +3,7 @@ import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { idsEquipoDe } from '../lib/equipo.js';
 import { reglaDe, topeExamen, REGLAS } from '../lib/licenciasReglas.js';
+import { validarAdjunto, mimeSeguro } from '../lib/adjuntos.js';
 import { equipoEfectivo, tieneDelegacion, notaDelegacion } from '../lib/delegaciones.js';
 
 const router = Router();
@@ -180,6 +181,7 @@ router.post('/justificar', async (req, res, next) => {
     const { tipo, desde, hasta, motivo, comprobanteNombre, comprobanteMime, comprobanteData } = req.body || {};
     if (!tipo || !desde || !hasta) return res.status(400).json({ error: 'Tipo, desde y hasta son obligatorios' });
     if (!comprobanteData) return res.status(400).json({ error: 'Debés adjuntar el comprobante que justifica la licencia.' });
+    { const v = validarAdjunto({ nombre: comprobanteNombre, mime: comprobanteMime, data: comprobanteData }); if (!v.ok) return res.status(400).json({ error: v.error }); }
     if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
     const dias = diasEntre(desde, hasta);
     const ins = await query(
@@ -217,6 +219,7 @@ router.post('/:id/comprobante', async (req, res, next) => {
   try {
     const { comprobanteNombre, comprobanteMime, comprobanteData } = req.body || {};
     if (!comprobanteData) return res.status(400).json({ error: 'Debés adjuntar el comprobante.' });
+    { const v = validarAdjunto({ nombre: comprobanteNombre, mime: comprobanteMime, data: comprobanteData }); if (!v.ok) return res.status(400).json({ error: v.error }); }
     const r = await query(
       `UPDATE licencias SET comprobante_nombre=$1, comprobante_mime=$2, comprobante_data=$3, justificacion=true
          WHERE id=$4 AND empleado_id=$5
@@ -239,8 +242,9 @@ router.get('/:id/comprobante', async (req, res, next) => {
     if (!ok && (req.user.role === 'manager' || await tieneDelegacion(req.user, 'licencias'))) ok = (await equipoEfectivo(req.user, 'licencias')).has(lic.empleado_id);
     if (!ok) return res.status(403).json({ error: 'No autorizado' });
     const buf = Buffer.from(lic.comprobante_data, 'base64');
-    res.setHeader('Content-Type', lic.comprobante_mime || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `inline; filename="${(lic.comprobante_nombre || 'comprobante').replace(/[^\w.\- ]/g, '_')}"`);
+    res.setHeader('Content-Type', mimeSeguro(lic.comprobante_mime));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `attachment; filename="${(lic.comprobante_nombre || 'comprobante').replace(/[^\w.\- ]/g, '_')}"`);
     res.send(buf);
   } catch (e) { next(e); }
 });

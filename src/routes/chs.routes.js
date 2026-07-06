@@ -3,6 +3,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { mimeSeguro } from '../lib/adjuntos.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -35,7 +36,8 @@ function archivoHandler(tabla) {
       const { rows } = await query(`SELECT archivo_nombre, archivo_mime, archivo_data FROM ${tabla} WHERE id=$1`, [req.params.id]);
       const r = rows[0];
       if (!r || !r.archivo_data) return res.status(404).json({ error: 'Sin archivo' });
-      res.setHeader('Content-Type', r.archivo_mime || 'application/octet-stream');
+      res.setHeader('Content-Type', mimeSeguro(r.archivo_mime));
+      res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Content-Disposition', `attachment; filename="${String(r.archivo_nombre || 'archivo').replace(/[^\w.\-]/g, '_')}"`);
       res.send(Buffer.from(r.archivo_data, 'base64'));
     } catch (e) { next(e); }

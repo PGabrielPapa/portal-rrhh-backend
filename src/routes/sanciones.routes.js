@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { idsEquipoDe } from '../lib/equipo.js';
+import { validarAdjunto, mimeSeguro } from '../lib/adjuntos.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -95,6 +96,7 @@ router.post('/:id/notificacion', requireRole('rrhh', 'admin'), async (req, res, 
   try {
     const { fecha, nombre, mime, data } = req.body || {};
     if (!data) return res.status(400).json({ error: 'Adjuntá el archivo de la notificación.' });
+    { const v = validarAdjunto({ nombre, mime, data }); if (!v.ok) return res.status(400).json({ error: v.error }); }
     const f = fecha || new Date().toISOString().slice(0, 10);
     const sr = await query('SELECT empleado_id, tipo, falta, fecha, dias, descripcion FROM sanciones WHERE id=$1', [req.params.id]);
     const s = sr.rows[0];
@@ -122,8 +124,9 @@ router.get('/:id/notificacion', async (req, res, next) => {
     if (!ok && req.user.role === 'manager') ok = (await idsEquipoDe(req.user.id)).has(s.empleado_id);
     if (!ok) return res.status(403).json({ error: 'No autorizado' });
     const buf = Buffer.from(s.notif_data, 'base64');
-    res.setHeader('Content-Type', s.notif_mime || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `inline; filename="${(s.notif_nombre || 'notificacion').replace(/[^\w.\- ]/g, '_')}"`);
+    res.setHeader('Content-Type', mimeSeguro(s.notif_mime));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `attachment; filename="${(s.notif_nombre || 'notificacion').replace(/[^\w.\- ]/g, '_')}"`);
     res.send(buf);
   } catch (e) { next(e); }
 });
