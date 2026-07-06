@@ -44,6 +44,31 @@ router.get('/vacaciones-info', async (req, res, next) => {
   try { res.json(await getVacInfo(req.user.id)); } catch (e) { next(e); }
 });
 
+// GET /licencias/equipo-saldos — resumen de licencias del equipo del gerente,
+// con saldo de vacaciones de cada integrante (para el Tablero del equipo).
+router.get('/equipo-saldos', async (req, res, next) => {
+  try {
+    const ids = [...await idsEquipoDe(req.user.id)];
+    if (!ids.length) return res.json([]);
+    const { rows } = await query(
+      `SELECT e.id, e.nom, e.leg_num, em.nombre AS empresa,
+              (SELECT count(*)::int FROM licencias l WHERE l.empleado_id=e.id AND l.estado='pendiente') AS pendientes,
+              (SELECT count(*)::int FROM licencias l WHERE l.empleado_id=e.id AND l.estado='aprobada' AND EXTRACT(YEAR FROM l.desde)=EXTRACT(YEAR FROM CURRENT_DATE)) AS aprobadas_anio,
+              (SELECT COALESCE(SUM(l.dias),0)::int FROM licencias l WHERE l.empleado_id=e.id AND lower(l.tipo) LIKE '%examen%' AND l.estado='aprobada' AND EXTRACT(YEAR FROM l.desde)=EXTRACT(YEAR FROM CURRENT_DATE)) AS examen_anio
+         FROM empleados e JOIN empresas em ON em.id=e.empresa_id
+        WHERE e.id = ANY($1) AND e.activo=true ORDER BY e.nom`, [ids]);
+    const out = [];
+    for (const r of rows) {
+      const v = await getVacInfo(r.id);
+      out.push({ id: r.id, nom: r.nom, legNum: r.leg_num, empresa: r.empresa,
+        pendientes: r.pendientes, aprobadasAnio: r.aprobadas_anio, examenAnio: r.examen_anio,
+        antiguedad: v.antiguedad, corresponden: v.corresponden, tomados: v.tomadosEsteAnio,
+        saldoEsteAnio: v.saldoEsteAnio, saldoAnteriores: v.saldoAnteriores, disponible: v.disponible });
+    }
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
 router.get('/mias', async (req, res, next) => {
   try { const { rows } = await query('SELECT id, empleado_id, tipo, desde, hasta, dias, motivo, estado, resuelto_por, resuelto_at, created_at, justificacion, comprobante_nombre, comprobante_mime, (comprobante_data IS NOT NULL) AS tiene_comprobante FROM licencias WHERE empleado_id = $1 AND desde >= CURRENT_DATE - INTERVAL \'2 years\' ORDER BY created_at DESC', [req.user.id]); res.json(rows); }
   catch (e) { next(e); }
