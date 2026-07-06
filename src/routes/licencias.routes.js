@@ -54,7 +54,7 @@ router.get('/equipo-saldos', async (req, res, next) => {
       `SELECT e.id, e.nom, e.leg_num, em.nombre AS empresa,
               (SELECT count(*)::int FROM licencias l WHERE l.empleado_id=e.id AND l.estado='pendiente') AS pendientes,
               (SELECT count(*)::int FROM licencias l WHERE l.empleado_id=e.id AND l.estado='aprobada' AND EXTRACT(YEAR FROM l.desde)=EXTRACT(YEAR FROM CURRENT_DATE)) AS aprobadas_anio,
-              (SELECT COALESCE(SUM(l.dias),0)::int FROM licencias l WHERE l.empleado_id=e.id AND lower(l.tipo) LIKE '%examen%' AND l.estado='aprobada' AND EXTRACT(YEAR FROM l.desde)=EXTRACT(YEAR FROM CURRENT_DATE)) AS examen_anio
+              (SELECT COALESCE(SUM(l.dias),0)::int FROM licencias l WHERE l.empleado_id=e.id AND (lower(l.tipo) LIKE '%examen%' OR lower(l.tipo) LIKE '%estudio%') AND l.estado='aprobada' AND EXTRACT(YEAR FROM l.desde)=EXTRACT(YEAR FROM CURRENT_DATE)) AS examen_anio
          FROM empleados e JOIN empresas em ON em.id=e.empresa_id
         WHERE e.id = ANY($1) AND e.activo=true ORDER BY e.nom`, [ids]);
     const out = [];
