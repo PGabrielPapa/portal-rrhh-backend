@@ -87,6 +87,15 @@ async function getEmp(id) {
   const r = er.rows[0];
   return { id: r.id, legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, empresaCuit: r.empresa_cuit || null, empresaData: r.empresa_data || {}, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} };
 }
+
+// Bulk de getEmp: trae toda la nómina de la corrida en UNA sola consulta (evita N+1).
+async function getEmpsMap(ids) {
+  if (!ids.length) return new Map();
+  const er = await query(`SELECT e.*, em.nombre AS empresa_nombre, em.cuit AS empresa_cuit, em.data AS empresa_data FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE e.id = ANY($1)`, [ids]);
+  const m = new Map();
+  for (const r of er.rows) m.set(r.id, { id: r.id, legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, empresaCuit: r.empresa_cuit || null, empresaData: r.empresa_data || {}, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} });
+  return m;
+}
 async function getParams() { const pr = await query('SELECT data FROM parametros_liq WHERE id = 1'); return pr.rows[0]?.data || {}; }
 // Antes de cada cálculo se superponen los VALORES LEGALES vigentes del período (tope SIPA, SMVM, SCVO, FFEP).
 async function getParamsConValores(anio, mes) {
@@ -419,8 +428,10 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
         [Number(anio), Number(mes), tipo, empresa || null, req.user.dni]
       );
       corridaId = cr.rows[0].id;
+      const empMap = await getEmpsMap(emps.map((e) => e.id));
       for (const { id } of emps) {
-        const emp = await getEmp(id);
+        const emp = empMap.get(id);
+        if (!emp) continue;
         const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
         const acumGan = await acumGananciasDe(id, anio, mes);
         const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp);

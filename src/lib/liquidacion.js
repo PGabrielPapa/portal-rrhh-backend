@@ -382,7 +382,9 @@ export function calcularRecibo(emp, params, opts) {
   // remuneración de un trabajador de JORNADA COMPLETA de la misma categoría (data.remFullTime);
   // si no está cargada, el piso es la base mínima (equivalente a la jornada completa mínima).
   const esParcial = d.jornadaParcial === true || d.jornadaParcial === 'si' || d.jornadaParcial === '1';
-  const remOs = esParcial ? Math.max(totalRemun, num(d.remFullTime) || topeMin) : totalRemun;
+  // Equivalente de jornada completa para OS: remFullTime del legajo → si no está, el básico de
+  // convenio de la categoría (jornada completa) → si tampoco, el piso de la base mínima.
+  const remOs = esParcial ? Math.max(totalRemun, num(d.remFullTime) || num(opts?.convBasico) || topeMin) : totalRemun;
   const baseAportesOs = Math.min(Math.max(remOs, topeMin), topeMax);
   const ap = (pct) => round2(baseAportes * num(pct) / 100);
   const apOs = (pct) => round2(baseAportesOs * num(pct) / 100);
