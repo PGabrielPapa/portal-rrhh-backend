@@ -25,6 +25,18 @@ router.get('/', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// GET /api/puestos/sin-asignar — empleados activos sin puesto (caen al fallback por nombre).
+router.get('/sin-asignar', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT e.id, e.nom, e.leg_num, em.nombre AS empresa
+         FROM empleados e JOIN empresas em ON em.id = e.empresa_id
+        WHERE e.activo = true AND e.puesto_id IS NULL
+        ORDER BY em.nombre, e.nom`);
+    res.json(rows.map((r) => ({ id: r.id, nom: r.nom, legNum: r.leg_num, empresa: r.empresa })));
+  } catch (e) { next(e); }
+});
+
 // GET /api/puestos/organigrama?empresa= — árbol armado por PUESTO.
 router.get('/organigrama', async (req, res, next) => {
   try {
@@ -104,6 +116,12 @@ router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
     const b = req.body || {};
     if (!b.nombre || !String(b.nombre).trim()) return res.status(400).json({ error: 'El nombre del puesto es obligatorio' });
     if (String(b.reportaA) === String(req.params.id)) return res.status(400).json({ error: 'Un puesto no puede reportarse a sí mismo' });
+    if (b.reportaA) {
+      // Evitar ciclos: reportaA no puede ser el propio puesto ni un descendiente suyo.
+      const parent = {}; for (const p of (await query('SELECT id, reporta_a FROM puestos')).rows) parent[p.id] = p.reporta_a;
+      let cur = Number(b.reportaA), guard = 0;
+      while (cur != null && guard++ < 1000) { if (String(cur) === String(req.params.id)) return res.status(400).json({ error: 'Ese puesto no puede reportar a uno que depende de él (se generaría un ciclo).' }); cur = parent[cur]; }
+    }
     const r = await query(
       'UPDATE puestos SET codigo=$1, nombre=$2, area=$3, reporta_a=$4, go_to_hr=$5 WHERE id=$6 RETURNING id',
       [b.codigo || null, String(b.nombre).trim(), b.area || null, b.reportaA || null, !!b.goToHr, req.params.id]);
