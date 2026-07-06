@@ -498,7 +498,13 @@ export function calcularRecibo(emp, params, opts) {
   // Costo del empleador (contribuciones patronales + SCVO) — sobre remunerativos
   const contribuciones = [];
   const co = (pct) => round2(totalRemun * num(pct) / 100);
-  const cJub = co(p.pctJubPatronal), cOS = co(p.pctOsPatronal), cPami = co(p.pctPamiPatronal), cFne = co(p.pctDesempleo), cArt = co(p.pctArt), cSind = esFC ? 0 : co(p.pctSindicatoPatronal);
+  // Detracción de la base de contribuciones de seguridad social (Ley 27.541, art. 22):
+  // suma fija mensual por trabajador que reduce la base de SIPA/INSSJP/FNE (NO obra social,
+  // NO ART, NO sindical). Se prorratea por quincena; no aplica a SAC/vacaciones/final.
+  const detr = (tipo === 'mensual') ? num(p.detraccionContrib) : (esQuincenal ? num(p.detraccionContrib) * 0.5 : 0);
+  const baseSegSoc = Math.max(0, totalRemun - detr);
+  const coSeg = (pct) => round2(baseSegSoc * num(pct) / 100);
+  const cJub = coSeg(p.pctJubPatronal), cOS = co(p.pctOsPatronal), cPami = coSeg(p.pctPamiPatronal), cFne = coSeg(p.pctDesempleo), cArt = co(p.pctArt), cSind = esFC ? 0 : co(p.pctSindicatoPatronal);
   const scvo = round2(num(p.scvoPercapita));  // Seguro de Vida Obligatorio (Dto. 1567/74), prima per cápita
   const ffep = round2(num(p.ffep));            // Fondo Fiduciario de Enfermedades Profesionales (SRT), suma fija por trabajador
   if (cJub > 0) contribuciones.push({ concepto: 'Jubilación patronal (SIPA)', monto: cJub });

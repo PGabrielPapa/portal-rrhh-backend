@@ -83,6 +83,14 @@ test('enfermedad: adiciona el promedio de variables por los días de licencia (a
   assert.equal(plus, Math.round((300000 / 30) * 6 * 100) / 100);
 });
 
+test('detracción de base en contribuciones patronales (Ley 27.541) — solo seguridad social', () => {
+  const con = calcularRecibo(empBase, P, { anio: 2026, mes: 6, tipo: 'mensual', calcularGanancias: false });
+  const sin = calcularRecibo(empBase, { ...P, detraccionContrib: 0 }, { anio: 2026, mes: 6, tipo: 'mensual', calcularGanancias: false });
+  const cont = (rec, re) => (rec.costoEmpleador.contribuciones.find((c) => re.test(c.concepto)) || {}).monto || 0;
+  assert.ok(cont(con, /Jubilaci/) < cont(sin, /Jubilaci/), 'SIPA patronal baja con detracción');
+  assert.equal(cont(con, /Obra Social patronal/), cont(sin, /Obra Social patronal/), 'OS patronal NO cambia');
+});
+
 test('SAC = 50% de la mejor remuneración del semestre', () => {
   const r = calcularRecibo(empBase, P, { anio: 2026, mes: 6, tipo: 'sac1', calcularGanancias: false, mejorRemSAC: 1200000 });
   const sac = (r.haberes.find((h) => /SAC/.test(h.concepto)) || {}).monto || 0;
