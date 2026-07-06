@@ -42,8 +42,8 @@ const SELECT = `
   SELECT e.*, em.nombre AS empresa_nombre, em.slug AS empresa_slug
     FROM empleados e JOIN empresas em ON em.id = e.empresa_id`;
 
-// GET /api/empleados?empresa=&q=&activos=
-router.get('/', async (req, res, next) => {
+// GET /api/empleados?empresa=&q=&activos= — LISTA COMPLETA con datos sensibles: solo RR.HH./admin.
+router.get('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const { empresa, q, activos } = req.query;
     const cond = [], params = [];
@@ -57,6 +57,21 @@ router.get('/', async (req, res, next) => {
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const { rows } = await query(`${SELECT} ${where} ORDER BY e.nom`, params);
     res.json(rows.map(mapRow));
+  } catch (e) { next(e); }
+});
+
+// GET /api/empleados/buscar?q= — búsqueda liviana para selectores (sin sueldos/DNI).
+// Disponible para roles que arman selectores (RR.HH., admin, gerentes, comité H&S).
+router.get('/buscar', requireRole('rrhh', 'admin', 'manager', 'comite'), async (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim().toLowerCase();
+    if (q.length < 2) return res.json([]);
+    const { rows } = await query(
+      `SELECT e.id, e.nom, e.leg_num, em.nombre AS empresa, e.cat, e.tramo, e.data->>'tarea' AS tarea
+         FROM empleados e JOIN empresas em ON em.id = e.empresa_id
+        WHERE e.activo = true AND (lower(e.nom) LIKE $1 OR e.leg_num LIKE $1)
+        ORDER BY e.nom LIMIT 20`, [`%${q}%`]);
+    res.json(rows.map((r) => ({ id: r.id, nom: r.nom, legNum: r.leg_num, empresa: r.empresa, cat: r.cat, tramo: r.tramo, tarea: r.tarea })));
   } catch (e) { next(e); }
 });
 
@@ -199,7 +214,12 @@ router.get('/proximo-legajo', requireRole('rrhh', 'admin'), async (req, res, nex
 
 router.get('/:id', async (req, res, next) => {
   try {
-    const { rows } = await query(`${SELECT} WHERE e.id = $1`, [req.params.id]);
+    const id = Number(req.params.id);
+    const rol = req.user.role;
+    let permitido = rol === 'rrhh' || rol === 'admin' || req.user.id === id;
+    if (!permitido && rol === 'manager') permitido = (await idsEquipoDe(req.user.id)).has(id);
+    if (!permitido) return res.status(403).json({ error: 'No autorizado' });
+    const { rows } = await query(`${SELECT} WHERE e.id = $1`, [id]);
     if (!rows[0]) return res.status(404).json({ error: 'Empleado no encontrado' });
     res.json(mapRow(rows[0]));
   } catch (e) { next(e); }
