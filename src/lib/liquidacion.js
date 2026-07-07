@@ -517,7 +517,16 @@ export function calcularRecibo(emp, params, opts) {
   const cJub = coSeg(p.pctJubPatronal), cOS = round2(baseAportesOs * num(p.pctOsPatronal) / 100), cPami = coSeg(p.pctPamiPatronal), cFne = coSeg(p.pctDesempleo), cArt = co(p.pctArt), cSind = esFC ? 0 : co(p.pctSindicatoPatronal);
   const scvo = round2(num(p.scvoPercapita));  // Seguro de Vida Obligatorio (Dto. 1567/74), prima per cápita
   const ffep = round2(num(p.ffep));            // Fondo Fiduciario de Enfermedades Profesionales (SRT), suma fija por trabajador
-  if (cJub > 0) contribuciones.push({ concepto: 'Jubilación patronal (SIPA)', monto: cJub });
+  // Fondo de Asistencia Laboral (Ley 27.802 / Dto. 408/2026), desde 11/2026. NO es costo
+  // adicional: se DETRAE de las contribuciones patronales de seguridad social (se redirige un
+  // % de la base SIPA desde la jubilación patronal hacia el FAL). Alícuota: MiPyME 2,5% /
+  // grandes 1% (override por empresa en empresaData.pctFal; si no, el parámetro pctFal).
+  const _falVigente = (Number(anio) * 12 + Number(mes)) >= (2026 * 12 + 11);
+  const _pctFal = _falVigente ? (num(emp.empresaData?.pctFal) || num(p.pctFal)) : 0;
+  const cFal = _pctFal > 0 ? round2(baseSegSoc * _pctFal / 100) : 0;
+  const cJubFal = cFal > 0 ? Math.max(0, round2(cJub - cFal)) : cJub;
+  if (cJubFal > 0) contribuciones.push({ concepto: 'Jubilación patronal (SIPA)', monto: cJubFal });
+  if (cFal > 0) contribuciones.push({ concepto: `Fondo de Asistencia Laboral (Ley 27.802 — ${_pctFal}%)`, monto: cFal });
   if (cOS > 0) contribuciones.push({ concepto: 'Obra Social patronal', monto: cOS });
   if (cPami > 0) contribuciones.push({ concepto: 'INSSJP patronal (PAMI)', monto: cPami });
   if (cFne > 0) contribuciones.push({ concepto: 'Fondo Nacional de Empleo', monto: cFne });

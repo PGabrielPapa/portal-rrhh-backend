@@ -98,6 +98,21 @@ test('jornada parcial: OS sobre jornada completa (art. 92 ter LCT); SIPA sobre l
   assert.equal(aporte(parc, /Jubilación/), aporte(full, /Jubilación/), 'Jubilación (SIPA) se calcula sobre la remuneración real');
 });
 
+test('FAL (Ley 27.802) desde 11/2026: se detrae de seg. social sin cambiar el total de contribuciones', () => {
+  const base = calcularRecibo(empBase, { ...P, pctFal: 0 }, { anio: 2026, mes: 11, tipo: 'mensual', calcularGanancias: false });
+  const fal = calcularRecibo(empBase, { ...P, pctFal: 2.5 }, { anio: 2026, mes: 11, tipo: 'mensual', calcularGanancias: false });
+  const tot = (r) => r.costoEmpleador.totalContrib;
+  const linea = (r, re) => (r.costoEmpleador.contribuciones.find((c) => re.test(c.concepto)) || {}).monto || 0;
+  assert.ok(linea(fal, /Asistencia Laboral/) > 0, 'aparece la línea FAL');
+  assert.ok(linea(fal, /Jubilación patronal/) < linea(base, /Jubilación patronal/), 'la jubilación patronal se reduce');
+  assert.ok(Math.abs(tot(fal) - tot(base)) < 0.02, 'el total de contribuciones no cambia (redirección)');
+});
+
+test('FAL no aplica antes de 11/2026', () => {
+  const oct = calcularRecibo(empBase, { ...P, pctFal: 2.5 }, { anio: 2026, mes: 10, tipo: 'mensual', calcularGanancias: false });
+  assert.ok(!oct.costoEmpleador.contribuciones.some((c) => /Asistencia Laboral/.test(c.concepto)), 'sin FAL en octubre');
+});
+
 test('SAC = 50% de la mejor remuneración del semestre', () => {
   const r = calcularRecibo(empBase, P, { anio: 2026, mes: 6, tipo: 'sac1', calcularGanancias: false, mejorRemSAC: 1200000 });
   const sac = (r.haberes.find((h) => /SAC/.test(h.concepto)) || {}).monto || 0;

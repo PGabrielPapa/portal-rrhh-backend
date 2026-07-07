@@ -117,6 +117,9 @@ async function main() {
       if (Number(pr.smvmMensual) === 363000 || pr.smvmMensual == null) fix.smvmMensual = 367800; // SMVM jun-2026
       if (!(Number(pr.topeAportesMax) > 0)) fix.topeAportesMax = 4414652.38; // base máx SIPA jun-2026
       if (pr.mesesPeriodoPrueba == null) fix.mesesPeriodoPrueba = 6;        // Ley Bases 27.742
+      if (pr.detraccionContrib == null) fix.detraccionContrib = 7003.68;   // detracción base contrib. (Ley 27.541 art. 22)
+      if (pr.pctFal == null) fix.pctFal = 2.5;                             // Fondo de Asistencia Laboral (Ley 27.802), desde 11/2026
+      if (!(Number(pr.topeAportesMin) > 0)) fix.topeAportesMin = 138757.90; // base mín SIPA (fallback; valores legales la overlaya)
       if (Object.keys(fix).length) {
         await client.query('UPDATE parametros_liq SET data = data || $1::jsonb WHERE id=1', [JSON.stringify(fix)]);
         console.log('[seed] correcciones legales aplicadas:', Object.keys(fix).join(', '));
