@@ -11,7 +11,7 @@
     "migrate": "node src/db/migrate.js",
     "seed": "node src/db/seed.js",
     "db:reset": "node src/db/migrate.js --reset && node src/db/seed.js",
-    "test": "node test/liquidacion.test.js"
+    "test": "node test/liquidacion.test.js && node test/formulas.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
