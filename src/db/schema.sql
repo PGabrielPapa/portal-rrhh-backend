@@ -151,6 +151,9 @@ ALTER TABLE recibos ADD COLUMN IF NOT EXISTS publicado  BOOLEAN NOT NULL DEFAULT
 ALTER TABLE recibos ADD COLUMN IF NOT EXISTS pagado     BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE recibos ADD COLUMN IF NOT EXISTS pagado_at  TIMESTAMPTZ;
 ALTER TABLE recibos ADD COLUMN IF NOT EXISTS pagado_por TEXT;
+-- Correlativo interno: permite 2+ liquidaciones del mismo tipo en un mismo período
+-- (ej. dos extraordinarias en agosto). El swap del índice único va en migrateRecibosCorrelativo.js.
+ALTER TABLE recibos ADD COLUMN IF NOT EXISTS correlativo INTEGER NOT NULL DEFAULT 1;
 
 -- ── Corridas de liquidación (planilla por período/tipo con estados) ──
 CREATE TABLE IF NOT EXISTS corridas (
@@ -168,6 +171,7 @@ CREATE TABLE IF NOT EXISTS corridas (
   publicado_at TIMESTAMPTZ,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE corridas ADD COLUMN IF NOT EXISTS correlativo INTEGER NOT NULL DEFAULT 1;
 CREATE INDEX IF NOT EXISTS idx_recibos_corrida ON recibos(corrida_id);
 CREATE INDEX IF NOT EXISTS idx_recibos_empleado ON recibos(empleado_id);
 
@@ -1327,6 +1331,21 @@ CREATE TABLE IF NOT EXISTS modelo_recibo (
   logo         TEXT,
   mostrar_logo BOOLEAN NOT NULL DEFAULT true,
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Agrupaciones auxiliares (Tango): grupos libres de legajos (proyecto, sector, turno…)
+-- usables como criterio de filtro en listados e informes.
+CREATE TABLE IF NOT EXISTS agrupaciones (
+  id          SERIAL PRIMARY KEY,
+  nombre      TEXT NOT NULL UNIQUE,
+  descripcion TEXT,
+  activo      BOOLEAN NOT NULL DEFAULT true,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS agrupacion_legajos (
+  agrupacion_id INTEGER NOT NULL REFERENCES agrupaciones(id) ON DELETE CASCADE,
+  empleado_id   INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  PRIMARY KEY (agrupacion_id, empleado_id)
 );
 
 CREATE TABLE IF NOT EXISTS plantillas_legajo (

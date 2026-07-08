@@ -51,6 +51,7 @@ router.get('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
     const cond = [], params = [];
     if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
     if (activos === 'true') cond.push('e.activo = true');
+    if (req.query.agrupacion) { params.push(Number(req.query.agrupacion)); cond.push(`e.id IN (SELECT empleado_id FROM agrupacion_legajos WHERE agrupacion_id = $${params.length})`); }
     if (!(await puedeVerConfidenciales(req.user))) cond.push('e.confidencial = false');
     if (q) {
       params.push(`%${String(q).toLowerCase()}%`);

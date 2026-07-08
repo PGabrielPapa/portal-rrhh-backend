@@ -26,6 +26,15 @@ try {
   console.error('[boot] migración de FKs:', e.message);
 }
 
+// Correlativo de recibos: permite 2+ liquidaciones del mismo tipo por período (idempotente).
+try {
+  const { migrarRecibosCorrelativo } = await import('./db/migrateRecibosCorrelativo.js');
+  const r = await migrarRecibosCorrelativo();
+  if (r.cambiado) console.log('[boot] índice de recibos actualizado (correlativo) ✓');
+} catch (e) {
+  console.error('[boot] migración correlativo:', e.message);
+}
+
 // Organigrama por puesto: siembra inicial de la tabla `puestos` desde el
 // organigrama vigente (idempotente; no hace nada si ya hay puestos cargados).
 try {

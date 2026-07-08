@@ -348,18 +348,20 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const cFormG = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo));
     const auxFG = cFormG.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...nov, ...varProm, ...emb, ...extra });
+    let correlativoG = 1;
+    if (tipo === 'complementaria' || tipo === 'extra_norem') { const _mg = await query('SELECT COALESCE(MAX(correlativo),0) AS n FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes=$3 AND tipo=$4', [empleadoId, Number(anio), Number(mes), tipo]); correlativoG = Number(_mg.rows[0].n) + 1; }
     const client = await pool.connect();
     let reciboId;
     try {
       await client.query('BEGIN');
       const db = client.query.bind(client);
       const ins = await db(
-        `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, publicado)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,true)
-         ON CONFLICT (empleado_id, anio, mes, tipo)
+        `INSERT INTO recibos (empleado_id, anio, mes, tipo, correlativo, neto, data, created_by, publicado)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true)
+         ON CONFLICT (empleado_id, anio, mes, tipo, correlativo)
          DO UPDATE SET neto=EXCLUDED.neto, data=EXCLUDED.data, created_by=EXCLUDED.created_by, publicado=true, created_at=now()
          RETURNING id`,
-        [empleadoId, Number(anio), Number(mes), tipo, recibo.totales.neto, JSON.stringify(recibo), req.user.dni]
+        [empleadoId, Number(anio), Number(mes), tipo, correlativoG, recibo.totales.neto, JSON.stringify(recibo), req.user.dni]
       );
       reciboId = ins.rows[0].id;
       await registrarCuotas(cuotas, anio, mes, reciboId, null, db);
@@ -446,6 +448,8 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     if (!anio || !mes) return res.status(400).json({ error: 'anio y mes son obligatorios' });
     const esExtra = tipo === 'complementaria' || tipo === 'extra_norem';
     if (esExtra && !(Number(montoExtra) > 0)) return res.status(400).json({ error: 'Indicá el monto (o % del bruto) de la liquidación extraordinaria' });
+    let correlativo = 1;
+    if (esExtra) { const _mc = await query('SELECT COALESCE(MAX(correlativo),0) AS n FROM corridas WHERE anio=$1 AND mes=$2 AND tipo=$3', [Number(anio), Number(mes), tipo]); correlativo = Number(_mc.rows[0].n) + 1; }
     const cond = ['e.activo = true'], pr = [];
     if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
     const emps = (await query(
@@ -468,8 +472,8 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       await client.query('BEGIN');
       const db = client.query.bind(client);
       const cr = await db(
-        `INSERT INTO corridas (anio, mes, tipo, empresa, estado, creado_por) VALUES ($1,$2,$3,$4,'borrador',$5) RETURNING id`,
-        [Number(anio), Number(mes), tipo, empresa || null, req.user.dni]
+        `INSERT INTO corridas (anio, mes, tipo, empresa, estado, creado_por, correlativo) VALUES ($1,$2,$3,$4,'borrador',$5,$6) RETURNING id`,
+        [Number(anio), Number(mes), tipo, empresa || null, req.user.dni, correlativo]
       );
       corridaId = cr.rows[0].id;
       const empMap = await getEmpsMap(emps.map((e) => e.id));
@@ -494,12 +498,12 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
         const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
         totalNeto += recibo.totales.neto; cant++;
         const rr = await db(
-          `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false)
-           ON CONFLICT (empleado_id, anio, mes, tipo)
+          `INSERT INTO recibos (empleado_id, anio, mes, tipo, correlativo, neto, data, created_by, corrida_id, publicado)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false)
+           ON CONFLICT (empleado_id, anio, mes, tipo, correlativo)
            DO UPDATE SET neto=EXCLUDED.neto, data=EXCLUDED.data, created_by=EXCLUDED.created_by, corrida_id=EXCLUDED.corrida_id, publicado=false, created_at=now()
            RETURNING id`,
-          [id, Number(anio), Number(mes), tipo, recibo.totales.neto, JSON.stringify(recibo), req.user.dni, corridaId]
+          [id, Number(anio), Number(mes), tipo, correlativo, recibo.totales.neto, JSON.stringify(recibo), req.user.dni, corridaId]
         );
         await registrarCuotas(cuotas, anio, mes, rr.rows[0].id, corridaId, db);
         if (_esMensual(tipo)) await commitAjusteNeto(id, anio, mes, recibo, db);
