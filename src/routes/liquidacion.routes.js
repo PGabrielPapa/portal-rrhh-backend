@@ -245,12 +245,31 @@ router.get('/costo-equipo', requireRole('manager', 'rrhh', 'admin'), async (req,
 
 // Cuotas de anticipos aprobados a descontar en (anio, mes). Determinístico por período.
 function r2(n) { return Math.round((Number(n) + Number.EPSILON) * 100) / 100; }
+// Filtra los conceptos por fórmula según el alcance (empresa/convenio/sindicato) y la vigencia
+// (desde/hasta en formato YYYY-MM) para un empleado y período dados.
+function filtrarConceptosFormula(lista, emp, anio, mes) {
+  if (!Array.isArray(lista) || !lista.length) return [];
+  const per = Number(anio) * 12 + Number(mes);
+  const upp = (x) => String(x || '').trim().toUpperCase();
+  const empEmpresa = upp(emp?.empresa), empConv = upp(emp?.data?.cod_convenio), empSind = upp(emp?.data?.cod_sindicato);
+  const aNum = (ym) => { const m = String(ym || '').match(/^(\d{4})-(\d{1,2})$/); return m ? Number(m[1]) * 12 + Number(m[2]) : null; };
+  return lista.filter((c) => {
+    if (c.alcanceEmpresa && upp(c.alcanceEmpresa) !== empEmpresa) return false;
+    if (c.alcanceConvenio && upp(c.alcanceConvenio) !== empConv) return false;
+    if (c.alcanceSindicato && upp(c.alcanceSindicato) !== empSind) return false;
+    const d = aNum(c.desde), h = aNum(c.hasta);
+    if (d != null && per < d) return false;
+    if (h != null && per > h) return false;
+    return true;
+  });
+}
+
 // Conceptos activos definidos por fórmula (motor de fórmulas). Se aplican en la
 // liquidación mensual/quincena. Lista vacía => el recibo es idéntico al actual.
 async function conceptosFormulaActivos() {
   try {
     const { rows } = await query("SELECT codigo, descripcion, formula, data FROM conceptos WHERE activo=true AND formula IS NOT NULL AND formula <> '' AND (data->>'esFormula')='true' ORDER BY COALESCE(NULLIF(data->>'orden','')::int, 0), codigo");
-    return rows.map((r) => ({ codigo: r.codigo, descripcion: r.descripcion, formula: r.formula, base: (r.data && r.data.base) || 'rem', condicion: (r.data && r.data.condicion) || null }));
+    return rows.map((r) => { const d = r.data || {}; return { codigo: r.codigo, descripcion: r.descripcion, formula: r.formula, base: d.base || 'rem', condicion: d.condicion || null, alcanceEmpresa: d.alcanceEmpresa || '', alcanceConvenio: d.alcanceConvenio || '', alcanceSindicato: d.alcanceSindicato || '', desde: d.desde || '', hasta: d.hasta || '' }; });
   } catch { return []; }
 }
 async function cuotasAnticiposDe(empleadoId, anio, mes) {
@@ -290,7 +309,7 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const varProm = (t === 'vacaciones' || _esMensual(t)) ? await promedioVariablesMes(empleadoId, anio, mes) : {};
     const sacBase = _esSAC(t) ? await mejorRemSemestre(empleadoId, anio, t) : 0;
     const ajPend = _esMensual(t) ? await ajustePendiente(empleadoId, anio, mes) : 0;
-    const cForm = _esMensual(t) ? await conceptosFormulaActivos() : [];
+    const cForm = _esMensual(t) ? filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes) : [];
     const auxF = cForm.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ...nov, ...varProm, ...emb, ...extra }));
   } catch (e) { next(e); }
@@ -318,7 +337,7 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const sacBase = _esSAC(tipo) ? await mejorRemSemestre(empleadoId, anio, tipo) : 0;
     let ajPend = 0;
     if (_esMensual(tipo)) { await resetAjusteNeto(empleadoId, anio, mes); ajPend = await ajustePendiente(empleadoId, anio, mes); }
-    const cFormG = _esMensual(tipo) ? await conceptosFormulaActivos() : [];
+    const cFormG = _esMensual(tipo) ? filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes) : [];
     const auxFG = cFormG.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...nov, ...varProm, ...emb, ...extra });
     const client = await pool.connect();
@@ -433,8 +452,8 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const ganTabla = await ganTablaParaFecha(fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sMap = await sindMap();
     const cMap = await convMap();
-    const cFormCorrida = _esMensual(tipo) ? await conceptosFormulaActivos() : [];
-    const auxCorrida = cFormCorrida.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
+    const cFormTodos = _esMensual(tipo) ? await conceptosFormulaActivos() : [];
+    const auxCorrida = cFormTodos.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const client = await pool.connect();
     let corridaId, totalNeto = 0, cant = 0;
     try {
@@ -464,7 +483,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
           if (!(montoEmp > 0)) continue; // sin base (p. ej. % sobre bruto 0): no se genera recibo
           _extra = { montoAjuste: montoEmp, conceptoAjuste: (conceptoExtra && String(conceptoExtra).trim()) || (tipo === 'extra_norem' ? 'Extraordinaria no remunerativa' : 'Extraordinaria remunerativa') };
         }
-        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: cFormCorrida, auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
+        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
         totalNeto += recibo.totales.neto; cant++;
         const rr = await db(
           `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)
