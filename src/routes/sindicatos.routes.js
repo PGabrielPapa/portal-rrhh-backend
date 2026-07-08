@@ -47,4 +47,36 @@ router.delete('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   catch (e) { next(e); }
 });
 
+// GET /api/sindicatos/por-empresa — qué sindicatos tiene cada empresa según sus empleados activos.
+router.get('/por-empresa', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT em.nombre AS empresa,
+              UPPER(COALESCE(NULLIF(e.data->>'cod_sindicato',''), 'FC')) AS codigo,
+              s.nombre AS sind_nombre, s.pct_empleado, s.pct_patronal,
+              count(*)::int AS cant
+         FROM empleados e
+         JOIN empresas em ON em.id = e.empresa_id
+         LEFT JOIN sindicatos s ON UPPER(s.codigo) = UPPER(COALESCE(NULLIF(e.data->>'cod_sindicato',''), 'FC'))
+        WHERE e.activo = true
+        GROUP BY em.nombre, codigo, s.nombre, s.pct_empleado, s.pct_patronal
+        ORDER BY em.nombre, codigo`);
+    const porEmpresa = {};
+    for (const r of rows) {
+      (porEmpresa[r.empresa] ||= { empresa: r.empresa, total: 0, sindicatos: [] });
+      const fc = r.codigo === 'FC';
+      porEmpresa[r.empresa].sindicatos.push({
+        codigo: r.codigo,
+        nombre: fc ? 'Fuera de convenio' : (r.sind_nombre || '(sindicato no definido en el catálogo)'),
+        definido: fc || !!r.sind_nombre,
+        pctEmpleado: r.pct_empleado != null ? Number(r.pct_empleado) : null,
+        pctPatronal: r.pct_patronal != null ? Number(r.pct_patronal) : null,
+        empleados: r.cant,
+      });
+      porEmpresa[r.empresa].total += r.cant;
+    }
+    res.json(Object.values(porEmpresa));
+  } catch (e) { next(e); }
+});
+
 export default router;

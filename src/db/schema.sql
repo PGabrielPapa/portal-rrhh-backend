@@ -114,6 +114,16 @@ CREATE TABLE IF NOT EXISTS parametros_liq (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT parametros_singleton CHECK (id = 1)
 );
+-- Historial de cambios de cada parámetro (quién, cuándo, de → a).
+CREATE TABLE IF NOT EXISTS parametros_hist (
+  id             SERIAL PRIMARY KEY,
+  campo          TEXT NOT NULL,
+  valor_anterior TEXT,
+  valor_nuevo    TEXT,
+  actor_dni      TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_parametros_hist ON parametros_hist(created_at DESC);
 
 -- ── Catálogo de conceptos de liquidación ──
 CREATE TABLE IF NOT EXISTS conceptos (
