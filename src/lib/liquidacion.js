@@ -384,11 +384,13 @@ export function calcularRecibo(emp, params, opts) {
       bruto: num(emp.bruto), anios, remun: regularRemun, dias: num(opts?.diasTrabajados) || 30,
       he50: num(opts?.horasExtra50), he100: num(opts?.horasExtra100), ausencias: num(opts?.ausenciasInjustificadas),
       feriados: num(opts?.feriadosTrabajados), smvm: num(p.smvmMensual || p.smvm), topeSipa: num(p.topeAportesMax), ..._cx };
+    _ctxF.__aux = opts?.auxFormulas || {};
+    const _macrosF = opts?.macrosFormulas || null;
     detalle.conceptosFormula = [];
     for (const cf of _conceptosForm) {
       try {
-        if (cf.condicion && String(cf.condicion).trim() && evaluarFormula(cf.condicion, _ctxF) === 0) continue;
-        const val = round2(evaluarFormula(cf.formula, _ctxF));
+        if (cf.condicion && String(cf.condicion).trim() && evaluarFormula(cf.condicion, _ctxF, { macros: _macrosF }) === 0) continue;
+        const val = round2(evaluarFormula(cf.formula, _ctxF, { macros: _macrosF }));
         if (!val) continue;
         const base = cf.base || 'rem';
         if (base === 'descuento') _formDesc.push({ concepto: cf.descripcion || cf.codigo || 'Concepto', monto: val });

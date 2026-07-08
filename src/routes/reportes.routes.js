@@ -21,6 +21,43 @@ async function recibosPeriodo(anio, mes, empresa) {
 }
 const aporteDe = (desc, re) => (desc || []).filter((d) => re.test(d.concepto)).reduce((s, d) => s + Number(d.monto || 0), 0);
 
+// GET /api/reportes/certificacion-servicios?empleadoId=  (ANSES PS.6.2, base para el egreso)
+// Arma la certificación de servicios y remuneraciones a partir del legajo y de las
+// remuneraciones sujetas a aportes de los recibos guardados (mensual/quincena/SAC).
+router.get('/certificacion-servicios', async (req, res, next) => {
+  try {
+    const id = Number(req.query.empleadoId);
+    if (!id) return res.status(400).json({ error: 'Indicá el empleado' });
+    const emp = (await query(
+      `SELECT e.leg_num, e.nom, e.cuil, e.ingreso, e.activo, e.data, em.nombre AS empresa, em.cuit AS empresa_cuit, em.data AS empresa_data
+         FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE e.id=$1`, [id])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
+    const baja = (await query('SELECT fecha_baja, causa FROM bajas WHERE empleado_id=$1 ORDER BY created_at DESC LIMIT 1', [id])).rows[0] || null;
+    // Remuneración sujeta a aportes por mes (suma de recibos del período).
+    const recs = (await query(
+      `SELECT anio, mes, tipo, data FROM recibos
+         WHERE empleado_id=$1 AND tipo IN ('mensual','quincenal_1','quincenal_2','sac1','sac2','vacaciones','complementaria')
+         ORDER BY anio, mes`, [id])).rows;
+    const porMes = {};
+    for (const rr of recs) {
+      const k = `${rr.anio}-${String(rr.mes).padStart(2, '0')}`;
+      porMes[k] = (porMes[k] || 0) + Number(rr.data?.totales?.totalRemun || 0);
+    }
+    const remuneraciones = Object.entries(porMes).map(([periodo, remun]) => ({ periodo, remun: r2(remun) }));
+    const total = r2(remuneraciones.reduce((a, x) => a + x.remun, 0));
+    const ed = emp.empresa_data || {};
+    const domEmpleador = [ [ed.dir, ed.nro].filter(Boolean).join(' '), ed.loc, ed.prov, ed.cp ? '(CP ' + ed.cp + ')' : ''].filter(Boolean).join(', ');
+    res.json({
+      empleador: { razonSocial: emp.empresa, cuit: emp.empresa_cuit || null, domicilio: domEmpleador || null },
+      trabajador: { legNum: emp.leg_num, nom: emp.nom, cuil: emp.cuil, ingreso: emp.ingreso || null,
+        egreso: baja?.fecha_baja || null, causaEgreso: baja?.causa || null, activo: emp.activo,
+        categoria: emp.data?.desc_categoria || emp.data?.tarea || null, cct: emp.data?.cod_convenio || null },
+      remuneraciones, total,
+      nota: 'Datos para la Certificación de Servicios y Remuneraciones (ANSES PS.6.2), tomados del legajo y de las remuneraciones sujetas a aportes registradas en el sistema. Verificar antes de presentar.',
+    });
+  } catch (e) { next(e); }
+});
+
 // GET /api/reportes/libro-sueldos?anio=&mes=&empresa=  (Libro Art. 52 LCT)
 router.get('/libro-sueldos', async (req, res, next) => {
   try {

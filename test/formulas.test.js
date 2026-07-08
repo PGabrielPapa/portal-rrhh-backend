@@ -1,7 +1,7 @@
 // Tests del evaluador de fórmulas de conceptos (motor de fórmulas — brecha #6).
 // Correr con: node test/formulas.test.js
 import assert from 'node:assert/strict';
-import { evaluarFormula, analizarFormula } from '../src/lib/formulas.js';
+import { evaluarFormula, analizarFormula, expandirMacros } from '../src/lib/formulas.js';
 
 let ok = 0, fail = 0;
 function test(nombre, fn) { try { fn(); ok++; console.log('  ✓ ' + nombre); } catch (e) { fail++; console.log('  ✗ ' + nombre + '\n     ' + e.message); } }
@@ -81,6 +81,30 @@ test('seguridad: no ejecuta JS', () => {
   assert.throws(() => evaluarFormula('process.exit(1)'), /./);       // sintaxis inválida
   assert.equal(evaluarFormula('constructor'), 0);                    // se trata como variable vacía, no como objeto JS
   assert.equal(evaluarFormula('basico', { basico: 5, __proto__: 9 }), 5);
+});
+
+test('matriz por tramos: TRAMO("plusAntig", anios)', () => {
+  const aux = { matrices: { plusAntig: [{ hasta: 5, valor: 1000 }, { hasta: 10, valor: 2000 }, { hasta: 9999, valor: 3000 }] } };
+  assert.equal(evaluarFormula('TRAMO("plusAntig", anios)', { anios: 3, __aux: aux }), 1000);
+  assert.equal(evaluarFormula('TRAMO("plusAntig", anios)', { anios: 7, __aux: aux }), 2000);
+  assert.equal(evaluarFormula('TRAMO("plusAntig", anios)', { anios: 25, __aux: aux }), 3000);
+});
+
+test('tabla clave→valor: TABLA("premios", zona)', () => {
+  const aux = { tablas: { premios: { norte: 5000, sur: 8000 } } };
+  assert.equal(evaluarFormula('TABLA("premios", "sur")', { __aux: aux }), 8000);
+  assert.equal(evaluarFormula('TABLA("premios", "otra")', { __aux: aux }), 0);
+});
+
+test('variables Macro: expansión y evaluación', () => {
+  const macros = { baseCalc: 'basico + antiguedad_monto' };
+  assert.equal(expandirMacros('baseCalc * 0.1', macros).replace(/\s/g, ''), '(basico+antiguedad_monto)*0.1');
+  assert.equal(evaluarFormula('baseCalc * 0.1', { basico: 1000, antiguedad_monto: 500 }, { macros }), 150);
+});
+
+test('macros anidadas', () => {
+  const macros = { rem: 'basico + plus', plus: 'basico * 0.2' };
+  assert.equal(evaluarFormula('rem', { basico: 1000 }, { macros }), 1200);
 });
 
 console.log(`\nRESULTADO fórmulas: ${ok} OK, ${fail} fallidos`);

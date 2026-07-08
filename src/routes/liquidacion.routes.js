@@ -11,6 +11,7 @@ import { novedadesOpts } from './novedades.routes.js';
 import { esSinGoce } from '../lib/licenciasReglas.js';
 import { valoresLegalesVigentes, verificarValoresLegales, autoActualizarValores } from './valoresLegales.routes.js';
 import { paramsParaFecha } from './parametros.routes.js';
+import { cargarAux } from './valoresAux.routes.js';
 const router = Router();
 router.use(requireAuth);
 
@@ -290,7 +291,8 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const sacBase = _esSAC(t) ? await mejorRemSemestre(empleadoId, anio, t) : 0;
     const ajPend = _esMensual(t) ? await ajustePendiente(empleadoId, anio, mes) : 0;
     const cForm = _esMensual(t) ? await conceptosFormulaActivos() : [];
-    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, ...nov, ...varProm, ...emb, ...extra }));
+    const auxF = cForm.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
+    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ...nov, ...varProm, ...emb, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -317,7 +319,8 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     let ajPend = 0;
     if (_esMensual(tipo)) { await resetAjusteNeto(empleadoId, anio, mes); ajPend = await ajustePendiente(empleadoId, anio, mes); }
     const cFormG = _esMensual(tipo) ? await conceptosFormulaActivos() : [];
-    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, ...nov, ...varProm, ...emb, ...extra });
+    const auxFG = cFormG.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
+    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...nov, ...varProm, ...emb, ...extra });
     const client = await pool.connect();
     let reciboId;
     try {
@@ -431,6 +434,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const sMap = await sindMap();
     const cMap = await convMap();
     const cFormCorrida = _esMensual(tipo) ? await conceptosFormulaActivos() : [];
+    const auxCorrida = cFormCorrida.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const client = await pool.connect();
     let corridaId, totalNeto = 0, cant = 0;
     try {
@@ -460,7 +464,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
           if (!(montoEmp > 0)) continue; // sin base (p. ej. % sobre bruto 0): no se genera recibo
           _extra = { montoAjuste: montoEmp, conceptoAjuste: (conceptoExtra && String(conceptoExtra).trim()) || (tipo === 'extra_norem' ? 'Extraordinaria no remunerativa' : 'Extraordinaria remunerativa') };
         }
-        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: cFormCorrida, ..._nov, ..._varProm, ..._emb, ..._extra });
+        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: cFormCorrida, auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
         totalNeto += recibo.totales.neto; cant++;
         const rr = await db(
           `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)
@@ -701,6 +705,40 @@ router.post('/simular', requireRole('rrhh', 'admin'), async (req, res, next) => 
       totales: { netoActual: r2n(tot.netoActual), netoSim: r2n(tot.netoSim),
         costoActual: r2n(tot.costoActual), costoSim: r2n(tot.costoSim),
         deltaCosto: r2n(tot.costoSim - tot.costoActual), deltaNeto: r2n(tot.netoSim - tot.netoActual) },
+    });
+  } catch (e) { next(e); }
+});
+
+// POST /api/liquidacion/simular-bruto { neto, sindicalPct?, fecha? } — sueldo bruto desde el neto (gross-up).
+// Réplica de la "simulación de sueldo bruto" de Tango: dado un neto de bolsillo, calcula el
+// bruto necesario considerando aportes del trabajador (Jub + OS + ANSSAL + INSSJP) con tope SIPA
+// y, opcionalmente, un % de cuota sindical. No incluye Impuesto a las Ganancias.
+router.post('/simular-bruto', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const neto = Number((req.body || {}).neto) || 0;
+    const sindPct = Number((req.body || {}).sindicalPct) || 0;
+    if (neto <= 0) return res.status(400).json({ error: 'Ingresá un neto mayor a 0' });
+    const d = new Date();
+    const p = await getParamsConValores(Number((req.body || {}).anio) || d.getFullYear(), Number((req.body || {}).mes) || (d.getMonth() + 1));
+    const n = (x) => Number(x) || 0;
+    const pctA = n(p.pctJubilacion) + n(p.pctObraSocial) + n(p.pctAnssal) + n(p.pctPamiEmp); // aportes topeados
+    const topeMax = n(p.topeAportesMax) > 0 ? n(p.topeAportesMax) : Infinity;
+    const topeMin = n(p.topeAportesMin) > 0 ? n(p.topeAportesMin) : 0;
+    // neto = bruto - base*pctA/100 - bruto*sindPct/100, con base = clamp(bruto, topeMin, topeMax).
+    // Se resuelve por tramos según dónde cae el bruto respecto de los topes.
+    const fS = 1 - sindPct / 100;
+    let bruto = neto / (1 - (pctA + sindPct) / 100);         // caso base: topeMin <= bruto <= topeMax
+    if (bruto > topeMax) bruto = (neto + topeMax * pctA / 100) / fS;      // por encima del tope: aportes topeados
+    else if (bruto < topeMin) bruto = (neto + topeMin * pctA / 100) / fS; // por debajo: aportes sobre la base mínima
+    const base = Math.min(Math.max(bruto, topeMin), topeMax);
+    const aportesTop = round2c(base * pctA / 100);
+    const aporteSind = round2c(bruto * sindPct / 100);
+    bruto = round2c(bruto);
+    res.json({
+      neto, bruto, sindicalPct: sindPct,
+      aportes: { jubOsPamiAnssal: aportesTop, sindical: aporteSind, total: round2c(aportesTop + aporteSind) },
+      base: round2c(base), topeMax: topeMax === Infinity ? null : topeMax, topeMin,
+      nota: 'Estimación sobre aportes del trabajador (sin Impuesto a las Ganancias).',
     });
   } catch (e) { next(e); }
 });

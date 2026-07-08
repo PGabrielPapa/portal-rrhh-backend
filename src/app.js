@@ -51,6 +51,7 @@ import arcaRoutes from './routes/arca.routes.js';
 import obraSocialRoutes from './routes/obraSocial.routes.js';
 import puestosRoutes from './routes/puestos.routes.js';
 import camposRoutes from './routes/campos.routes.js';
+import valoresAuxRoutes from './routes/valoresAux.routes.js';
 
 export function createApp() {
   const app = express();
@@ -92,6 +93,7 @@ export function createApp() {
   app.use('/api/cambios-obra-social', obraSocialRoutes);
   app.use('/api/puestos', puestosRoutes);
   app.use('/api/campos', camposRoutes);
+  app.use('/api/valores-aux', valoresAuxRoutes);
   app.use('/api/arca', arcaRoutes);
   app.use('/api/familiares', familiaresRoutes);
   app.use('/api/fichadas', fichadasRoutes);

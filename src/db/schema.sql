@@ -1316,6 +1316,18 @@ ALTER TABLE empleados ADD COLUMN IF NOT EXISTS confidencial BOOLEAN NOT NULL DEF
 -- Campos adicionales definibles por el usuario (Tango: "campo adicional").
 -- Los VALORES se guardan en empleados.data con la clave (prefijada cx_) para no
 -- chocar con los campos existentes. Acá solo vive la DEFINICIÓN de cada campo.
+-- Valores auxiliares para el motor de fórmulas (Tango): matrices por tramos,
+-- tablas clave→valor y variables "Macro" (fórmulas reutilizables).
+CREATE TABLE IF NOT EXISTS valores_auxiliares (
+  id        SERIAL PRIMARY KEY,
+  tipo      TEXT NOT NULL,                       -- macro | matriz | tabla
+  clave     TEXT NOT NULL UNIQUE,                -- identificador usado en las fórmulas
+  etiqueta  TEXT NOT NULL,
+  data      JSONB NOT NULL DEFAULT '{}'::jsonb,  -- macro:{formula} · matriz:{tramos:[{hasta,valor}]} · tabla:{pares:[{clave,valor}]}
+  activo    BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS campos_adicionales (
   id        SERIAL PRIMARY KEY,
   entidad   TEXT NOT NULL DEFAULT 'empleado',   -- por ahora, solo el legajo del empleado

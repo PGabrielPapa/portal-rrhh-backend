@@ -37,6 +37,12 @@ function tokenizar(str) {
   while (i < s.length) {
     const c = s[i];
     if (c === ' ' || c === '\t' || c === '\n' || c === '\r') { i++; continue; }
+    if (c === '"' || c === "'") {
+      const q = c; let j = i + 1, str = '';
+      while (j < s.length && s[j] !== q) { str += s[j]; j++; }
+      if (j >= s.length) throw new Error('Falta cerrar la comilla en el texto');
+      toks.push({ t: 'str', v: str }); i = j + 1; continue;
+    }
     if (/[0-9.]/.test(c)) {
       let j = i + 1; while (j < s.length && /[0-9.]/.test(s[j])) j++;
       const num = s.slice(i, j);
@@ -73,6 +79,7 @@ function parsear(toks) {
     if (!t) throw new Error('Fórmula incompleta');
     if (t.v === '+' || t.v === '-') { eat(t.v); const node = parsePrimary(); return { k: 'unary', op: t.v, x: node }; }
     if (t.t === 'num') { eat(); return { k: 'num', v: t.v }; }
+    if (t.t === 'str') { eat(); return { k: 'str', v: t.v }; }
     if (t.v === '(') { eat('('); const e = parseExpr(); eat(')'); return e; }
     if (t.t === 'id') {
       eat();
@@ -107,22 +114,43 @@ function toNum(v) { if (v === true) return 1; if (v === false || v == null || v 
 function evalNode(node, ctx, strict) {
   switch (node.k) {
     case 'num': return node.v;
+    case 'str': return node.v;
     case 'var': return ctxGet(ctx, node.name, strict);
-    case 'unary': { const x = evalNode(node.x, ctx, strict); return node.op === '-' ? -x : x; }
+    case 'unary': { const x = toNum(evalNode(node.x, ctx, strict)); return node.op === '-' ? -x : x; }
     case 'call': {
+      // Funciones que usan valores auxiliares (matrices/tablas) definidos por el usuario.
+      if (node.name === 'TRAMO' || node.name === 'TABLA') {
+        const aux = (ctx && ctx.__aux) || {};
+        const nombre = String(evalNode(node.args[0], ctx, strict));
+        if (node.name === 'TRAMO') {
+          const m = (aux.matrices && aux.matrices[nombre]) || null;
+          if (!m) { if (strict) throw new Error(`Matriz desconocida: "${nombre}"`); return 0; }
+          const x = toNum(evalNode(node.args[1], ctx, strict));
+          const tramos = [...m].sort((p, q) => toNum(p.hasta) - toNum(q.hasta));
+          for (const tr of tramos) if (x <= toNum(tr.hasta)) return toNum(tr.valor);
+          return tramos.length ? toNum(tramos[tramos.length - 1].valor) : 0;
+        } else {
+          const t = (aux.tablas && aux.tablas[nombre]) || null;
+          if (!t) { if (strict) throw new Error(`Tabla desconocida: "${nombre}"`); return 0; }
+          const clave = String(evalNode(node.args[1], ctx, strict));
+          return toNum(t[clave]);
+        }
+      }
       const fn = FUNCS[node.name];
       if (!fn) throw new Error(`Función desconocida: "${node.name}"`);
       const args = node.args.map((a) => evalNode(a, ctx, strict));
-      return toNum(fn(...args));
+      return toNum(fn(...args.map((x) => (node.name === 'SI' ? x : toNum(x)))));
     }
     case 'bin': {
-      const l = evalNode(node.l, ctx, strict), r = evalNode(node.r, ctx, strict);
+      const L = evalNode(node.l, ctx, strict), R = evalNode(node.r, ctx, strict);
+      const l = toNum(L), r = toNum(R);
+      if (node.op === '==') return (L === R || l === r) ? 1 : 0;
+      if (node.op === '!=') return (L === R || l === r) ? 0 : 1;
       switch (node.op) {
         case '+': return l + r; case '-': return l - r; case '*': return l * r;
         case '/': return r === 0 ? 0 : l / r; case '%': return r === 0 ? 0 : l % r;
         case '>': return l > r ? 1 : 0; case '<': return l < r ? 1 : 0;
         case '>=': return l >= r ? 1 : 0; case '<=': return l <= r ? 1 : 0;
-        case '==': return l === r ? 1 : 0; case '!=': return l !== r ? 1 : 0;
         case '&&': return (l && r) ? 1 : 0; case '||': return (l || r) ? 1 : 0;
         default: throw new Error(`Operador desconocido: "${node.op}"`);
       }
@@ -133,8 +161,29 @@ function evalNode(node, ctx, strict) {
 
 // Evalúa una fórmula. Devuelve un número. Lanza Error con mensaje claro si algo falla.
 // opts.strict=true → variable inexistente lanza error (para el editor "probar fórmula").
+// Expande variables "Macro" (fórmulas almacenadas) reemplazando su nombre por (fórmula).
+// Soporta anidamiento (hasta 10 pasadas). No toca nombres seguidos de "(" (funciones).
+export function expandirMacros(expr, macros) {
+  if (!macros || !Object.keys(macros).length) return String(expr);
+  const lower = {}; for (const k of Object.keys(macros)) lower[k.toLowerCase()] = macros[k];
+  let out = String(expr);
+  for (let pass = 0; pass < 10; pass++) {
+    let changed = false;
+    out = out.replace(/[A-Za-z_][A-Za-z0-9_]*/g, (m, off, str) => {
+      const rest = str.slice(off + m.length).replace(/^\s*/, '');
+      if (rest.startsWith('(')) return m; // es una función
+      const macro = lower[m.toLowerCase()];
+      if (macro != null) { changed = true; return '(' + macro + ')'; }
+      return m;
+    });
+    if (!changed) break;
+  }
+  return out;
+}
+
 export function evaluarFormula(expr, ctx = {}, opts = {}) {
-  const ast = parsear(tokenizar(expr));
+  const src = opts.macros ? expandirMacros(expr, opts.macros) : expr;
+  const ast = parsear(tokenizar(src));
   return round(evalNode(ast, ctx, !!opts.strict), opts.decimales != null ? opts.decimales : 2);
 }
 

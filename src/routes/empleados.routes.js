@@ -435,6 +435,43 @@ router.put('/:id/baja', requireRole('rrhh', 'admin'), async (req, res, next) => 
   } catch (e) { next(e); }
 });
 
+// POST /api/empleados/masivo-sueldo (rrhh/admin) — actualiza el básico de varios legajos
+// por porcentaje o importe fijo (réplica de "actualización masiva de sueldos" de Tango).
+// Actúa sobre el básico manual del legajo (data.basico / data.sueldo). Los legajos por
+// escala/convenio (sin básico manual) se omiten y se informan.
+router.post('/masivo-sueldo', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  const b = req.body || {};
+  const ids = Array.isArray(b.ids) ? [...new Set(b.ids.map(Number).filter(Boolean))] : [];
+  const modo = b.modo === 'importe' ? 'importe' : 'pct';
+  const valor = Number(b.valor);
+  if (!ids.length) return res.status(400).json({ error: 'Elegí al menos un empleado.' });
+  if (!Number.isFinite(valor) || valor === 0) return res.status(400).json({ error: 'Ingresá el porcentaje o importe (distinto de 0).' });
+  const num = (x) => Number(x) || 0;
+  const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+  const client = await pool.connect();
+  let actualizados = 0, omitidos = 0; const detalles = [];
+  try {
+    await client.query('BEGIN');
+    for (const id of ids) {
+      const cur = (await client.query('SELECT id, nom, activo, data FROM empleados WHERE id=$1', [id])).rows[0];
+      if (!cur) { detalles.push(`ID ${id}: no existe`); omitidos++; continue; }
+      const d = cur.data || {};
+      const baseActual = num(d.basico) || num(d.sueldo);
+      if (baseActual <= 0) { detalles.push(`${cur.nom}: sin básico manual (por escala/convenio) — omitido`); omitidos++; continue; }
+      const nuevo = round2(modo === 'pct' ? baseActual * (1 + valor / 100) : baseActual + valor);
+      if (nuevo <= 0) { detalles.push(`${cur.nom}: el nuevo básico daría <= 0 — omitido`); omitidos++; continue; }
+      const patch = { basico: nuevo };
+      if (d.sueldo != null && d.sueldo !== '') patch.sueldo = nuevo;
+      await client.query('UPDATE empleados SET data = data || $1::jsonb WHERE id=$2', [JSON.stringify(patch), id]);
+      if (cur.activo) await client.query('INSERT INTO legajo_cambios (empleado_id, campo, etiqueta, valor_anterior, valor_nuevo, created_by) VALUES ($1,$2,$3,$4,$5,$6)', [id, 'Básico', 'Básico', String(baseActual), String(nuevo), req.user.dni]);
+      actualizados++;
+    }
+    await client.query('COMMIT');
+    logAudit(req.user.dni, 'actualizacion_masiva_sueldos', `${modo === 'pct' ? valor + '%' : '$' + valor} en ${actualizados} legajo(s)`, ids.join(','));
+    res.json({ ok: true, actualizados, omitidos, detalles, modo, valor });
+  } catch (e) { await client.query('ROLLBACK'); next(e); } finally { client.release(); }
+});
+
 // POST /api/empleados/import  (rrhh/admin) — alta masiva
 // body: { rows: [{ Legajo, DNI, CUIL, "Apellido y Nombre", Empresa, "Fecha Ingreso", ... }] }
 router.post('/import', requireRole('rrhh', 'admin'), async (req, res, next) => {

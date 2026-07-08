@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { evaluarFormula, analizarFormula, FUNCIONES_DISPONIBLES } from '../lib/formulas.js';
+import { cargarAux } from './valoresAux.routes.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -89,15 +90,17 @@ router.get('/variables', requireRole('rrhh', 'admin'), (req, res) => {
 });
 
 // POST /api/conceptos/probar-formula { formula, condicion?, contexto? } — valida y evalúa con datos de ejemplo.
-router.post('/probar-formula', requireRole('rrhh', 'admin'), (req, res) => {
+router.post('/probar-formula', requireRole('rrhh', 'admin'), async (req, res) => {
   const b = req.body || {};
   if (!b.formula || !String(b.formula).trim()) return res.status(400).json({ ok: false, error: 'Ingresá una fórmula' });
-  const ctx = { ...SAMPLE_CTX, ...(b.contexto && typeof b.contexto === 'object' ? b.contexto : {}) };
+  const aux = await cargarAux();
+  const ctx = { ...SAMPLE_CTX, ...(b.contexto && typeof b.contexto === 'object' ? b.contexto : {}), __aux: aux };
+  const mopts = { strict: false, macros: aux.macros };
   try {
     const an = analizarFormula(b.formula);
-    const valor = evaluarFormula(b.formula, ctx, { strict: false });
+    const valor = evaluarFormula(b.formula, ctx, mopts);
     let aplica = true, valorCondicion = null;
-    if (b.condicion && String(b.condicion).trim()) { analizarFormula(b.condicion); valorCondicion = evaluarFormula(b.condicion, ctx, { strict: false }); aplica = valorCondicion !== 0; }
+    if (b.condicion && String(b.condicion).trim()) { analizarFormula(b.condicion); valorCondicion = evaluarFormula(b.condicion, ctx, mopts); aplica = valorCondicion !== 0; }
     // Variables usadas que no están en el catálogo (posibles errores de tipeo o campos cx_).
     const conocidas = new Set(VARIABLES_FORMULA.map(([k]) => k.toLowerCase()));
     const fueraCatalogo = an.variables.filter((v) => !conocidas.has(v.toLowerCase()) && !v.toLowerCase().startsWith('cx_'));
