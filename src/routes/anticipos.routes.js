@@ -20,6 +20,10 @@ router.get('/', async (req, res, next) => {
         params.push(ids); cond.push(`a.empleado_id = ANY($${params.length})`);
         // El gerente solo ve los adelantos del año en curso.
         cond.push("a.created_at >= date_trunc('year', CURRENT_DATE)");
+      } else {
+        // RR.HH./admin: solo adelantos otorgados en el último año, salvo los de más de un año
+        // que todavía tengan cuotas pendientes de descuento (aprobados con pagadas < cuotas).
+        cond.push("(a.created_at >= CURRENT_DATE - INTERVAL '1 year' OR (a.estado = 'aprobado' AND COALESCE(cu.pagadas, 0) < a.cuotas))");
       }
       const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
       const { rows } = await query(
