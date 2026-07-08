@@ -199,7 +199,7 @@ export function calcularRecibo(emp, params, opts) {
   const tipoLabel = {
     mensual: 'Mensual', quincenal_1: 'Quincena 1ª (1–15)', quincenal_2: 'Quincena 2ª (16–fin)',
     sac1: 'SAC 1° semestre', sac2: 'SAC 2° semestre', vacaciones: 'Vacaciones', final: 'Liquidación final',
-    anticipo: 'Anticipo de haberes', complementaria: 'Ajuste de sueldo (remunerativo)', anticipo_ajuste: 'Anticipo ajuste de sueldo (no rem.)',
+    anticipo: 'Anticipo de haberes', complementaria: 'Extraordinaria remunerativa (ajuste con aportes)', anticipo_ajuste: 'Anticipo ajuste de sueldo (no rem.)', extra_norem: 'Extraordinaria no remunerativa',
   }[tipo] || tipo;
 
   const esQuincenal = tipo === 'quincenal_1' || tipo === 'quincenal_2';
@@ -209,6 +209,7 @@ export function calcularRecibo(emp, params, opts) {
   const esAnticipo = tipo === 'anticipo';
   const esComplementaria = tipo === 'complementaria';
   const esAnticipoAjuste = tipo === 'anticipo_ajuste';
+  const esExtraNoRem = tipo === 'extra_norem';
   const detalle = {};
 
   if (esSAConly) {
@@ -325,6 +326,13 @@ export function calcularRecibo(emp, params, opts) {
     const concepto = (opts?.conceptoAjuste && String(opts.conceptoAjuste).trim()) || 'Anticipo ajuste de sueldo';
     haberes.push({ concepto, tipo: 'norem', monto: round2(monto) });
     detalle.anticipoAjuste = { concepto, monto: round2(monto) };
+  } else if (esExtraNoRem) {
+    // Extraordinaria NO remunerativa: pago no remunerativo genuino (beneficio/gratificación no rem.),
+    // no tributa aportes ni Ganancias; se informa en el recibo, Libro y LSD como no remunerativo.
+    const monto = num(opts?.montoAjuste);
+    const concepto = (opts?.conceptoAjuste && String(opts.conceptoAjuste).trim()) || 'Extraordinaria no remunerativa';
+    haberes.push({ concepto, tipo: 'norem', monto: round2(monto) });
+    detalle.extraNoRem = { concepto, monto: round2(monto) };
   } else {
     // mensual / quincenal
     const diasBase = esQuincenal ? 15 : 30;
@@ -515,8 +523,12 @@ export function calcularRecibo(emp, params, opts) {
   const baseSegSoc = Math.max(0, totalRemun - detr);
   const coSeg = (pct) => round2(baseSegSoc * num(pct) / 100);
   const cJub = coSeg(p.pctJubPatronal), cOS = round2(baseAportesOs * num(p.pctOsPatronal) / 100), cPami = coSeg(p.pctPamiPatronal), cFne = coSeg(p.pctDesempleo), cArt = co(p.pctArt), cSind = esFC ? 0 : co(p.pctSindicatoPatronal);
-  const scvo = round2(num(p.scvoPercapita));  // Seguro de Vida Obligatorio (Dto. 1567/74), prima per cápita
-  const ffep = round2(num(p.ffep));            // Fondo Fiduciario de Enfermedades Profesionales (SRT), suma fija por trabajador
+  // El SCVO y el FFEP son per cápita mensuales: se cobran una sola vez con la liquidación
+  // principal (mensual/quincena/SAC/vacaciones/final). No se re-cobran en extraordinarias,
+  // anticipos ni ajustes complementarios del mismo período.
+  const perCapitaAplica = (tipo === 'mensual' || esQuincenal || esSAConly || esVacaciones || esFinal);
+  const scvo = perCapitaAplica ? round2(num(p.scvoPercapita)) : 0;  // Seguro de Vida Obligatorio (Dto. 1567/74)
+  const ffep = perCapitaAplica ? round2(num(p.ffep)) : 0;           // Fondo Fiduc. Enfermedades Profesionales (SRT)
   // Fondo de Asistencia Laboral (Ley 27.802 / Dto. 408/2026), desde 11/2026. NO es costo
   // adicional: se DETRAE de las contribuciones patronales de seguridad social (se redirige un
   // % de la base SIPA desde la jubilación patronal hacia el FAL). Alícuota: MiPyME 2,5% /

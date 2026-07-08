@@ -402,8 +402,10 @@ router.get('/controles', requireRole('rrhh', 'admin'), async (req, res, next) =>
 // POST /api/liquidacion/corrida { anio, mes, tipo, empresa? } — calcula y guarda recibos (borrador, no publicados)
 router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
-    const { anio, mes, tipo = 'mensual', empresa, fechaPago } = req.body || {};
+    const { anio, mes, tipo = 'mensual', empresa, fechaPago, conceptoExtra, modoExtra, montoExtra } = req.body || {};
     if (!anio || !mes) return res.status(400).json({ error: 'anio y mes son obligatorios' });
+    const esExtra = tipo === 'complementaria' || tipo === 'extra_norem';
+    if (esExtra && !(Number(montoExtra) > 0)) return res.status(400).json({ error: 'Indicá el monto (o % del bruto) de la liquidación extraordinaria' });
     const cond = ['e.activo = true'], pr = [];
     if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
     const emps = (await query(
@@ -441,7 +443,13 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
         const _sacBase = _esSAC(tipo) ? await mejorRemSemestre(id, anio, tipo) : 0;
         let _ajPend = 0;
         if (_esMensual(tipo)) { await resetAjusteNeto(id, anio, mes); _ajPend = await ajustePendiente(id, anio, mes); }
-        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, ..._nov, ..._varProm, ..._emb });
+        let _extra = {};
+        if (esExtra) {
+          const montoEmp = modoExtra === 'pctBruto' ? r2(Number(emp.bruto || 0) * Number(montoExtra) / 100) : r2(Number(montoExtra));
+          if (!(montoEmp > 0)) continue; // sin base (p. ej. % sobre bruto 0): no se genera recibo
+          _extra = { montoAjuste: montoEmp, conceptoAjuste: (conceptoExtra && String(conceptoExtra).trim()) || (tipo === 'extra_norem' ? 'Extraordinaria no remunerativa' : 'Extraordinaria remunerativa') };
+        }
+        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, ..._nov, ..._varProm, ..._emb, ..._extra });
         totalNeto += recibo.totales.neto; cant++;
         const rr = await db(
           `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)
