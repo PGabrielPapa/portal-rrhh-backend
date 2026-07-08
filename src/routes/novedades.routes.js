@@ -38,6 +38,76 @@ export async function novedadesOpts(empleadoId, anio, mes) {
   return opts;
 }
 
+// ── Topes por novedad (control del acumulado por legajo y período) ─────────────
+// Réplica de Tango: se controla la cantidad/valor acumulado de cada novedad por
+// legajo dentro de una ventana (anual, semestral o mensual). tope 0 = sin control.
+const PERIODOS_TOPE = ['anual', 'semestral', 'mensual'];
+
+async function topeDe(tipo) {
+  const r = await query('SELECT tipo, periodo, tope_cantidad, tope_monto, bloquear FROM novedad_topes WHERE tipo=$1', [tipo]);
+  return r.rows[0] || null;
+}
+
+// Acumulado de un tipo para un legajo dentro de la ventana del período.
+async function acumuladoNovedad(empleadoId, tipo, periodo, anio, mes) {
+  anio = Number(anio); mes = Number(mes);
+  let cond, args;
+  if (periodo === 'mensual') { cond = 'anio=$3 AND mes=$4'; args = [empleadoId, tipo, anio, mes]; }
+  else if (periodo === 'semestral') { const lo = mes <= 6 ? 1 : 7, hi = mes <= 6 ? 6 : 12; cond = 'anio=$3 AND mes BETWEEN $4 AND $5'; args = [empleadoId, tipo, anio, lo, hi]; }
+  else { cond = 'anio=$3'; args = [empleadoId, tipo, anio]; }
+  const r = await query(`SELECT COALESCE(SUM(cantidad),0) c, COALESCE(SUM(monto),0) m FROM novedades WHERE empleado_id=$1 AND tipo=$2 AND ${cond}`, args);
+  return { cantidad: Number(r.rows[0].c), monto: Number(r.rows[0].m) };
+}
+
+// null si está dentro del tope; si no, detalle del exceso.
+async function chequearTope(empleadoId, anio, mes, tipo, addCant, addMonto) {
+  const t = await topeDe(tipo);
+  if (!t) return null;
+  const unidad = TIPO_INFO[tipo]?.unidad;
+  const tope = unidad === 'cantidad' ? Number(t.tope_cantidad) : Number(t.tope_monto);
+  if (!tope || tope <= 0) return null;
+  const acc = await acumuladoNovedad(empleadoId, tipo, t.periodo, anio, mes);
+  const usado = unidad === 'cantidad' ? acc.cantidad : acc.monto;
+  const add = unidad === 'cantidad' ? Number(addCant || 0) : Number(addMonto || 0);
+  const total = usado + add;
+  if (total > tope + 1e-9) return { tope, usado, add, total, periodo: t.periodo, unidad, bloquear: t.bloquear, label: TIPO_INFO[tipo]?.label || tipo };
+  return null;
+}
+function msgTope(c) {
+  const v = (n) => Number(n).toLocaleString('es-AR');
+  const u = c.unidad === 'cantidad' ? '' : '$ ';
+  return `Supera el tope ${c.periodo} de "${c.label}": tope ${u}${v(c.tope)}, ya registrado ${u}${v(c.usado)}, intentás sumar ${u}${v(c.add)} (total ${u}${v(c.total)}).`;
+}
+
+// GET /api/novedades/topes — configuración (todos los tipos, con defaults).
+router.get('/topes', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const rows = (await query('SELECT tipo, periodo, tope_cantidad, tope_monto, bloquear FROM novedad_topes')).rows;
+    const byTipo = Object.fromEntries(rows.map((r) => [r.tipo, r]));
+    res.json(TIPOS_NOVEDAD.map(([tipo, label, unidad]) => {
+      const t = byTipo[tipo];
+      return { tipo, label, unidad, periodo: t?.periodo || 'anual', topeCantidad: Number(t?.tope_cantidad || 0), topeMonto: Number(t?.tope_monto || 0), bloquear: t ? t.bloquear : true };
+    }));
+  } catch (e) { next(e); }
+});
+
+// PUT /api/novedades/topes — guarda la configuración.
+router.put('/topes', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const arr = Array.isArray(req.body?.topes) ? req.body.topes : [];
+    for (const t of arr) {
+      if (!TIPO_INFO[t.tipo]) continue;
+      const periodo = PERIODOS_TOPE.includes(t.periodo) ? t.periodo : 'anual';
+      await query(
+        `INSERT INTO novedad_topes (tipo, periodo, tope_cantidad, tope_monto, bloquear, updated_by, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,now())
+         ON CONFLICT (tipo) DO UPDATE SET periodo=EXCLUDED.periodo, tope_cantidad=EXCLUDED.tope_cantidad, tope_monto=EXCLUDED.tope_monto, bloquear=EXCLUDED.bloquear, updated_by=EXCLUDED.updated_by, updated_at=now()`,
+        [t.tipo, periodo, Number(t.topeCantidad) || 0, Number(t.topeMonto) || 0, t.bloquear !== false, req.user?.email || '']);
+    }
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 router.get('/_tipos', (req, res) => res.json(TIPOS_NOVEDAD.map(([k, l, u]) => ({ tipo: k, label: l, unidad: u }))));
 
 router.get('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
@@ -64,9 +134,11 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
     const b = req.body || {};
     if (!b.empleadoId || !b.anio || !b.mes || !b.tipo) return res.status(400).json({ error: 'empleadoId, anio, mes y tipo son obligatorios' });
     if (!TIPO_INFO[b.tipo]) return res.status(400).json({ error: 'Tipo de novedad inválido' });
+    const chk = await chequearTope(b.empleadoId, b.anio, b.mes, b.tipo, b.cantidad, b.monto);
+    if (chk && chk.bloquear) return res.status(400).json({ error: msgTope(chk) });
     const r = await query('INSERT INTO novedades (empleado_id, anio, mes, tipo, cantidad, monto, detalle, origen, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
       [b.empleadoId, Number(b.anio), Number(b.mes), b.tipo, Number(b.cantidad) || 0, Number(b.monto) || 0, b.detalle || null, b.origen || 'manual', req.user?.email || '']);
-    res.status(201).json({ ok: true, id: r.rows[0].id });
+    res.status(201).json({ ok: true, id: r.rows[0].id, aviso: chk ? msgTope(chk) : undefined });
   } catch (e) { next(e); }
 });
 
@@ -81,7 +153,7 @@ router.post('/import', requireRole('rrhh', 'admin'), async (req, res, next) => {
     if (!rows.length) return res.status(400).json({ error: 'El archivo no tiene filas' });
     const pick = (r, ...ks) => { for (const k of ks) for (const rk of Object.keys(r)) if (rk.trim().toLowerCase() === k.toLowerCase() && String(r[rk]).trim() !== '') return r[rk]; return ''; };
     const onlyDigits = (s) => String(s || '').replace(/\D/g, '');
-    let okN = 0; const errores = [];
+    let okN = 0; const errores = [], avisos = [];
     // Si se pide reemplazar, borra las novedades del período antes de cargar.
     if (b.reemplazar) await query('DELETE FROM novedades WHERE anio=$1 AND mes=$2 AND origen=$3', [anio, mes, 'excel']);
     for (const r of rows) {
@@ -96,11 +168,14 @@ router.post('/import', requireRole('rrhh', 'admin'), async (req, res, next) => {
       const cantidad = Number(String(pick(r, 'Cantidad', 'Cant', 'Horas', 'Dias') || '0').replace(',', '.')) || 0;
       const monto = Number(String(pick(r, 'Monto', 'Importe') || '0').replace(/\./g, '').replace(',', '.')) || 0;
       const detalle = String(pick(r, 'Detalle', 'Concepto', 'Observaciones')).trim() || null;
+      const chk = await chequearTope(emp.id, anio, mes, tipo, cantidad, monto);
+      if (chk && chk.bloquear) { errores.push(`Legajo ${leg || cuil}: ${msgTope(chk)}`); continue; }
+      if (chk) avisos.push(`Legajo ${leg || cuil}: ${msgTope(chk)}`);
       await query('INSERT INTO novedades (empleado_id, anio, mes, tipo, cantidad, monto, detalle, origen, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
         [emp.id, anio, mes, tipo, cantidad, monto, detalle, 'excel', req.user?.email || '']);
       okN++;
     }
-    res.json({ ok: true, importadas: okN, errores });
+    res.json({ ok: true, importadas: okN, errores, avisos });
   } catch (e) { next(e); }
 });
 

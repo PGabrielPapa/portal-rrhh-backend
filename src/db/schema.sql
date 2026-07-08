@@ -1160,6 +1160,18 @@ CREATE TABLE IF NOT EXISTS novedades (
 CREATE INDEX IF NOT EXISTS idx_novedades_periodo ON novedades(anio, mes);
 CREATE INDEX IF NOT EXISTS idx_novedades_emp ON novedades(empleado_id, anio, mes);
 
+-- ── Topes por novedad/concepto (Tango: control de cantidades/valores acumulados ──
+-- por legajo en un período: anual, semestral o mensual). tope 0 = sin control.
+CREATE TABLE IF NOT EXISTS novedad_topes (
+  tipo          TEXT PRIMARY KEY,        -- coincide con TIPOS_NOVEDAD
+  periodo       TEXT NOT NULL DEFAULT 'anual',  -- anual|semestral|mensual
+  tope_cantidad NUMERIC(12,2) NOT NULL DEFAULT 0,
+  tope_monto    NUMERIC(14,2) NOT NULL DEFAULT 0,
+  bloquear      BOOLEAN NOT NULL DEFAULT true,   -- true=rechaza; false=solo avisa
+  updated_by    TEXT,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ── Vacaciones: programación y goce (saldo = corresponden por antigüedad − tomadas) ──
 CREATE TABLE IF NOT EXISTS vacaciones (
   id SERIAL PRIMARY KEY,
