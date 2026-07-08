@@ -1310,13 +1310,10 @@ CREATE TABLE IF NOT EXISTS puestos (
 );
 CREATE INDEX IF NOT EXISTS idx_puestos_reporta ON puestos(reporta_a);
 ALTER TABLE empleados ADD COLUMN IF NOT EXISTS puesto_id INTEGER REFERENCES puestos(id) ON DELETE SET NULL;
+-- Legajo confidencial (Tango): oculta el legajo a usuarios sin permiso de verlos.
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS confidencial BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS idx_empleados_confidencial ON empleados(confidencial);
 CREATE INDEX IF NOT EXISTS idx_empleados_puesto ON empleados(puesto_id);
 
 -- ─────────────────────────────────────────────────────────────────────────
--- Índices de performance (remediación auditoría #6). Aceleran las consultas
--- por período que hace el bucle de la corrida de liquidación y los controles.
--- ─────────────────────────────────────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_recibos_periodo ON recibos(empleado_id, anio, mes, tipo);
-CREATE INDEX IF NOT EXISTS idx_recibos_anio_mes_tipo ON recibos(anio, mes, tipo);
-CREATE INDEX IF NOT EXISTS idx_licencias_emp_desde ON licencias(empleado_id, desde);
-CREATE INDEX IF NOT EXISTS idx_corridas_periodo ON corridas(anio, mes, empresa);
+-- Índices de performance (remediació

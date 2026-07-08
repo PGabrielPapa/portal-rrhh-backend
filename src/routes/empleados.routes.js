@@ -3,6 +3,7 @@ import { query, pool } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { makeUid, dniFromCuil, empSlug } from '../lib/identity.js';
 import { idsEquipoDe, idsDirectosDe } from '../lib/equipo.js';
+import { puedeVerConfidenciales } from '../lib/confidencial.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -34,6 +35,7 @@ function mapRow(r) {
     role: r.role,
     activo: r.activo,
     esAlta: r.es_alta,
+    confidencial: r.confidencial === true,
     ...r.data,
   };
 }
@@ -49,6 +51,7 @@ router.get('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
     const cond = [], params = [];
     if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
     if (activos === 'true') cond.push('e.activo = true');
+    if (!(await puedeVerConfidenciales(req.user))) cond.push('e.confidencial = false');
     if (q) {
       params.push(`%${String(q).toLowerCase()}%`);
       const i = params.length;
@@ -70,6 +73,7 @@ router.get('/buscar', requireRole('rrhh', 'admin', 'manager', 'comite'), async (
       `SELECT e.id, e.nom, e.leg_num, em.nombre AS empresa, e.cat, e.tramo, e.data->>'tarea' AS tarea
          FROM empleados e JOIN empresas em ON em.id = e.empresa_id
         WHERE e.activo = true AND (lower(e.nom) LIKE $1 OR e.leg_num LIKE $1)
+              ${(await puedeVerConfidenciales(req.user)) ? '' : 'AND e.confidencial = false'}
         ORDER BY e.nom LIMIT 20`, [`%${q}%`]);
     res.json(rows.map((r) => ({ id: r.id, nom: r.nom, legNum: r.leg_num, empresa: r.empresa, cat: r.cat, tramo: r.tramo, tarea: r.tarea })));
   } catch (e) { next(e); }
@@ -130,7 +134,8 @@ router.get('/equipo', async (req, res, next) => {
     const soloDirectos = req.query.directos === '1';
     const ids = [...await (soloDirectos ? idsDirectosDe(req.user.id) : idsEquipoDe(req.user.id))];
     if (!ids.length) return res.json([]);
-    const { rows } = await query(`${SELECT} WHERE e.id = ANY($1) AND e.activo = true ORDER BY e.nom`, [ids]);
+    const extra = (await puedeVerConfidenciales(req.user)) ? '' : ' AND e.confidencial = false';
+    const { rows } = await query(`${SELECT} WHERE e.id = ANY($1) AND e.activo = true${extra} ORDER BY e.nom`, [ids]);
     res.json(rows.map(mapRow));
   } catch (e) { next(e); }
 });
@@ -221,6 +226,7 @@ router.get('/:id', async (req, res, next) => {
     if (!permitido) return res.status(403).json({ error: 'No autorizado' });
     const { rows } = await query(`${SELECT} WHERE e.id = $1`, [id]);
     if (!rows[0]) return res.status(404).json({ error: 'Empleado no encontrado' });
+    if (rows[0].confidencial === true && req.user.id !== id && !(await puedeVerConfidenciales(req.user))) return res.status(403).json({ error: 'Legajo confidencial' });
     res.json(mapRow(rows[0]));
   } catch (e) { next(e); }
 });
@@ -289,6 +295,8 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
 router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const b = req.body || {};
+    const puedeConf = await puedeVerConfidenciales(req.user);
+    if (req.user.role !== 'admin') delete b.verConfidenciales; // solo admin otorga el permiso
     const before = (await query('SELECT nom, email, cuil, ingreso, bruto, neto, cat, tramo, role, activo, data FROM empleados WHERE id=$1', [req.params.id])).rows[0] || {};
     // Tilde "Administrador": marca -> role admin; desmarca -> employee solo si era admin (no pisa manager/rrhh).
     if (b.esAdmin !== undefined && ['admin', 'rrhh'].includes(req.user.role)) {
@@ -299,12 +307,13 @@ router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
     // Columnas núcleo editables (identidad empresa+legajo+dni NO se cambia acá).
     const fields = { nom: b.nom, email: b.email, cat: b.cat, tramo: b.tramo, cuil: b.cuil,
       ingreso: b.ingreso, bruto: b.bruto, neto: b.neto, puesto_id: b.puestoId };
+    if (b.confidencial !== undefined && puedeConf) fields.confidencial = !!b.confidencial;
     const sets = [], params = [];
     for (const [k, v] of Object.entries(fields)) {
       if (v !== undefined) { params.push(k === 'nom' ? String(v).toUpperCase() : (v === '' ? null : v)); sets.push(`${k} = $${params.length}`); }
     }
     // Resto de campos (domicilio, tarea, sindicato, básico, etc.) → se mergean en data jsonb.
-    const exclude = ['empresa', 'legNum', 'leg', 'dni', 'cuil', 'nom', 'email', 'cat', 'tramo', 'ingreso', 'bruto', 'neto', 'role', 'id', 'uid', 'empresaId', 'activo', 'esAlta', 'puestoId', 'puesto_id', 'puesto'];
+    const exclude = ['empresa', 'legNum', 'leg', 'dni', 'cuil', 'nom', 'email', 'cat', 'tramo', 'ingreso', 'bruto', 'neto', 'role', 'id', 'uid', 'empresaId', 'activo', 'esAlta', 'puestoId', 'puesto_id', 'puesto', 'confidencial'];
     const data = {}; for (const k of Object.keys(b)) if (!exclude.includes(k)) data[k] = b[k];
     if (Object.keys(data).length) { params.push(JSON.stringify(data)); sets.push(`data = data || $${params.length}::jsonb`); }
     if (!sets.length) return res.status(400).json({ error: 'Nada para actualizar' });

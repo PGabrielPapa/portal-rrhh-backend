@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { puedeVerConfidenciales } from '../lib/confidencial.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -117,6 +118,7 @@ router.get('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
     if (req.query.mes) { args.push(Number(req.query.mes)); cond.push(`n.mes=$${args.length}`); }
     if (req.query.empresa) { args.push(req.query.empresa); cond.push(`em.nombre=$${args.length}`); }
     if (req.query.empleadoId) { args.push(Number(req.query.empleadoId)); cond.push(`n.empleado_id=$${args.length}`); }
+    if (!(await puedeVerConfidenciales(req.user))) cond.push('e.confidencial = false');
     const where = cond.length ? 'WHERE ' + cond.join(' AND ') : '';
     const { rows } = await query(
       `SELECT n.*, e.nom, e.leg_num, em.nombre AS empresa FROM novedades n
