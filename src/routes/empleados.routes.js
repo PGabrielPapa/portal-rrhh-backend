@@ -508,4 +508,79 @@ router.post('/import', requireRole('rrhh', 'admin'), async (req, res, next) => {
   } catch (e) { await client.query('ROLLBACK'); next(e); } finally { client.release(); }
 });
 
+// ── Actualización masiva de legajos (Tango: "operaciones masivas") ────────────
+// Cambia un mismo dato (obra social, convenio, sindicato, categoría, lugar…) a un
+// conjunto de legajos de una sola vez. Cada cambio queda en legajo_cambios y en el
+// período vigente (periodo_cambios), igual que la edición individual (PUT /:id).
+// kind: 'col' actualiza columna de empleados; 'data' mergea en data jsonb.
+// per: columna de `periodos` a sincronizar. lugarHist: además arma el histórico de lugar.
+const MASIVO_FIELDS = {
+  cat:                { label: 'Categoría escala',      kind: 'col',  per: 'cat_escala',  upper: true },
+  tramo:              { label: 'Tramo escala',          kind: 'col',  per: 'tramo_escala', upper: true },
+  cod_convenio:       { label: 'CCT / Convenio',        kind: 'data', per: 'cod_convenio' },
+  categoria_convenio: { label: 'Categoría de convenio', kind: 'data', per: 'cat_convenio' },
+  cod_sindicato:      { label: 'Afiliación sindical',   kind: 'data', per: 'cod_sindicato' },
+  condicion:          { label: 'Condición',             kind: 'data' },
+  nivelTitulo:        { label: 'Nivel de título',       kind: 'data' },
+  os_codigo:          { label: 'Obra social',           kind: 'data' }, // también setea codigoObraSocial
+  lugar:              { label: 'Lugar de trabajo',      kind: 'data', lugarHist: true },
+};
+
+// GET /api/empleados/masivo/campos — campos habilitados para la pantalla masiva.
+router.get('/masivo/campos', requireRole('rrhh', 'admin'), (req, res) => {
+  res.json(Object.entries(MASIVO_FIELDS).map(([key, d]) => ({ key, label: d.label })));
+});
+
+// POST /api/empleados/masivo  (rrhh/admin) — aplica { ids, campo, valor } a varios legajos.
+router.post('/masivo', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  const b = req.body || {};
+  const campo = String(b.campo || '').trim();
+  const def = MASIVO_FIELDS[campo];
+  if (!def) return res.status(400).json({ error: 'Campo no habilitado para actualización masiva.' });
+  const ids = Array.isArray(b.ids) ? [...new Set(b.ids.map(Number).filter(Boolean))] : [];
+  if (!ids.length) return res.status(400).json({ error: 'Elegí al menos un empleado.' });
+  const valor = b.valor == null ? '' : String(b.valor).trim();
+  if (!valor) return res.status(400).json({ error: 'Ingresá el nuevo valor.' });
+  const nuevo = def.upper ? valor.toUpperCase() : valor;
+  const client = await pool.connect();
+  let actualizados = 0, sinCambio = 0; const errores = [];
+  try {
+    await client.query('BEGIN');
+    for (const id of ids) {
+      try {
+        const cur = (await client.query('SELECT id, nom, activo, cat, tramo, data FROM empleados WHERE id=$1', [id])).rows[0];
+        if (!cur) { errores.push(`ID ${id}: no existe`); continue; }
+        const d = cur.data || {};
+        const ant = def.kind === 'col' ? (cur[campo] == null ? '' : String(cur[campo])) : (d[campo] == null ? '' : String(d[campo]));
+        if (String(ant) === String(nuevo)) { sinCambio++; continue; }
+        if (def.kind === 'col') {
+          await client.query(`UPDATE empleados SET ${campo}=$1 WHERE id=$2`, [nuevo, id]);
+        } else {
+          const patch = { [campo]: nuevo };
+          if (campo === 'os_codigo') patch.codigoObraSocial = nuevo.replace(/\D/g, '').slice(-6);
+          await client.query('UPDATE empleados SET data = data || $1::jsonb WHERE id=$2', [JSON.stringify(patch), id]);
+        }
+        if (def.lugarHist) {
+          const hoy = new Date().toISOString().slice(0, 10);
+          await client.query('UPDATE lugar_trabajo_hist SET hasta=$1 WHERE empleado_id=$2 AND hasta IS NULL', [hoy, id]);
+          const cen = (await client.query('SELECT id FROM centros_operaciones WHERE denominacion=$1 LIMIT 1', [nuevo])).rows[0];
+          await client.query('INSERT INTO lugar_trabajo_hist (empleado_id, centro_id, lugar, desde, created_by) VALUES ($1,$2,$3,$4,$5)', [id, cen?.id || null, nuevo, hoy, req.user.dni]);
+        }
+        if (cur.activo) await client.query('INSERT INTO legajo_cambios (empleado_id, campo, etiqueta, valor_anterior, valor_nuevo, created_by) VALUES ($1,$2,$3,$4,$5,$6)', [id, def.label, def.label, ant || null, nuevo || null, req.user.dni]);
+        if (def.per) {
+          const per = (await client.query('SELECT id FROM periodos WHERE empleado_id=$1 AND vigente=true ORDER BY id DESC LIMIT 1', [id])).rows[0];
+          if (per) {
+            await client.query('INSERT INTO periodo_cambios (periodo_id, campo, etiqueta, valor_anterior, valor_nuevo, created_by) VALUES ($1,$2,$3,$4,$5,$6)', [per.id, def.per, def.label, ant || null, nuevo || null, req.user.dni]);
+            await client.query(`UPDATE periodos SET ${def.per}=$1, updated_at=now() WHERE id=$2`, [nuevo, per.id]);
+          }
+        }
+        actualizados++;
+      } catch (e) { errores.push(`ID ${id}: ${e.message}`); }
+    }
+    await client.query('COMMIT');
+    logAudit(req.user.dni, 'actualizacion_masiva', `${def.label} → "${nuevo}" en ${actualizados} legajo(s)`, ids.join(','));
+    res.json({ ok: true, actualizados, sinCambio, errores, campo: def.label, valor: nuevo, total: ids.length });
+  } catch (e) { await client.query('ROLLBACK'); next(e); } finally { client.release(); }
+});
+
 export default router;
