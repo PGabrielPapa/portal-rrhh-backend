@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { calcularRecibo, factorNoHabitual, TIPOS_SAC, TIPOS_NO_HABITUAL_B, calcularGananciasAcum } from '../lib/liquidacion.js';
-import { ganTablaParaFecha, mapGanRow } from '../lib/gananciasParams.js';
+import { ganTablaParaFecha, mapGanRow, autoActualizarGanancias } from '../lib/gananciasParams.js';
 import { calcularDeduccionesSiradig, cargasDesdeSiradig } from '../lib/siradigTopes.js';
 import { requireRole } from '../middleware/auth.js';
 
@@ -298,24 +298,29 @@ router.get('/verificacion', requireRole('rrhh', 'admin'), async (req, res, next)
     const sem = mes <= 6 ? 1 : 2;
     const periodoEsperado = `${anio}-S${sem}`;
     const fechaRef = `${anio}-${String(mes).padStart(2, '0')}-15`;
+    // Consulta y actualiza sola la tabla del semestre (oficial si ARCA la publicó; si no, provisoria).
+    let autoEstado = 'oficial';
+    try { const a = await autoActualizarGanancias(anio, mes); autoEstado = a.estado; } catch (e) { /* no bloquea la verificación */ }
     const g = await ganTablaParaFecha(fechaRef);
     const escala = Array.isArray(g && g.escala) ? g.escala : [];
+    const provisional = !!(g && g.provisional);
     const semOk = !!g && String(g.periodo) === periodoEsperado;          // semestre correcto
     const dedOk = !!g && Number(g.mniAnual) > 0 && Number(g.dedEspAnual) > 0; // tabla de deducciones (art. 30)
     const escOk = escala.length >= 2 && escala.some((t) => Number(t.alicuota) > 0); // escala del impuesto (art. 94)
-    const ok = semOk && dedOk && escOk;
+    const ok = semOk && dedOk && escOk && !provisional;
     const ult = escala[escala.length - 1] || {};
     const faltan = [];
     if (!dedOk) faltan.push('deducciones (art. 30)');
     if (!escOk) faltan.push('escala del impuesto (art. 94)');
     const lbl = `${String(mes).padStart(2, '0')}/${anio}`;
+    const estado = !g ? 'falta' : (faltan.length ? 'incompleta' : (provisional ? 'provisoria' : (semOk ? 'aldia' : 'incompleta')));
     let mensaje;
-    if (!g) mensaje = 'No hay tabla de Ganancias cargada. Cargá deducciones (art. 30) y escala (art. 94) antes de liquidar.';
-    else if (!semOk) mensaje = `Atención: la tabla vigente (${g.periodo}) no corresponde al semestre del período (${periodoEsperado}). Actualizá deducciones y escala (RG 4003) antes de liquidar.`;
+    if (!g) mensaje = 'No hay tabla de Ganancias cargada. Se cargará automáticamente cuando ARCA publique los valores.';
     else if (faltan.length) mensaje = `La tabla ${g.periodo} está incompleta: faltan ${faltan.join(' y ')}.`;
-    else mensaje = `Deducciones (art. 30) y escala (art. 94) vigentes ${g.periodo} — correctas para el período ${lbl}.`;
+    else if (provisional) mensaje = `El semestre ${periodoEsperado} aún no fue publicado por ARCA. El sistema aplica provisoriamente la última tabla oficial y la actualiza sola cuando salga.`;
+    else mensaje = `Deducciones (art. 30) y escala (art. 94) al día — verificado automáticamente para el período ${lbl} (tabla ${g.periodo}).`;
     res.json({
-      ok, semOk, dedOk, escOk,
+      ok, semOk, dedOk, escOk, provisional, estado, autoEstado,
       anio, mes, periodoEsperado,
       periodoVigente: g ? g.periodo : null,
       vigenciaDesde: g ? g.vigenciaDesde : null,

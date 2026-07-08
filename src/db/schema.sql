@@ -596,6 +596,8 @@ CREATE TABLE IF NOT EXISTS ganancias_periodos (
   updated_by           TEXT,
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- provisional=true: tabla del semestre cargada por copia (a la espera de que ARCA publique el semestre).
+ALTER TABLE ganancias_periodos ADD COLUMN IF NOT EXISTS provisional BOOLEAN NOT NULL DEFAULT false;
 -- ── Histórico de cambios de parámetros de Ganancias (para re-liquidar) ──
 CREATE TABLE IF NOT EXISTS ganancias_periodos_hist (
   id                   SERIAL PRIMARY KEY,

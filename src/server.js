@@ -54,6 +54,15 @@ try {
   console.error('[boot] valores legales:', e.message);
 }
 
+// Tablas de Ganancias (RG 4003): consulta/actualiza sola la del semestre en curso (oficial o provisoria).
+try {
+  const { autoActualizarGanancias } = await import('./lib/gananciasParams.js');
+  const r = await autoActualizarGanancias();
+  console.log(`[boot] tablas de Ganancias verificadas ✓ (${r.estado})`);
+} catch (e) {
+  console.error('[boot] Ganancias auto:', e.message);
+}
+
 const app = createApp();
 const server = app.listen(config.port, () => {
   console.log(`[api] Portal RR.HH. escuchando en :${config.port}`);
@@ -69,6 +78,7 @@ function programarValoresLegalesDiario() {
       const { autoActualizarValores } = await import('./routes/valoresLegales.routes.js');
       const r = await autoActualizarValores();
       console.log(`[valores-legales] actualización diaria OK (${r.creadas} nuevos, ${r.actualizadas} actualizados).`);
+      try { const { autoActualizarGanancias } = await import('./lib/gananciasParams.js'); const g = await autoActualizarGanancias(); console.log(`[ganancias] verificación diaria OK (${g.estado}).`); } catch (e) { console.error('[ganancias] verificación diaria:', e.message); }
     } catch (e) {
       console.error('[valores-legales] actualización diaria falló:', e.message);
     }

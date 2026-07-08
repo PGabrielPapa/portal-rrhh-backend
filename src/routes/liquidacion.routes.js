@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { query, pool } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { calcularRecibo, factorNoHabitual, TIPOS_SAC, TIPOS_NO_HABITUAL_B } from '../lib/liquidacion.js';
-import { ganTablaParaFecha } from '../lib/gananciasParams.js';
+import { ganTablaParaFecha, autoActualizarGanancias } from '../lib/gananciasParams.js';
 import { periodoCerrado } from './cierres.routes.js';
 import { idsEquipoDe } from '../lib/equipo.js';
 
@@ -309,6 +309,7 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const t = tipo || 'mensual';
     const cuotas = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
     const acumGan = await acumGananciasDe(empleadoId, anio, mes);
+    try { await autoActualizarGanancias(anio, mes); } catch (e) { /* no bloquea */ }
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
     const convBasico = convBasicoDe(await convMap(), emp);
@@ -336,6 +337,7 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     if (verValG.faltan) return res.status(409).json({ error: verValG.mensaje });
     const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
     const acumGan = await acumGananciasDe(empleadoId, anio, mes);
+    try { await autoActualizarGanancias(anio, mes); } catch (e) { /* no bloquea */ }
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
     const convBasico = convBasicoDe(await convMap(), emp);
@@ -461,6 +463,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const verVal = await verificarValoresLegales(anio, mes);
     if (verVal.faltan) return res.status(409).json({ error: verVal.mensaje });
     const params = await getParamsConValores(anio, mes);
+    try { await autoActualizarGanancias(anio, mes); } catch (e) { /* no bloquea */ }
     const ganTabla = await ganTablaParaFecha(fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sMap = await sindMap();
     const cMap = await convMap();
