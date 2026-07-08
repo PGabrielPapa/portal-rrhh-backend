@@ -1312,6 +1312,22 @@ CREATE INDEX IF NOT EXISTS idx_puestos_reporta ON puestos(reporta_a);
 ALTER TABLE empleados ADD COLUMN IF NOT EXISTS puesto_id INTEGER REFERENCES puestos(id) ON DELETE SET NULL;
 -- Legajo confidencial (Tango): oculta el legajo a usuarios sin permiso de verlos.
 ALTER TABLE empleados ADD COLUMN IF NOT EXISTS confidencial BOOLEAN NOT NULL DEFAULT false;
+
+-- Campos adicionales definibles por el usuario (Tango: "campo adicional").
+-- Los VALORES se guardan en empleados.data con la clave (prefijada cx_) para no
+-- chocar con los campos existentes. Acá solo vive la DEFINICIÓN de cada campo.
+CREATE TABLE IF NOT EXISTS campos_adicionales (
+  id        SERIAL PRIMARY KEY,
+  entidad   TEXT NOT NULL DEFAULT 'empleado',   -- por ahora, solo el legajo del empleado
+  clave     TEXT NOT NULL,                       -- p. ej. cx_talle_calzado
+  etiqueta  TEXT NOT NULL,
+  tipo      TEXT NOT NULL DEFAULT 'texto',       -- texto | numero | fecha | lista
+  opciones  JSONB NOT NULL DEFAULT '[]'::jsonb,  -- valores para tipo 'lista'
+  orden     INTEGER NOT NULL DEFAULT 0,
+  activo    BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (entidad, clave)
+);
 CREATE INDEX IF NOT EXISTS idx_empleados_confidencial ON empleados(confidencial);
 CREATE INDEX IF NOT EXISTS idx_empleados_puesto ON empleados(puesto_id);
 
