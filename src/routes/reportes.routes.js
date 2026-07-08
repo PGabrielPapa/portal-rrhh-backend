@@ -21,6 +21,33 @@ async function recibosPeriodo(anio, mes, empresa) {
 }
 const aporteDe = (desc, re) => (desc || []).filter((d) => re.test(d.concepto)).reduce((s, d) => s + Number(d.monto || 0), 0);
 
+// GET /api/reportes/simplificacion?anio=&mes=&empresa=  (Simplificación Registral, ex Mi Simplificación)
+// Lista las altas (empleados ingresados en el período) y bajas (ceses del período) para
+// informar a AFIP/ARCA. El diseño posicional exacto de ARCA debe confirmarse; acá se
+// entregan los datos en formato tabla/CSV.
+router.get('/simplificacion', async (req, res, next) => {
+  try {
+    const anio = Number(req.query.anio), mes = Number(req.query.mes);
+    if (!anio || !mes) return res.status(400).json({ error: 'Indicá año y mes' });
+    const args = [anio, mes]; let empCond = '';
+    if (req.query.empresa) { args.push(req.query.empresa); empCond = ` AND em.nombre = $${args.length}`; }
+    const part = (nom) => { const s = String(nom || ''); return { apellido: s.split(',')[0]?.trim() || s, nombres: s.split(',')[1]?.trim() || '' }; };
+    const altasRows = (await query(
+      `SELECT e.cuil, e.nom, e.ingreso, e.bruto, e.data, em.nombre AS empresa, em.cuit AS empresa_cuit
+         FROM empleados e JOIN empresas em ON em.id=e.empresa_id
+        WHERE e.ingreso IS NOT NULL AND EXTRACT(YEAR FROM e.ingreso)=$1 AND EXTRACT(MONTH FROM e.ingreso)=$2 ${empCond}
+        ORDER BY em.nombre, e.nom`, args)).rows;
+    const bajasRows = (await query(
+      `SELECT e.cuil, e.nom, b.fecha_baja, b.causa, em.nombre AS empresa, em.cuit AS empresa_cuit
+         FROM bajas b JOIN empleados e ON e.id=b.empleado_id JOIN empresas em ON em.id=e.empresa_id
+        WHERE EXTRACT(YEAR FROM b.fecha_baja)=$1 AND EXTRACT(MONTH FROM b.fecha_baja)=$2 ${empCond}
+        ORDER BY em.nombre, e.nom`, args)).rows;
+    const altas = altasRows.map((r) => ({ tipo: 'ALTA', empresa: r.empresa, empresaCuit: r.empresa_cuit || null, cuil: r.cuil, ...part(r.nom), fecha: r.ingreso, modalidad: r.data?.condicion || '', obraSocial: r.data?.os_codigo || r.data?.codigoObraSocial || '', remuneracion: Number(r.bruto) || 0 }));
+    const bajas = bajasRows.map((r) => ({ tipo: 'BAJA', empresa: r.empresa, empresaCuit: r.empresa_cuit || null, cuil: r.cuil, ...part(r.nom), fecha: r.fecha_baja, causa: r.causa || '' }));
+    res.json({ periodo: { anio, mes }, altas, bajas, nota: 'Altas y bajas del período para Simplificación Registral (AFIP/ARCA). El diseño de importación exacto de ARCA debe confirmarse antes de subirlo.' });
+  } catch (e) { next(e); }
+});
+
 // GET /api/reportes/certificacion-servicios?empleadoId=  (ANSES PS.6.2, base para el egreso)
 // Arma la certificación de servicios y remuneraciones a partir del legajo y de las
 // remuneraciones sujetas a aportes de los recibos guardados (mensual/quincena/SAC).

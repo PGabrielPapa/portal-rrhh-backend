@@ -257,6 +257,7 @@ function filtrarConceptosFormula(lista, emp, anio, mes) {
     if (c.alcanceEmpresa && upp(c.alcanceEmpresa) !== empEmpresa) return false;
     if (c.alcanceConvenio && upp(c.alcanceConvenio) !== empConv) return false;
     if (c.alcanceSindicato && upp(c.alcanceSindicato) !== empSind) return false;
+    if (Array.isArray(c.soloLegajos) && c.soloLegajos.length && !c.soloLegajos.includes(Number(emp?.id))) return false;
     const d = aNum(c.desde), h = aNum(c.hasta);
     if (d != null && per < d) return false;
     if (h != null && per > h) return false;
@@ -264,12 +265,19 @@ function filtrarConceptosFormula(lista, emp, anio, mes) {
   });
 }
 
+// ¿El concepto por fórmula aplica en este tipo de liquidación?
+// Por defecto (sin tipos declarados) solo mensual/quincena, como hasta ahora.
+function aplicaEnTipo(c, tipo) {
+  const t = Array.isArray(c.tipos) && c.tipos.length ? c.tipos : ['mensual', 'quincenal_1', 'quincenal_2'];
+  return t.includes(tipo);
+}
+
 // Conceptos activos definidos por fórmula (motor de fórmulas). Se aplican en la
 // liquidación mensual/quincena. Lista vacía => el recibo es idéntico al actual.
 async function conceptosFormulaActivos() {
   try {
     const { rows } = await query("SELECT codigo, descripcion, formula, data FROM conceptos WHERE activo=true AND formula IS NOT NULL AND formula <> '' AND (data->>'esFormula')='true' ORDER BY COALESCE(NULLIF(data->>'orden','')::int, 0), codigo");
-    return rows.map((r) => { const d = r.data || {}; return { codigo: r.codigo, descripcion: r.descripcion, formula: r.formula, base: d.base || 'rem', condicion: d.condicion || null, alcanceEmpresa: d.alcanceEmpresa || '', alcanceConvenio: d.alcanceConvenio || '', alcanceSindicato: d.alcanceSindicato || '', desde: d.desde || '', hasta: d.hasta || '' }; });
+    return rows.map((r) => { const d = r.data || {}; return { codigo: r.codigo, descripcion: r.descripcion, formula: r.formula, base: d.base || 'rem', condicion: d.condicion || null, alcanceEmpresa: d.alcanceEmpresa || '', alcanceConvenio: d.alcanceConvenio || '', alcanceSindicato: d.alcanceSindicato || '', desde: d.desde || '', hasta: d.hasta || '', soloLegajos: Array.isArray(d.soloLegajos) ? d.soloLegajos.map(Number).filter(Boolean) : [], tipos: Array.isArray(d.tipos) ? d.tipos : [] }; });
   } catch { return []; }
 }
 async function cuotasAnticiposDe(empleadoId, anio, mes) {
@@ -309,7 +317,7 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const varProm = (t === 'vacaciones' || _esMensual(t)) ? await promedioVariablesMes(empleadoId, anio, mes) : {};
     const sacBase = _esSAC(t) ? await mejorRemSemestre(empleadoId, anio, t) : 0;
     const ajPend = _esMensual(t) ? await ajustePendiente(empleadoId, anio, mes) : 0;
-    const cForm = _esMensual(t) ? filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes) : [];
+    const cForm = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, t));
     const auxF = cForm.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ...nov, ...varProm, ...emb, ...extra }));
   } catch (e) { next(e); }
@@ -337,7 +345,7 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const sacBase = _esSAC(tipo) ? await mejorRemSemestre(empleadoId, anio, tipo) : 0;
     let ajPend = 0;
     if (_esMensual(tipo)) { await resetAjusteNeto(empleadoId, anio, mes); ajPend = await ajustePendiente(empleadoId, anio, mes); }
-    const cFormG = _esMensual(tipo) ? filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes) : [];
+    const cFormG = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo));
     const auxFG = cFormG.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...nov, ...varProm, ...emb, ...extra });
     const client = await pool.connect();
@@ -452,7 +460,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const ganTabla = await ganTablaParaFecha(fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sMap = await sindMap();
     const cMap = await convMap();
-    const cFormTodos = _esMensual(tipo) ? await conceptosFormulaActivos() : [];
+    const cFormTodos = await conceptosFormulaActivos();
     const auxCorrida = cFormTodos.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const client = await pool.connect();
     let corridaId, totalNeto = 0, cant = 0;
@@ -483,7 +491,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
           if (!(montoEmp > 0)) continue; // sin base (p. ej. % sobre bruto 0): no se genera recibo
           _extra = { montoAjuste: montoEmp, conceptoAjuste: (conceptoExtra && String(conceptoExtra).trim()) || (tipo === 'extra_norem' ? 'Extraordinaria no remunerativa' : 'Extraordinaria remunerativa') };
         }
-        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
+        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
         totalNeto += recibo.totales.neto; cant++;
         const rr = await db(
           `INSERT INTO recibos (empleado_id, anio, mes, tipo, neto, data, created_by, corrida_id, publicado)

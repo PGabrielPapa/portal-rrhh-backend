@@ -52,6 +52,8 @@ import obraSocialRoutes from './routes/obraSocial.routes.js';
 import puestosRoutes from './routes/puestos.routes.js';
 import camposRoutes from './routes/campos.routes.js';
 import valoresAuxRoutes from './routes/valoresAux.routes.js';
+import plantillasRoutes from './routes/plantillas.routes.js';
+import modeloReciboRoutes from './routes/modeloRecibo.routes.js';
 
 export function createApp() {
   const app = express();
@@ -94,6 +96,8 @@ export function createApp() {
   app.use('/api/puestos', puestosRoutes);
   app.use('/api/campos', camposRoutes);
   app.use('/api/valores-aux', valoresAuxRoutes);
+  app.use('/api/plantillas-legajo', plantillasRoutes);
+  app.use('/api/modelo-recibo', modeloReciboRoutes);
   app.use('/api/arca', arcaRoutes);
   app.use('/api/familiares', familiaresRoutes);
   app.use('/api/fichadas', fichadasRoutes);

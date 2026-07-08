@@ -1318,6 +1318,25 @@ ALTER TABLE empleados ADD COLUMN IF NOT EXISTS confidencial BOOLEAN NOT NULL DEF
 -- chocar con los campos existentes. Acá solo vive la DEFINICIÓN de cada campo.
 -- Valores auxiliares para el motor de fórmulas (Tango): matrices por tramos,
 -- tablas clave→valor y variables "Macro" (fórmulas reutilizables).
+-- Plantillas de legajo (Tango: valores por defecto para dar de alta empleados).
+-- Modelo de recibo configurable (encabezado, leyenda al pie y logo).
+CREATE TABLE IF NOT EXISTS modelo_recibo (
+  id           INTEGER PRIMARY KEY DEFAULT 1,
+  encabezado   TEXT,
+  leyenda_pie  TEXT,
+  logo         TEXT,
+  mostrar_logo BOOLEAN NOT NULL DEFAULT true,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS plantillas_legajo (
+  id        SERIAL PRIMARY KEY,
+  nombre    TEXT NOT NULL,
+  data      JSONB NOT NULL DEFAULT '{}'::jsonb,  -- campos por defecto (cat, tramo, convenio, sindicato, etc.)
+  activo    BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS valores_auxiliares (
   id        SERIAL PRIMARY KEY,
   tipo      TEXT NOT NULL,                       -- macro | matriz | tabla
