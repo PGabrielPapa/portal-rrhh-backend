@@ -424,7 +424,7 @@ export function calcularRecibo(emp, params, opts) {
   const baseAportesOs = Math.min(Math.max(remOs, topeMin), topeMax);
   const ap = (pct) => round2(baseAportes * num(pct) / 100);
   const apOs = (pct) => round2(baseAportesOs * num(pct) / 100);
-  const aJub = ap(p.pctJubilacion), aOS = apOs(p.pctObraSocial), aAnssal = apOs(p.pctAnssal), aPami = ap(p.pctPamiEmp), aSind = esFC ? 0 : ap(p.pctSindicatoEmp);
+  const aJub = ap(p.pctJubilacion), aOS = apOs(p.pctObraSocial), aAnssal = apOs(p.pctAnssal), aPami = ap(p.pctPamiEmp), aSind = esFC ? 0 : ap((sind && Number(sind.pctEmpleado) > 0) ? Number(sind.pctEmpleado) : num(p.pctSindicatoEmp));
   if (aJub > 0) descuentos.push({ concepto: 'Jubilación', monto: aJub });
   if (aOS > 0) descuentos.push({ concepto: 'Obra Social', monto: aOS });
   if (aAnssal > 0) descuentos.push({ concepto: 'ANSSAL', monto: aAnssal });
@@ -550,7 +550,7 @@ export function calcularRecibo(emp, params, opts) {
   const detr = (tipo === 'mensual') ? num(p.detraccionContrib) : (esQuincenal ? num(p.detraccionContrib) * 0.5 : 0);
   const baseSegSoc = Math.max(0, totalRemun - detr);
   const coSeg = (pct) => round2(baseSegSoc * num(pct) / 100);
-  const cJub = coSeg(p.pctJubPatronal), cOS = round2(baseAportesOs * num(p.pctOsPatronal) / 100), cPami = coSeg(p.pctPamiPatronal), cFne = coSeg(p.pctDesempleo), cArt = co(p.pctArt), cSind = esFC ? 0 : co(p.pctSindicatoPatronal);
+  const cJub = coSeg(p.pctJubPatronal), cOS = round2(baseAportesOs * num(p.pctOsPatronal) / 100), cPami = coSeg(p.pctPamiPatronal), cFne = coSeg(p.pctDesempleo), cArt = co(p.pctArt), cSind = esFC ? 0 : co((sind && Number(sind.pctPatronal) > 0) ? Number(sind.pctPatronal) : num(p.pctSindicatoPatronal));
   // El SCVO y el FFEP son per cápita mensuales: se cobran una sola vez con la liquidación
   // principal (mensual/quincena/SAC/vacaciones/final). No se re-cobran en extraordinarias,
   // anticipos ni ajustes complementarios del mismo período.
