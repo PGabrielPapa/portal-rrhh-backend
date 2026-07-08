@@ -3,7 +3,7 @@ import { query, pool } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { makeUid, dniFromCuil, empSlug } from '../lib/identity.js';
 import { idsEquipoDe, idsDirectosDe } from '../lib/equipo.js';
-import { puedeVerConfidenciales } from '../lib/confidencial.js';
+import { puedeVerConfidenciales, puedeGestionarConfidenciales } from '../lib/confidencial.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -296,7 +296,7 @@ router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const b = req.body || {};
     const puedeConf = await puedeVerConfidenciales(req.user);
-    if (req.user.role !== 'admin') delete b.verConfidenciales; // solo admin otorga el permiso
+    if (!puedeGestionarConfidenciales(req.user)) delete b.verConfidenciales; // solo admin/RR.HH. designan
     const before = (await query('SELECT nom, email, cuil, ingreso, bruto, neto, cat, tramo, role, activo, data FROM empleados WHERE id=$1', [req.params.id])).rows[0] || {};
     // Tilde "Administrador": marca -> role admin; desmarca -> employee solo si era admin (no pisa manager/rrhh).
     if (b.esAdmin !== undefined && ['admin', 'rrhh'].includes(req.user.role)) {
