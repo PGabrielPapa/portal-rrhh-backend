@@ -13,6 +13,7 @@ const P = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/data/params.se
 const empBase = { legNum: '1', nom: 'TEST', empresa: 'X', cuil: '20111111119', ingreso: '2018-01-01', bruto: 1000000, data: {} };
 
 let ok = 0, fail = 0;
+const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 function test(nombre, fn) { try { fn(); ok++; console.log('  ✓ ' + nombre); } catch (e) { fail++; console.log('  ✗ ' + nombre + '\n      ' + e.message); } }
 const aporte = (rec, re) => (rec.descuentos || []).filter((d) => re.test(d.concepto)).reduce((a, d) => a + d.monto, 0);
 
@@ -159,6 +160,43 @@ test('acumulado anual fiscal suma enero..mes', () => {
   const jub = ACUM_DEFAULTS.find((a) => a.codigo === 'JUBILACION');
   assert.equal(sumarAcumulador(recibosDeVentana(recs, 'ANUAL_FISCAL', 2), jub.reglas), 210000);
 });
+
+// ── Motor de fórmulas integrado al recibo (fase 3) ──
+test('conceptosFormula vacío/omitido no cambia el recibo (no-regresión)', () => {
+  const emp = { ...empBase, data: { basico: 800000 } };
+  const base = calcularRecibo(emp, P, { anio: 2026, mes: 3, tipo: 'mensual' });
+  const conLista = calcularRecibo(emp, P, { anio: 2026, mes: 3, tipo: 'mensual', conceptosFormula: [] });
+  assert.equal(conLista.totales.neto, base.totales.neto);
+  assert.equal(conLista.totales.totalRemun, base.totales.totalRemun);
+  assert.equal(conLista.haberes.length, base.haberes.length);
+});
+
+test('concepto por fórmula remunerativo suma al haber y a la base de aportes', () => {
+  const emp = { ...empBase, data: { basico: 800000 } };
+  const base = calcularRecibo(emp, P, { anio: 2026, mes: 3, tipo: 'mensual' });
+  const cf = [{ codigo: 'PREMIO', descripcion: 'Premio', formula: 'basico * 0.10', base: 'rem' }];
+  const rec = calcularRecibo(emp, P, { anio: 2026, mes: 3, tipo: 'mensual', conceptosFormula: cf });
+  assert.ok(rec.haberes.some((h) => h.concepto === 'Premio' && h.monto === 80000));
+  assert.equal(round2(rec.totales.totalRemun), round2(base.totales.totalRemun + 80000));
+  assert.ok(rec.totales.totalRemun > base.totales.totalRemun);
+});
+
+test('condición 0 => el concepto por fórmula no aplica', () => {
+  const emp = { ...empBase, data: { basico: 800000 } };
+  const cf = [{ codigo: 'X', descripcion: 'Solo si antig>=20', formula: '10000', base: 'rem', condicion: 'anios >= 20' }];
+  const rec = calcularRecibo(emp, P, { anio: 2026, mes: 3, tipo: 'mensual', conceptosFormula: cf });
+  assert.ok(!rec.haberes.some((h) => h.concepto === 'Solo si antig>=20'));
+});
+
+test('concepto por fórmula tipo descuento resta del neto', () => {
+  const emp = { ...empBase, data: { basico: 800000 } };
+  const base = calcularRecibo(emp, P, { anio: 2026, mes: 3, tipo: 'mensual' });
+  const cf = [{ codigo: 'CUOTA', descripcion: 'Cuota club', formula: '5000', base: 'descuento' }];
+  const rec = calcularRecibo(emp, P, { anio: 2026, mes: 3, tipo: 'mensual', conceptosFormula: cf });
+  assert.ok(rec.descuentos.some((x) => x.concepto === 'Cuota club' && x.monto === 5000));
+  assert.equal(round2(rec.totales.neto), round2(base.totales.neto - 5000));
+});
+
 
 console.log(`\nRESULTADO: ${ok} OK, ${fail} fallidos`);
 process.exit(fail ? 1 : 0);

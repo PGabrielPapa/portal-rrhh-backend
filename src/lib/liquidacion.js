@@ -2,6 +2,7 @@
 // complemento, no rem), SAC (jun/dic), aportes del trabajador, contribuciones
 // patronales + SCVO (costo del empleador), y Ganancias 4ª con tope del 35%
 // (estimación anualizada). Pendiente: embargos, regímenes especiales, SIRADIG.
+import { evaluarFormula } from './formulas.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -373,6 +374,30 @@ export function calcularRecibo(emp, params, opts) {
     if (ajB > 0) haberes.push({ concepto: 'Ajuste de sueldo', tipo: 'rem', monto: round2(ajB) });
   }
 
+  // ── Conceptos por FÓRMULA (motor de fórmulas). Aditivo: solo actúan si se pasan
+  //    conceptos activos con fórmula. Con lista vacía, el recibo es idéntico al actual. ──
+  const _formDesc = [];
+  const _conceptosForm = Array.isArray(opts?.conceptosFormula) ? opts.conceptosFormula : [];
+  if (_conceptosForm.length) {
+    const _cx = {}; for (const [k, v] of Object.entries(d)) if (k.startsWith('cx_')) _cx[k] = num(v);
+    const _ctxF = { basico, sueldo: num(d.sueldo), complemento, norem: noRem, noRem, antiguedad_monto: antiguedad,
+      bruto: num(emp.bruto), anios, remun: regularRemun, dias: num(opts?.diasTrabajados) || 30,
+      he50: num(opts?.horasExtra50), he100: num(opts?.horasExtra100), ausencias: num(opts?.ausenciasInjustificadas),
+      feriados: num(opts?.feriadosTrabajados), smvm: num(p.smvmMensual || p.smvm), topeSipa: num(p.topeAportesMax), ..._cx };
+    detalle.conceptosFormula = [];
+    for (const cf of _conceptosForm) {
+      try {
+        if (cf.condicion && String(cf.condicion).trim() && evaluarFormula(cf.condicion, _ctxF) === 0) continue;
+        const val = round2(evaluarFormula(cf.formula, _ctxF));
+        if (!val) continue;
+        const base = cf.base || 'rem';
+        if (base === 'descuento') _formDesc.push({ concepto: cf.descripcion || cf.codigo || 'Concepto', monto: val });
+        else haberes.push({ concepto: cf.descripcion || cf.codigo || 'Concepto', tipo: base === 'norem' ? 'norem' : base === 'exento' ? 'exento' : 'rem', monto: val });
+        detalle.conceptosFormula.push({ codigo: cf.codigo || null, descripcion: cf.descripcion || null, base, monto: val });
+      } catch (e) { /* fórmula inválida: se omite, no frena la liquidación */ }
+    }
+  }
+
   const totalRemun = haberes.filter((h) => h.tipo === 'rem').reduce((s, h) => s + h.monto, 0);
   let totalNoRem = haberes.filter((h) => h.tipo === 'norem').reduce((s, h) => s + h.monto, 0);
   const totalExento = haberes.filter((h) => h.tipo === 'exento').reduce((s, h) => s + h.monto, 0);
@@ -382,6 +407,7 @@ export function calcularRecibo(emp, params, opts) {
 
   // Aportes del trabajador (sobre base remunerativa con tope Art. 9 Ley 24.241, si está configurado)
   const descuentos = [];
+  for (const _x of _formDesc) descuentos.push(_x);
   const topeMax = num(p.topeAportesMax) > 0 ? num(p.topeAportesMax) : Infinity;
   const topeMin = num(p.topeAportesMin) > 0 ? num(p.topeAportesMin) : 0;
   const baseAportes = Math.min(Math.max(totalRemun, topeMin), topeMax);   // base SIPA (jubilación + INSSJP)
