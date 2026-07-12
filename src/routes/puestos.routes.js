@@ -16,7 +16,7 @@ async function nextCodigo() {
 router.get('/', async (req, res, next) => {
   try {
     const { rows } = await query(
-      `SELECT p.id, p.codigo, p.nombre, p.area, p.reporta_a, p.go_to_hr, p.orden,
+      `SELECT p.id, p.codigo, p.nombre, p.area, p.reporta_a, p.go_to_hr, p.orden, p.perfil,
               r.nombre AS reporta_nombre,
               (SELECT count(*)::int FROM empleados e WHERE e.puesto_id = p.id AND e.activo) AS ocupantes
          FROM puestos p LEFT JOIN puestos r ON r.id = p.reporta_a
@@ -138,6 +138,25 @@ router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
 router.delete('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const r = await query('DELETE FROM puestos WHERE id=$1', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Puesto no encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// GET /api/puestos/:id/perfil — descripción del puesto.
+router.get('/:id/perfil', async (req, res, next) => {
+  try {
+    const r = (await query('SELECT perfil FROM puestos WHERE id=$1', [req.params.id])).rows[0];
+    if (!r) return res.status(404).json({ error: 'Puesto no encontrado' });
+    res.json(r.perfil || {});
+  } catch (e) { next(e); }
+});
+
+// PUT /api/puestos/:id/perfil (rrhh/admin) — guarda la descripción del puesto.
+router.put('/:id/perfil', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const perfil = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : {};
+    const r = await query('UPDATE puestos SET perfil=$1::jsonb WHERE id=$2 RETURNING id', [JSON.stringify(perfil), req.params.id]);
     if (!r.rowCount) return res.status(404).json({ error: 'Puesto no encontrado' });
     res.json({ ok: true });
   } catch (e) { next(e); }

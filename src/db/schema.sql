@@ -1339,6 +1339,31 @@ CREATE TABLE IF NOT EXISTS puestos (
 );
 CREATE INDEX IF NOT EXISTS idx_puestos_reporta ON puestos(reporta_a);
 ALTER TABLE empleados ADD COLUMN IF NOT EXISTS puesto_id INTEGER REFERENCES puestos(id) ON DELETE SET NULL;
+ALTER TABLE puestos ADD COLUMN IF NOT EXISTS perfil JSONB NOT NULL DEFAULT '{}'::jsonb;  -- descripción de puesto (misión, funciones, requisitos, competencias)
+
+-- ── Reclutamiento / Selección (ATS) ──
+CREATE TABLE IF NOT EXISTS busquedas (
+  id          SERIAL PRIMARY KEY,
+  titulo      TEXT NOT NULL,
+  empresa     TEXT,
+  puesto_id   INTEGER REFERENCES puestos(id) ON DELETE SET NULL,
+  descripcion TEXT,
+  estado      TEXT NOT NULL DEFAULT 'abierta',   -- abierta | cerrada
+  created_by  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS candidatos (
+  id          SERIAL PRIMARY KEY,
+  busqueda_id INTEGER NOT NULL REFERENCES busquedas(id) ON DELETE CASCADE,
+  nombre      TEXT NOT NULL,
+  email       TEXT,
+  telefono    TEXT,
+  etapa       TEXT NOT NULL DEFAULT 'postulado', -- postulado|entrevista|oferta|contratado|descartado
+  nota        TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_candidatos_busqueda ON candidatos(busqueda_id);
 -- Legajo confidencial (Tango): oculta el legajo a usuarios sin permiso de verlos.
 ALTER TABLE empleados ADD COLUMN IF NOT EXISTS confidencial BOOLEAN NOT NULL DEFAULT false;
 
