@@ -3,10 +3,12 @@ import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { evaluarFormula, analizarFormula, FUNCIONES_DISPONIBLES } from '../lib/formulas.js';
 import { cargarAux } from './valoresAux.routes.js';
+import { logCambios } from '../lib/configHist.js';
 
 const router = Router();
 router.use(requireAuth);
 
+const CHFIELDS = [['descripcion','Descripción'],['tipo','Tipo'],['formula','Fórmula'],['base_legal','Base legal'],['activo','Activo']];
 const TIPOS = ['remunerativo', 'no_remunerativo', 'descuento', 'aporte', 'contribucion'];
 
 // GET /api/conceptos?q=&tipo=&activos=
@@ -34,6 +36,7 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
       `INSERT INTO conceptos (codigo, descripcion, tipo, formula, base_legal, data) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
       [String(b.codigo).trim(), String(b.descripcion).trim(), tipo, b.formula || null, b.base_legal || null, JSON.stringify(data)]
     );
+    await logCambios('conceptos', rows[0].codigo, null, rows[0], CHFIELDS, req.user.dni);
     res.status(201).json(rows[0]);
   } catch (e) { next(e); }
 });
@@ -42,6 +45,7 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
 router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const b = req.body || {};
+    const _prev = (await query('SELECT * FROM conceptos WHERE id=$1', [req.params.id])).rows[0];
     const fields = { descripcion: b.descripcion, tipo: TIPOS.includes(b.tipo) ? b.tipo : undefined, formula: b.formula, base_legal: b.base_legal };
     const sets = [], params = [];
     for (const [k, v] of Object.entries(fields)) { if (v !== undefined) { params.push(v); sets.push(`${k} = $${params.length}`); } }
@@ -50,6 +54,7 @@ router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
     params.push(req.params.id);
     const { rows } = await query(`UPDATE conceptos SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
     if (!rows[0]) return res.status(404).json({ error: 'Concepto no encontrado' });
+    await logCambios('conceptos', rows[0].codigo, _prev || null, rows[0], CHFIELDS, req.user.dni);
     res.json(rows[0]);
   } catch (e) { next(e); }
 });
@@ -57,7 +62,10 @@ router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
 // PATCH /api/conceptos/:id/activo  (rrhh/admin)
 router.patch('/:id/activo', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
-    await query('UPDATE conceptos SET activo = $1 WHERE id = $2', [!!(req.body || {}).activo, req.params.id]);
+    const _p = (await query('SELECT codigo, activo FROM conceptos WHERE id=$1', [req.params.id])).rows[0];
+    const _nuevo = !!(req.body || {}).activo;
+    await query('UPDATE conceptos SET activo = $1 WHERE id = $2', [_nuevo, req.params.id]);
+    if (_p) await logCambios('conceptos', _p.codigo, { activo: _p.activo }, { activo: _nuevo }, [['activo', 'Activo']], req.user.dni);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });

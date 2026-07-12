@@ -55,6 +55,7 @@ import valoresAuxRoutes from './routes/valoresAux.routes.js';
 import plantillasRoutes from './routes/plantillas.routes.js';
 import modeloReciboRoutes from './routes/modeloRecibo.routes.js';
 import agrupacionesRoutes from './routes/agrupaciones.routes.js';
+import configHistRoutes from './routes/configHist.routes.js';
 
 export function createApp() {
   const app = express();
@@ -100,6 +101,7 @@ export function createApp() {
   app.use('/api/plantillas-legajo', plantillasRoutes);
   app.use('/api/modelo-recibo', modeloReciboRoutes);
   app.use('/api/agrupaciones', agrupacionesRoutes);
+  app.use('/api/config-hist', configHistRoutes);
   app.use('/api/arca', arcaRoutes);
   app.use('/api/familiares', familiaresRoutes);
   app.use('/api/fichadas', fichadasRoutes);

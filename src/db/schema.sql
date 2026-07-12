@@ -125,6 +125,19 @@ CREATE TABLE IF NOT EXISTS parametros_hist (
 );
 CREATE INDEX IF NOT EXISTS idx_parametros_hist ON parametros_hist(created_at DESC);
 
+-- Historial genérico de cambios de módulos de configuración (sindicatos, conceptos, etc.).
+CREATE TABLE IF NOT EXISTS config_hist (
+  id             SERIAL PRIMARY KEY,
+  modulo         TEXT NOT NULL,        -- 'sindicatos' | 'conceptos' | ...
+  ref            TEXT,                 -- identificador del registro (código, etc.)
+  campo          TEXT NOT NULL,
+  valor_anterior TEXT,
+  valor_nuevo    TEXT,
+  actor_dni      TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_config_hist ON config_hist(modulo, created_at DESC);
+
 -- ── Catálogo de conceptos de liquidación ──
 CREATE TABLE IF NOT EXISTS conceptos (
   id          SERIAL PRIMARY KEY,
@@ -1384,14 +1397,4 @@ CREATE TABLE IF NOT EXISTS campos_adicionales (
   clave     TEXT NOT NULL,                       -- p. ej. cx_talle_calzado
   etiqueta  TEXT NOT NULL,
   tipo      TEXT NOT NULL DEFAULT 'texto',       -- texto | numero | fecha | lista
-  opciones  JSONB NOT NULL DEFAULT '[]'::jsonb,  -- valores para tipo 'lista'
-  orden     INTEGER NOT NULL DEFAULT 0,
-  activo    BOOLEAN NOT NULL DEFAULT true,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (entidad, clave)
-);
-CREATE INDEX IF NOT EXISTS idx_empleados_confidencial ON empleados(confidencial);
-CREATE INDEX IF NOT EXISTS idx_empleados_puesto ON empleados(puesto_id);
-
--- ─────────────────────────────────────────────────────────────────────────
--- Índices de performance (remediació
+  opciones  JSONB NOT NULL DEFAULT '[]'::jsonb,  -- valor
