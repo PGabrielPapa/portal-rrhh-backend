@@ -194,7 +194,7 @@ export function mapEmpleado(emp, liq, topes = {}) {
     trabajadorConvencionado: emp.trabajadorConvencionado,
     seguroVida: emp.seguroVida != null ? emp.seguroVida : 1,
     horasTrabajadas: 0,
-    remTotal: impJub + noRem,
+    remTotal: rem + noRem,   // Remuneración Total: bruto sin topear (rem + no rem)
     remImp1: impJub,
     remImp2: impJub,
     remImp3: impJub,

@@ -616,13 +616,13 @@ router.get('/dataset/:key', async (req, res, next) => {
     const diasHasta = (d) => { if (!d) return null; const f = new Date(d); return isNaN(f) ? null : Math.ceil((f - hoyD) / 86400000); };
 
     if (key === 'empleados') {
-      const q = await query(`SELECT e.*, em.nombre AS empresa FROM empleados e JOIN empresas em ON em.id=e.empresa_id ${filtrarPeriodo ? `WHERE e.ingreso <= '${finMes}'` : ''} ORDER BY em.nombre, e.leg_num`);
+      const q = await query(`SELECT e.*, em.nombre AS empresa FROM empleados e JOIN empresas em ON em.id=e.empresa_id ${filtrarPeriodo ? `WHERE e.ingreso <= $1` : ''} ORDER BY em.nombre, e.leg_num`, filtrarPeriodo ? [finMes] : []);
       rows = q.rows.map((e) => ({ ...(e.data || {}), legNum: e.leg_num, nom: e.nom, dni: e.dni, cuil: e.cuil, empresa: e.empresa, email: e.email, cat: e.cat, tramo: e.tramo, ingreso: e.ingreso, bruto: Number(e.bruto), neto: Number(e.neto), activo: e.activo }));
     } else if (key === 'familiares') {
       const w = filtrarPeriodo ? `WHERE f.vigencia_desde <= $1 AND (f.vigencia_hasta IS NULL OR f.vigencia_hasta >= $1)` : '';
       rows = (await query(`SELECT f.*, e.nom AS empleado, e.leg_num, em.nombre AS empresa FROM familiares f JOIN empleados e ON e.id=f.empleado_id JOIN empresas em ON em.id=e.empresa_id ${w} ORDER BY em.nombre, e.leg_num, f.tipo`, filtrarPeriodo ? [finMes] : [])).rows;
     } else if (key === 'empresas') {
-      const q = await query(`SELECT em.*, (SELECT count(*) FROM empleados x WHERE x.empresa_id=em.id) AS "cantidadEmpleados" FROM empresas em ${filtrarPeriodo ? `WHERE em.created_at::date <= '${finMes}'` : ''} ORDER BY em.nombre`);
+      const q = await query(`SELECT em.*, (SELECT count(*) FROM empleados x WHERE x.empresa_id=em.id) AS "cantidadEmpleados" FROM empresas em ${filtrarPeriodo ? `WHERE em.created_at::date <= $1` : ''} ORDER BY em.nombre`, filtrarPeriodo ? [finMes] : []);
       rows = q.rows.map((e) => ({ nombre: e.nombre, cuit: e.cuit, slug: e.slug, cantidadEmpleados: Number(e.cantidadEmpleados), tieneLogo: !!e.logo, tieneFirma: !!e.firma, created_at: e.created_at }));
     } else if (key === 'nomina' || key === 'costos' || key === 'liquidaciones') {
       const recs = await recibosPeriodo(anio, mes, empresa);
@@ -654,9 +654,9 @@ router.get('/dataset/:key', async (req, res, next) => {
         aRevisar: Array.isArray(d.diasARevisar) ? d.diasARevisar.length : 0,
         legajoProsoft: d.legajoProsoft || null }; });
     } else if (key === 'conceptos') {
-      rows = (await query(`SELECT codigo, descripcion, tipo, formula, base_legal, activo FROM conceptos ${filtrarPeriodo ? `WHERE created_at::date <= '${finMes}'` : ''} ORDER BY codigo`)).rows;
+      rows = (await query(`SELECT codigo, descripcion, tipo, formula, base_legal, activo FROM conceptos ${filtrarPeriodo ? `WHERE created_at::date <= $1` : ''} ORDER BY codigo`, filtrarPeriodo ? [finMes] : [])).rows;
     } else if (key === 'cbus') {
-      rows = (await query(`SELECT c.banco, c.cbu, c.alias, c.titular, c.activo, e.nom AS empleado, e.leg_num, em.nombre AS empresa FROM cbus c JOIN empleados e ON e.id=c.empleado_id JOIN empresas em ON em.id=e.empresa_id ${filtrarPeriodo ? `WHERE c.created_at::date <= '${finMes}'` : ''} ORDER BY em.nombre, e.leg_num`)).rows;
+      rows = (await query(`SELECT c.banco, c.cbu, c.alias, c.titular, c.activo, e.nom AS empleado, e.leg_num, em.nombre AS empresa FROM cbus c JOIN empleados e ON e.id=c.empleado_id JOIN empresas em ON em.id=e.empresa_id ${filtrarPeriodo ? `WHERE c.created_at::date <= $1` : ''} ORDER BY em.nombre, e.leg_num`, filtrarPeriodo ? [finMes] : [])).rows;
     } else if (key === 'elementos') {
       const w = filtrarPeriodo ? `WHERE (el.fecha_entrega IS NULL OR el.fecha_entrega <= $1) AND (el.fecha_devolucion IS NULL OR el.fecha_devolucion >= $1)` : '';
       rows = (await query(`SELECT el.tipo, el.descripcion, el.identificador, el.estado, el.fecha_entrega, el.fecha_devolucion, e.nom AS empleado, e.leg_num, em.nombre AS empresa FROM elementos_trabajo el JOIN empleados e ON e.id=el.empleado_id JOIN empresas em ON em.id=e.empresa_id ${w} ORDER BY em.nombre, e.leg_num`, filtrarPeriodo ? [finMes] : [])).rows;
@@ -664,7 +664,7 @@ router.get('/dataset/:key', async (req, res, next) => {
       const w = filtrarPeriodo ? `WHERE (b.vigencia_desde IS NULL OR b.vigencia_desde <= $1) AND (b.vigencia_hasta IS NULL OR b.vigencia_hasta >= $1)` : '';
       rows = (await query(`SELECT b.tipo, b.modalidad, b.monto, b.proveedor, b.vigencia_desde, b.vigencia_hasta, b.activo, e.nom AS empleado, e.leg_num, em.nombre AS empresa FROM beneficios b JOIN empleados e ON e.id=b.empleado_id JOIN empresas em ON em.id=e.empresa_id ${w} ORDER BY em.nombre, e.leg_num`, filtrarPeriodo ? [finMes] : [])).rows;
     } else if (key === 'art') {
-      const q = await query(`SELECT a.*, em.nombre AS empresa FROM art_contratos a JOIN empresas em ON em.id=a.empresa_id ${filtrarPeriodo ? `WHERE a.fecha_inicio <= '${finMes}' AND (a.fecha_fin IS NULL OR a.fecha_fin >= '${finMes}')` : ''} ORDER BY em.nombre, a.fecha_inicio DESC`);
+      const q = await query(`SELECT a.*, em.nombre AS empresa FROM art_contratos a JOIN empresas em ON em.id=a.empresa_id ${filtrarPeriodo ? `WHERE a.fecha_inicio <= $1 AND (a.fecha_fin IS NULL OR a.fecha_fin >= $1)` : ''} ORDER BY em.nombre, a.fecha_inicio DESC`, filtrarPeriodo ? [finMes] : []);
       rows = q.rows.map((a) => { const al = Array.isArray(a.alicuotas) ? a.alicuotas : []; const ult = al[al.length - 1] || {}; return {
         empresa: a.empresa, art_nombre: a.art_nombre, art_codigo: a.art_codigo, nro_contrato: a.nro_contrato,
         fecha_inicio: a.fecha_inicio, fecha_fin: a.fecha_fin, alicuotaActual: ult.pct != null ? Number(ult.pct) : null, activo: a.activo }; });
@@ -678,18 +678,18 @@ router.get('/dataset/:key', async (req, res, next) => {
       const w = filtrarPeriodo ? `WHERE a.created_at::date >= $1 AND a.created_at::date <= $2` : '';
       rows = (await query(`SELECT a.monto, a.motivo, a.cuotas, a.estado, a.recomendacion, a.created_at, e.nom AS empleado, e.leg_num, em.nombre AS empresa FROM anticipos a JOIN empleados e ON e.id=a.empleado_id JOIN empresas em ON em.id=e.empresa_id ${w} ORDER BY a.created_at DESC`, filtrarPeriodo ? [inicioMes, finMes] : [])).rows;
     } else if (key === 'dotacion') {
-      const q = await query(`SELECT e.*, em.nombre AS empresa FROM empleados e JOIN empresas em ON em.id=e.empresa_id ${filtrarPeriodo ? `WHERE e.ingreso <= '${finMes}'` : ''} ORDER BY em.nombre, e.leg_num`);
+      const q = await query(`SELECT e.*, em.nombre AS empresa FROM empleados e JOIN empresas em ON em.id=e.empresa_id ${filtrarPeriodo ? `WHERE e.ingreso <= $1` : ''} ORDER BY em.nombre, e.leg_num`, filtrarPeriodo ? [finMes] : []);
       rows = q.rows.map((e) => { const d = e.data || {}; return { empresa: e.empresa, legNum: e.leg_num, nom: e.nom, ingreso: e.ingreso,
         antiguedad: aniosDe(e.ingreso), edad: d.fecha_nac ? Math.floor(aniosDe(d.fecha_nac)) : null, cat: e.cat, tarea: d.tarea || null, lugar: d.lugar || null, activo: e.activo }; });
     } else if (key === 'dotacion_empresa') {
-      const q = await query(`SELECT e.*, em.nombre AS empresa FROM empleados e JOIN empresas em ON em.id=e.empresa_id ${filtrarPeriodo ? `WHERE e.ingreso <= '${finMes}'` : ''}`);
+      const q = await query(`SELECT e.*, em.nombre AS empresa FROM empleados e JOIN empresas em ON em.id=e.empresa_id ${filtrarPeriodo ? `WHERE e.ingreso <= $1` : ''}`, filtrarPeriodo ? [finMes] : []);
       const g = {};
       for (const e of q.rows) { const o = (g[e.empresa] ||= { empresa: e.empresa, empleados: 0, activos: 0, bajas: 0, masa: 0, antig: 0 });
         o.empleados++; if (e.activo) { o.activos++; o.masa += Number(e.bruto) || 0; o.antig += (aniosDe(e.ingreso) || 0); } else o.bajas++; }
       rows = Object.values(g).map((o) => ({ empresa: o.empresa, empleados: o.empleados, activos: o.activos, bajas: o.bajas,
         masaBruta: r2(o.masa), brutoPromedio: r2(o.activos ? o.masa / o.activos : 0), antiguedadProm: r2(o.activos ? o.antig / o.activos : 0) }));
     } else if (key === 'prueba') {
-      const q = await query(`SELECT e.*, em.nombre AS empresa FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE COALESCE(e.activo,true)=true ${filtrarPeriodo ? `AND e.ingreso <= '${finMes}'` : ''} ORDER BY em.nombre, e.leg_num`);
+      const q = await query(`SELECT e.*, em.nombre AS empresa FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE COALESCE(e.activo,true)=true ${filtrarPeriodo ? `AND e.ingreso <= $1` : ''} ORDER BY em.nombre, e.leg_num`, filtrarPeriodo ? [finMes] : []);
       const refP = filtrarPeriodo ? new Date(finMes) : hoyD;
       rows = q.rows.map((e) => { const dias = e.ingreso ? Math.floor((refP - new Date(e.ingreso)) / 86400000) : null; if (dias == null || dias < 0 || dias > 180) return null;
         const hito = dias <= 60 ? '60 días' : dias <= 120 ? '120 días' : dias <= 170 ? '170 días' : 'Fin (180 días)';
@@ -704,22 +704,22 @@ router.get('/dataset/:key', async (req, res, next) => {
       rows = q.rows.map((e) => { if (!e.ingreso) return null; const f = new Date(e.ingreso); if (isNaN(f) || f.getMonth() + 1 !== Number(mes)) return null;
         return { empresa: e.empresa, legNum: e.leg_num, nom: e.nom, ingreso: e.ingreso, dia: f.getDate(), anios: hoyD.getFullYear() - f.getFullYear() }; }).filter(Boolean).sort((a, b) => a.dia - b.dia);
     } else if (key === 'masa_convenio') {
-      const q = await query(`SELECT e.* FROM empleados e WHERE COALESCE(e.activo,true)=true ${filtrarPeriodo ? `AND e.ingreso <= '${finMes}'` : ''}`);
+      const q = await query(`SELECT e.* FROM empleados e WHERE COALESCE(e.activo,true)=true ${filtrarPeriodo ? `AND e.ingreso <= $1` : ''}`, filtrarPeriodo ? [finMes] : []);
       const g = {};
       for (const e of q.rows) { const k = (e.data || {}).cod_convenio || 'Sin convenio'; const o = (g[k] ||= { convenio: k, empleados: 0, masa: 0 }); o.empleados++; o.masa += Number(e.bruto) || 0; }
       rows = Object.values(g).map((o) => ({ convenio: o.convenio, empleados: o.empleados, masaBruta: r2(o.masa), brutoPromedio: r2(o.empleados ? o.masa / o.empleados : 0) }));
     } else if (key === 'licencias_vigentes') {
-      rows = (await query(`SELECT l.tipo, l.desde, l.hasta, l.dias, l.estado, e.nom AS empleado, e.leg_num, em.nombre AS empresa FROM licencias l JOIN empleados e ON e.id=l.empleado_id JOIN empresas em ON em.id=e.empresa_id WHERE l.estado='aprobada' AND ${filtrarPeriodo ? `l.desde <= '${finMes}' AND l.hasta >= '${finMes}'` : 'l.hasta >= CURRENT_DATE'} ORDER BY l.hasta`)).rows;
+      rows = (await query(`SELECT l.tipo, l.desde, l.hasta, l.dias, l.estado, e.nom AS empleado, e.leg_num, em.nombre AS empresa FROM licencias l JOIN empleados e ON e.id=l.empleado_id JOIN empresas em ON em.id=e.empresa_id WHERE l.estado='aprobada' AND ${filtrarPeriodo ? `l.desde <= $1 AND l.hasta >= $1` : 'l.hasta >= CURRENT_DATE'} ORDER BY l.hasta`, filtrarPeriodo ? [finMes] : [])).rows;
     } else if (key === 'art_vencimientos') {
-      const q = await query(`SELECT a.*, em.nombre AS empresa FROM art_contratos a JOIN empresas em ON em.id=a.empresa_id WHERE a.fecha_fin IS NOT NULL ${filtrarPeriodo ? `AND a.fecha_fin >= '${inicioMes}'` : ''} ORDER BY a.fecha_fin`);
+      const q = await query(`SELECT a.*, em.nombre AS empresa FROM art_contratos a JOIN empresas em ON em.id=a.empresa_id WHERE a.fecha_fin IS NOT NULL ${filtrarPeriodo ? `AND a.fecha_fin >= $1` : ''} ORDER BY a.fecha_fin`, filtrarPeriodo ? [inicioMes] : []);
       rows = q.rows.map((a) => ({ empresa: a.empresa, art_nombre: a.art_nombre, nro_contrato: a.nro_contrato, fecha_inicio: a.fecha_inicio, fecha_fin: a.fecha_fin, diasParaVencer: diasHasta(a.fecha_fin), activo: a.activo }));
     } else if (key === 'cuentas_incompletas') {
       const q = await query(`SELECT e.leg_num, e.nom, em.nombre AS empresa,
           COALESCE(SUM(c.porcentaje) FILTER (WHERE c.activo), 0) AS pct, COUNT(c.id) FILTER (WHERE c.activo) AS cuentas
         FROM empleados e JOIN empresas em ON em.id=e.empresa_id LEFT JOIN cbus c ON c.empleado_id=e.id
-        WHERE COALESCE(e.activo,true)=true ${filtrarPeriodo ? `AND e.ingreso <= '${finMes}'` : ''}
+        WHERE COALESCE(e.activo,true)=true ${filtrarPeriodo ? `AND e.ingreso <= $1` : ''}
         GROUP BY e.id, e.leg_num, e.nom, em.nombre
-        HAVING COALESCE(SUM(c.porcentaje) FILTER (WHERE c.activo), 0) <> 100 ORDER BY em.nombre, e.leg_num`);
+        HAVING COALESCE(SUM(c.porcentaje) FILTER (WHERE c.activo), 0) <> 100 ORDER BY em.nombre, e.leg_num`, filtrarPeriodo ? [finMes] : []);
       rows = q.rows.map((r) => ({ empresa: r.empresa, legNum: r.leg_num, nom: r.nom, pctTotal: Number(r.pct), cuentas: Number(r.cuentas) }));
     }
 

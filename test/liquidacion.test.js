@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { calcularRecibo, calcularGananciasAcum } from '../src/lib/liquidacion.js';
+import { calcularRecibo, calcularGananciasAcum, factorNoHabitual } from '../src/lib/liquidacion.js';
 import { calcularDeduccionesSiradig } from '../src/lib/siradigTopes.js';
 import { sumarAcumulador, recibosDeVentana, DEFAULTS as ACUM_DEFAULTS } from '../src/lib/acumuladores.js';
 
@@ -197,6 +197,39 @@ test('concepto por fórmula tipo descuento resta del neto', () => {
   assert.equal(round2(rec.totales.neto), round2(base.totales.neto - 5000));
 });
 
+
+console.log('\nGanancias — no habituales (RG 4003 ap. B)');
+
+test('factorNoHabitual: porción del mes de pago = 1/(13-k)', () => {
+  assert.equal(round2(factorNoHabitual(3, 3)), round2(1 / 10));   // pago en marzo, mes actual marzo
+  assert.equal(round2(factorNoHabitual(7, 7)), round2(1 / 6));    // pago en julio
+});
+
+test('factorNoHabitual: crece con el mes actual (imputación proporcional)', () => {
+  // pago en marzo (k=3): a junio deben estar imputados (6-3+1)/(13-3)=4/10
+  assert.equal(round2(factorNoHabitual(3, 6)), round2(4 / 10));
+  // a diciembre debe estar imputado el 100%
+  assert.equal(round2(factorNoHabitual(3, 12)), 1);
+});
+
+test('replay mensual: un no habitual queda imputado al 100% en diciembre', () => {
+  // Reproduce lo que hacen acumGananciasDe / ganancias.routes al recorrer los meses:
+  // el prorrateo se recalcula con factorNoHabitual(mesPago, mesActual) contra el mes en curso.
+  const X = 600000, kPago = 4;
+  const proAJunio = X * factorNoHabitual(kPago, 6);
+  const proADic = X * factorNoHabitual(kPago, 12);
+  assert.ok(proAJunio < X, 'a mitad de año está parcialmente imputado');
+  assert.equal(round2(proADic), X, 'a diciembre está imputado el total');
+});
+
+test('calcularGananciasAcum: mensual usa prorrateado; anual usa el total', () => {
+  const G = { mniAnual: 3000000, dedEspAnual: 14400000, escala: [{ desde: 0, hasta: null, fijo: 0, alicuota: 10 }] };
+  const comun = { habitual: 5000000, aporHabitual: 0, sacReal: 0, aporSacReal: 0, retenidoAcum: 0, ganTabla: G };
+  const mensual = calcularGananciasAcum({ ...comun, mes: 12, anualizada: false, noHabPro: 300000, noHabFull: 600000 });
+  const anual = calcularGananciasAcum({ ...comun, mes: 12, anualizada: true, noHabPro: 300000, noHabFull: 600000 });
+  // La base gravada anual toma el total (noHabFull), la mensual el prorrateado (noHabPro).
+  assert.ok(anual.gravadoBase > mensual.gravadoBase, "la anual computa el total del no habitual (base sin SAC)");
+});
 
 console.log(`\nRESULTADO: ${ok} OK, ${fail} fallidos`);
 process.exit(fail ? 1 : 0);

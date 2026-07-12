@@ -2,13 +2,13 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { enviarMail, mailConfigurado } from '../lib/mailer.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { logAudit } from '../lib/audit.js';
 import { idsEquipoDe } from '../lib/equipo.js';
 import { periodoCerrado } from './cierres.routes.js';
 
 const router = Router();
 router.use(requireAuth);
 const esGlobal = (role) => ['rrhh', 'admin'].includes(role); // ven cualquier recibo
-function logAudit(actor, accion, detalle, target) { query('INSERT INTO audit_log (actor_dni, accion, detalle, target) VALUES ($1,$2,$3,$4)', [actor, accion, detalle || null, target || null]).catch(() => {}); }
 // Un gerente solo ve recibos de su equipo (organigrama). Devuelve true si target es de su equipo.
 async function gerenteVe(req, targetId) {
   if (req.user.role !== 'manager') return false;

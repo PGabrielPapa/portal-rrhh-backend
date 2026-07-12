@@ -77,7 +77,7 @@ export const BANCOS_BCRA = {
 };
 
 export function bancoDesdeCBU(cbu) {
-  const limpio = String(cbu || '').replace(/\\D/g, '');
+  const limpio = String(cbu || '').replace(/\D/g, '');
   if (limpio.length < 3) return '';
   const cod = limpio.slice(0, 3);
   return BANCOS_BCRA[cod] || `Otro (cód ${cod})`;
@@ -91,7 +91,7 @@ function _calcDV(digitos, pesos) {
 
 // Validación BCRA: 22 dígitos, DV1 sobre banco+sucursal, DV2 sobre la cuenta.
 export function validarCBU(cbu) {
-  const limpio = String(cbu || '').replace(/\\D/g, '');
+  const limpio = String(cbu || '').replace(/\D/g, '');
   if (!limpio) return { ok: false, error: 'CBU vacío' };
   if (limpio.length !== 22) return { ok: false, error: `El CBU debe tener 22 dígitos (tiene ${limpio.length})` };
   const dv1Calc = _calcDV(limpio.slice(0, 7), [7, 1, 3, 9, 7, 1, 3]);

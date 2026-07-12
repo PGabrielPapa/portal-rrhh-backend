@@ -126,9 +126,9 @@ router.get('/gerente', requireRole('manager', 'rrhh', 'admin'), async (req, res,
 
     // ── Pendientes (cada uno defensivo) ──
     let adelantos = 0, fichadas = 0, licencias = 0, prueba = [], anualAbierto = false;
-    try { adelantos = (await query(`SELECT COUNT(*)::int n FROM anticipos WHERE estado='pendiente' AND empleado_id = ANY($1)`, [ids])).rows[0].n; } catch (e) {}
-    try { fichadas = (await query(`SELECT COUNT(*)::int n FROM fichadas_periodo WHERE estado='aprob_rrhh' AND anio=$1 AND mes=$2 AND empleado_id = ANY($3)`, [anio, mes, ids])).rows[0].n; } catch (e) {}
-    try { licencias = (await query(`SELECT COUNT(*)::int n FROM licencias WHERE estado='pendiente' AND empleado_id = ANY($1)`, [ids])).rows[0].n; } catch (e) {}
+    try { adelantos = (await query(`SELECT COUNT(*)::int n FROM anticipos WHERE estado='pendiente' AND empleado_id = ANY($1)`, [ids])).rows[0].n; } catch (e) { console.warn('[dashboard] métrica omitida:', e.message); }
+    try { fichadas = (await query(`SELECT COUNT(*)::int n FROM fichadas_periodo WHERE estado='aprob_rrhh' AND anio=$1 AND mes=$2 AND empleado_id = ANY($3)`, [anio, mes, ids])).rows[0].n; } catch (e) { console.warn('[dashboard] métrica omitida:', e.message); }
+    try { licencias = (await query(`SELECT COUNT(*)::int n FROM licencias WHERE estado='pendiente' AND empleado_id = ANY($1)`, [ids])).rows[0].n; } catch (e) { console.warn('[dashboard] métrica omitida:', e.message); }
     try {
       anualAbierto = !!(await query("SELECT 1 FROM evaluacion_periodos WHERE tipo='anual' AND abierto=true LIMIT 1")).rows[0];
       const evs = (await query(`SELECT empleado_id, periodo FROM evaluaciones WHERE empleado_id = ANY($1) AND tipo ILIKE '%prueba%'`, [ids])).rows;
@@ -144,7 +144,7 @@ router.get('/gerente', requireRole('manager', 'rrhh', 'admin'), async (req, res,
         }
       }
       prueba.sort((a, b) => b.dias - a.dias);
-    } catch (e) {}
+    } catch (e) { console.warn('[dashboard] métrica omitida:', e.message); }
     const evaluaciones = prueba.length + (anualAbierto ? team.length : 0);
 
     // ── Asistencia ──
@@ -153,12 +153,12 @@ router.get('/gerente', requireRole('manager', 'rrhh', 'admin'), async (req, res,
       ausentesHoy = (await query(
         `SELECT e.nom, l.tipo, l.desde, l.hasta FROM licencias l JOIN empleados e ON e.id=l.empleado_id
           WHERE l.estado='aprobada' AND l.empleado_id = ANY($1) AND l.desde <= $2 AND l.hasta >= $2 ORDER BY e.nom`, [ids, hoyStr])).rows;
-    } catch (e) {}
+    } catch (e) { console.warn('[dashboard] métrica omitida:', e.message); }
     try {
       ausentismoDias = (await query(
         `SELECT COALESCE(SUM(dias),0)::int d FROM licencias
           WHERE estado='aprobada' AND empleado_id = ANY($1) AND desde <= $2 AND hasta >= $3`, [ids, fin, ini])).rows[0].d;
-    } catch (e) {}
+    } catch (e) { console.warn('[dashboard] métrica omitida:', e.message); }
 
     // ── Puntualidad y horas extra (fichadas del mes) ──
     let tardanzasCasos = 0, tardanzasMin = 0, extraMin = 0, rankingExtra = [], rankingTarde = [], detalleTarde = [];
@@ -186,7 +186,7 @@ router.get('/gerente', requireRole('manager', 'rrhh', 'admin'), async (req, res,
       rankingTarde.sort((a, b) => b.min - a.min); rankingTarde = rankingTarde.slice(0, 5);
       detalleTarde.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || (b.min - a.min));
       detalleTarde = detalleTarde.slice(0, 200);
-    } catch (e) {}
+    } catch (e) { console.warn('[dashboard] métrica omitida:', e.message); }
 
     // ── Avisos: cumpleaños y aniversarios (próximos 30 días) ──
     const cumple = [], aniversarios = [];
@@ -221,7 +221,7 @@ router.get('/gerente', requireRole('manager', 'rrhh', 'admin'), async (req, res,
       const seq = [];
       for (let i = 5; i >= 0; i--) { let m = mes - i, y = anio; while (m <= 0) { m += 12; y--; } seq.push({ anio: y, mes: m }); }
       evolucion = seq.map((s) => { const ff = evo.find((x) => x.anio === s.anio && x.mes === s.mes); return { anio: s.anio, mes: s.mes, neto: ff ? Number(ff.neto) : 0 }; });
-    } catch (e) {}
+    } catch (e) { console.warn('[dashboard] métrica omitida:', e.message); }
 
     res.json({
       periodo: { anio, mes }, sinEquipo: false,

@@ -122,6 +122,19 @@ router.get('/empleado/:empleadoId', requireRole('rrhh', 'admin'), async (req, re
   } catch (e) { next(e); }
 });
 
+// ── Configuración: mapeo código tipo->concepto + topes (guardado en parametros_liq.data) ──
+router.get('/_config', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const data = (await query('SELECT data FROM parametros_liq WHERE id=1')).rows[0]?.data || {};
+    res.json({
+      mapaTipos: { ...MAPA_TIPOS_DEFAULT, ...(data.siradigTipos || {}) },
+      topes: { ...TABLA4_DEFAULT, ...(data.topesSiradig || {}) },
+      conceptos: CONCEPTOS,
+      tabla4Default: TABLA4_DEFAULT,
+    });
+  } catch (e) { next(e); }
+});
+
 router.get('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const { rows } = await query(
@@ -137,19 +150,6 @@ router.delete('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
     const r = await query('DELETE FROM siradig_presentaciones WHERE id=$1 RETURNING id', [req.params.id]);
     if (!r.rowCount) return res.status(404).json({ error: 'No encontrado' });
     res.json({ ok: true });
-  } catch (e) { next(e); }
-});
-
-// ── Configuración: mapeo código tipo->concepto + topes (guardado en parametros_liq.data) ──
-router.get('/_config', requireRole('rrhh', 'admin'), async (req, res, next) => {
-  try {
-    const data = (await query('SELECT data FROM parametros_liq WHERE id=1')).rows[0]?.data || {};
-    res.json({
-      mapaTipos: { ...MAPA_TIPOS_DEFAULT, ...(data.siradigTipos || {}) },
-      topes: { ...TABLA4_DEFAULT, ...(data.topesSiradig || {}) },
-      conceptos: CONCEPTOS,
-      tabla4Default: TABLA4_DEFAULT,
-    });
   } catch (e) { next(e); }
 });
 

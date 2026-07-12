@@ -4,7 +4,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 
 const router = Router();
 router.use(requireAuth);
-router.use(requireRole('rrhh', 'admin', 'manager'));
+router.use(requireRole('rrhh', 'admin'));
 const soloRRHH = requireRole('rrhh', 'admin');
 
 // ── Onboarding: plantilla ──

@@ -1527,4 +1527,9 @@ CREATE TABLE IF NOT EXISTS campos_adicionales (
   clave     TEXT NOT NULL,                       -- p. ej. cx_talle_calzado
   etiqueta  TEXT NOT NULL,
   tipo      TEXT NOT NULL DEFAULT 'texto',       -- texto | numero | fecha | lista
-  opciones  JSONB NOT NULL DEFAULT '[]'::jsonb,  -- valor
+  opciones  JSONB NOT NULL DEFAULT '[]'::jsonb,  -- valores posibles cuando tipo = lista
+  orden     INTEGER NOT NULL DEFAULT 0,          -- orden de aparición en el legajo
+  activo    BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (entidad, clave)
+);

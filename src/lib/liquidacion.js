@@ -30,11 +30,11 @@ function ganParaFecha(fechaISO) {
 }
 
 const num = (x) => { const n = Number(x); return Number.isFinite(n) ? n : 0; };
-const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+const round2 = (n) => { const s = n < 0 ? -1 : 1; return s * Math.round((Math.abs(n) + Number.EPSILON) * 100) / 100; };
 
 function aniosAntiguedad(ingreso, anio, mes) {
   if (!ingreso) return 0;
-  const ing = new Date(ingreso); if (isNaN(ing)) return 0;
+  const ing = new Date(String(ingreso).slice(0, 10) + 'T12:00:00'); if (isNaN(ing)) return 0;
   const ref = new Date(anio, mes - 1, 1);
   let a = ref.getFullYear() - ing.getFullYear();
   if (ref.getMonth() < ing.getMonth()) a--;
@@ -555,8 +555,10 @@ export function calcularRecibo(emp, params, opts) {
   // principal (mensual/quincena/SAC/vacaciones/final). No se re-cobran en extraordinarias,
   // anticipos ni ajustes complementarios del mismo período.
   const perCapitaAplica = (tipo === 'mensual' || esQuincenal || esSAConly || esVacaciones || esFinal);
-  const scvo = perCapitaAplica ? round2(num(p.scvoPercapita)) : 0;  // Seguro de Vida Obligatorio (Dto. 1567/74)
-  const ffep = perCapitaAplica ? round2(num(p.ffep)) : 0;           // Fondo Fiduc. Enfermedades Profesionales (SRT)
+  // Per cápita mensual: en quincena se prorratea 0,5 para que 1ª + 2ª sumen un solo cargo por mes.
+  const perCapitaFactor = esQuincenal ? 0.5 : 1;
+  const scvo = perCapitaAplica ? round2(num(p.scvoPercapita) * perCapitaFactor) : 0;  // Seguro de Vida Obligatorio (Dto. 1567/74)
+  const ffep = perCapitaAplica ? round2(num(p.ffep) * perCapitaFactor) : 0;           // Fondo Fiduc. Enfermedades Profesionales (SRT)
   // Fondo de Asistencia Laboral (Ley 27.802 / Dto. 408/2026), desde 11/2026. NO es costo
   // adicional: se DETRAE de las contribuciones patronales de seguridad social (se redirige un
   // % de la base SIPA desde la jubilación patronal hacia el FAL). Alícuota: MiPyME 2,5% /

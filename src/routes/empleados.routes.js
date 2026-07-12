@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query, pool } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { logAudit } from '../lib/audit.js';
 import { makeUid, dniFromCuil, empSlug } from '../lib/identity.js';
 import { idsEquipoDe, idsDirectosDe } from '../lib/equipo.js';
 import { puedeVerConfidenciales, puedeGestionarConfidenciales } from '../lib/confidencial.js';
@@ -8,7 +9,6 @@ import { puedeVerConfidenciales, puedeGestionarConfidenciales } from '../lib/con
 const router = Router();
 router.use(requireAuth);
 
-function logAudit(actor, accion, detalle, target) { query('INSERT INTO audit_log (actor_dni, accion, detalle, target) VALUES ($1,$2,$3,$4)', [actor, accion, detalle || null, target || null]).catch(() => {}); }
 // Campos que el empleado puede autogestionar desde "Mis datos" (impacto directo + histórico).
 const SELF_FIELDS = { estado_civil: 'Estado civil', email_personal: 'Mail personal', tel_personal: 'Teléfono personal', contacto_nombre: 'Contacto de emergencia — nombre', contacto_tel: 'Contacto de emergencia — teléfono', contacto_vinculo: 'Contacto de emergencia — vínculo' };
 

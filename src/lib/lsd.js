@@ -292,16 +292,19 @@ export function regs03(emp, recibo, ctx) {
   const cuil = String(emp.cuil || '').replace(/\D/g, '');
   const out = [];
   const push = (nombre, monto, esDescuento, cantidad, unidad) => {
-    const m = Math.abs(Number(monto) || 0);
+    const val = Number(monto) || 0;
+    const m = Math.abs(val);
     if (m <= 0) return;
     const c = clasificarConcepto(nombre, esDescuento);
+    // Un importe negativo (p. ej. devolución de Ganancias) invierte el indicador D/C.
+    const dc = val < 0 ? (c.dc === 'D' ? 'C' : 'D') : c.dc;
     out.push({
       tipo: '03', cuil,
       codConcepto: c.codigo,
       cantidad: cantidad || 0,
       unidad: unidad || '',
       importe: m,
-      indicadorDC: c.dc,
+      indicadorDC: dc,
       periodoAjuste: '',
     });
   };
