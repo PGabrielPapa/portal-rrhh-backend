@@ -1401,6 +1401,65 @@ CREATE TABLE IF NOT EXISTS onboarding (
 CREATE INDEX IF NOT EXISTS idx_onboarding_emp ON onboarding(empleado_id);
 
 -- ── Sucesión por puesto ──
+-- ── Formación / Capacitación (LMS) ──
+CREATE TABLE IF NOT EXISTS cursos (
+  id          SERIAL PRIMARY KEY,
+  nombre      TEXT NOT NULL,
+  descripcion TEXT,
+  proveedor   TEXT,
+  modalidad   TEXT,                 -- presencial | virtual | e-learning
+  horas       NUMERIC(6,1) NOT NULL DEFAULT 0,
+  activo      BOOLEAN NOT NULL DEFAULT true,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS formacion_inscripciones (
+  id          SERIAL PRIMARY KEY,
+  curso_id    INTEGER NOT NULL REFERENCES cursos(id) ON DELETE CASCADE,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  fecha       DATE,
+  estado      TEXT NOT NULL DEFAULT 'inscripto',  -- inscripto|en_curso|aprobado|desaprobado|ausente
+  calificacion NUMERIC(5,2),
+  costo       NUMERIC(14,2),
+  nota        TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_formacion_curso ON formacion_inscripciones(curso_id);
+CREATE INDEX IF NOT EXISTS idx_formacion_emp ON formacion_inscripciones(empleado_id);
+
+-- ── Encuestas de clima ──
+CREATE TABLE IF NOT EXISTS encuestas (
+  id          SERIAL PRIMARY KEY,
+  titulo      TEXT NOT NULL,
+  descripcion TEXT,
+  anonima     BOOLEAN NOT NULL DEFAULT true,
+  estado      TEXT NOT NULL DEFAULT 'borrador',  -- borrador | abierta | cerrada
+  created_by  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS encuesta_preguntas (
+  id          SERIAL PRIMARY KEY,
+  encuesta_id INTEGER NOT NULL REFERENCES encuestas(id) ON DELETE CASCADE,
+  texto       TEXT NOT NULL,
+  tipo        TEXT NOT NULL DEFAULT 'escala',   -- escala (1-5) | texto
+  orden       INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS encuesta_respuestas (
+  id          SERIAL PRIMARY KEY,
+  encuesta_id INTEGER NOT NULL REFERENCES encuestas(id) ON DELETE CASCADE,
+  pregunta_id INTEGER NOT NULL REFERENCES encuesta_preguntas(id) ON DELETE CASCADE,
+  empleado_id INTEGER,                          -- NULL si la encuesta es anónima
+  valor       INTEGER,
+  texto       TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_enc_resp ON encuesta_respuestas(encuesta_id, pregunta_id);
+CREATE TABLE IF NOT EXISTS encuesta_participaciones (
+  encuesta_id INTEGER NOT NULL REFERENCES encuestas(id) ON DELETE CASCADE,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (encuesta_id, empleado_id)
+);
+
 CREATE TABLE IF NOT EXISTS sucesiones (
   id          SERIAL PRIMARY KEY,
   puesto_id   INTEGER NOT NULL REFERENCES puestos(id) ON DELETE CASCADE,
