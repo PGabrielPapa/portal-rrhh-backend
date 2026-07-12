@@ -1364,6 +1364,52 @@ CREATE TABLE IF NOT EXISTS candidatos (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_candidatos_busqueda ON candidatos(busqueda_id);
+
+-- ── Desempeño / 9-box (objetivos + competencias + potencial vs desempeño) ──
+CREATE TABLE IF NOT EXISTS desempeno (
+  id          SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  anio        INTEGER NOT NULL,
+  desempeno   INTEGER,               -- 1 bajo · 2 medio · 3 alto
+  potencial   INTEGER,               -- 1 bajo · 2 medio · 3 alto
+  objetivos   JSONB NOT NULL DEFAULT '[]'::jsonb,  -- [{texto, peso, logro}]
+  competencias JSONB NOT NULL DEFAULT '[]'::jsonb, -- [{nombre, nivel}]
+  nota        TEXT,
+  updated_by  TEXT,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (empleado_id, anio)
+);
+
+-- ── Onboarding (checklist de alta) ──
+CREATE TABLE IF NOT EXISTS onboarding_plantilla (
+  id        SERIAL PRIMARY KEY,
+  tarea     TEXT NOT NULL,
+  responsable TEXT,
+  orden     INTEGER NOT NULL DEFAULT 0,
+  activo    BOOLEAN NOT NULL DEFAULT true
+);
+CREATE TABLE IF NOT EXISTS onboarding (
+  id          SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  tarea       TEXT NOT NULL,
+  responsable TEXT,
+  orden       INTEGER NOT NULL DEFAULT 0,
+  hecho       BOOLEAN NOT NULL DEFAULT false,
+  done_at     TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_onboarding_emp ON onboarding(empleado_id);
+
+-- ── Sucesión por puesto ──
+CREATE TABLE IF NOT EXISTS sucesiones (
+  id          SERIAL PRIMARY KEY,
+  puesto_id   INTEGER NOT NULL REFERENCES puestos(id) ON DELETE CASCADE,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  readiness   TEXT NOT NULL DEFAULT 'mediano',  -- inmediato | corto | mediano | largo
+  nota        TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (puesto_id, empleado_id)
+);
 -- Legajo confidencial (Tango): oculta el legajo a usuarios sin permiso de verlos.
 ALTER TABLE empleados ADD COLUMN IF NOT EXISTS confidencial BOOLEAN NOT NULL DEFAULT false;
 

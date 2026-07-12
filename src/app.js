@@ -57,6 +57,8 @@ import modeloReciboRoutes from './routes/modeloRecibo.routes.js';
 import agrupacionesRoutes from './routes/agrupaciones.routes.js';
 import configHistRoutes from './routes/configHist.routes.js';
 import reclutamientoRoutes from './routes/reclutamiento.routes.js';
+import desempenoRoutes from './routes/desempeno.routes.js';
+import talentoRoutes from './routes/talento.routes.js';
 
 export function createApp() {
   const app = express();
@@ -104,6 +106,8 @@ export function createApp() {
   app.use('/api/agrupaciones', agrupacionesRoutes);
   app.use('/api/config-hist', configHistRoutes);
   app.use('/api/reclutamiento', reclutamientoRoutes);
+  app.use('/api/desempeno', desempenoRoutes);
+  app.use('/api/talento', talentoRoutes);
   app.use('/api/arca', arcaRoutes);
   app.use('/api/familiares', familiaresRoutes);
   app.use('/api/fichadas', fichadasRoutes);
