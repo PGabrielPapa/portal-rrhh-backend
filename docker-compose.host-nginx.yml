@@ -1,0 +1,33 @@
+# ─────────────────────────────────────────────────────────────────────────
+# Override para servidores con VARIOS proyectos detrás de UN nginx del host.
+#
+# En vez de que el Caddy de ESTE proyecto se adueñe de los puertos 80/443, el
+# nginx del sistema operativo (Ubuntu) es el único reverse proxy y maneja el
+# HTTPS (certbot/Let's Encrypt). Este override:
+#   1) publica el contenedor `web` (frontend + proxy /api) en 127.0.0.1:8081
+#      (solo accesible desde el propio servidor, no expuesto a internet), y
+#   2) desactiva el servicio `caddy` (queda en un profile que nunca se activa).
+#
+# Uso (en el servidor):
+#   docker compose -f docker-compose.prod.yml -f docker-compose.host-nginx.yml up -d --build
+#
+# El nginx del host proxya el dominio → http://127.0.0.1:8081 (ver el archivo
+# /etc/nginx/sites-available/rrhh). El contenedor `web` ya proxya /api → api:4000.
+#
+# NOTA: aunque Caddy no arranque, el .env debe seguir teniendo POSTGRES_PASSWORD,
+# JWT_SECRET y DOMAIN definidos (compose valida esas variables al leer el archivo
+# base). DOMAIN puede quedar con el dominio real aunque acá no se use.
+#
+# ESTRUCTURA DE CARPETAS: este override asume el layout /var/www/rrhh/{back,front}
+# (backend en .../back, frontend en .../front), por eso reescribe el build context
+# del frontend a ../front. El archivo base usa ../portal-rrhh-frontend (repos
+# clonados lado a lado con su nombre original); acá lo pisamos.
+# ─────────────────────────────────────────────────────────────────────────
+services:
+  web:
+    build: ../front          # frontend en /var/www/rrhh/front (pisa ../portal-rrhh-frontend del base)
+    ports:
+      - "127.0.0.1:8081:80"   # publicado solo en localhost; lo alcanza el nginx del host
+
+  caddy:
+    profiles: ["disabled"]    # profile no activado => el servicio no se levanta
