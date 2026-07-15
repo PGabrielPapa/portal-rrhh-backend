@@ -24,6 +24,13 @@
 # clonados lado a lado con su nombre original); acá lo pisamos.
 # ─────────────────────────────────────────────────────────────────────────
 services:
+  api:
+    # El compose base de prod NO pasa PROSOFT_*/SMTP_* al contenedor (su bloque
+    # `environment` es una lista fija). Cargamos el .env completo para que la API
+    # reciba esas credenciales. El `environment` del base igual gana en conflictos.
+    env_file:
+      - .env
+
   web:
     build: ../front          # frontend en /var/www/rrhh/front (pisa ../portal-rrhh-frontend del base)
     ports:
