@@ -41,4 +41,13 @@ export const config = {
     pass: process.env.SMTP_PASS || '',
     from: process.env.SMTP_FROM || process.env.SMTP_USER || '',
   },
+  // Asistencia por IA (opcional). Si no se define IA_API_KEY, las funciones de IA
+  // quedan deshabilitadas y el resto del portal funciona igual.
+  ia: {
+    provider: process.env.IA_PROVIDER || 'anthropic',   // anthropic | openai
+    apiKey: process.env.IA_API_KEY || '',
+    model: process.env.IA_MODEL || '',                  // si vacío, se usa un default por proveedor
+    baseUrl: process.env.IA_BASE_URL || '',             // opcional, para gateways/compatibles
+    maxTokens: parseInt(process.env.IA_MAX_TOKENS || '1200', 10),
+  },
 };

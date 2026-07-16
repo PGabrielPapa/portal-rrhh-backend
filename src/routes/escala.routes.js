@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { verificarEscalas, autoActualizarEscalas } from '../lib/escalasAuto.js';
+import { logAudit } from '../lib/audit.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -74,6 +76,7 @@ router.post('/incremento', requireRole('rrhh', 'admin'), async (req, res, next) 
        tipo === 'porcentaje' ? val : null, alcance, comentario || null,
        JSON.stringify({ tramos: d.tramos, categorias, regionales, montos_titulo, adicionales: d.adicionales || [] }), req.user.dni]
     );
+    logAudit(req.user.dni, 'escala.incremento', `${tipo === 'porcentaje' ? val + '%' : 'monto'} vig. ${vigencia} (${alcance})`, `escala:${ins.rows[0].id}`);
     res.status(201).json(mapVersion(ins.rows[0]));
   } catch (e) { next(e); }
 });
@@ -100,6 +103,38 @@ router.delete('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
     const r = await query("DELETE FROM escala_versiones WHERE id=$1 AND origen <> 'inicial' RETURNING id", [req.params.id]);
     if (!r.rowCount) return res.status(409).json({ error: 'No existe o es la escala inicial (no se puede borrar)' });
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// GET /api/escala/verificar?anio&mes — resumen de la escala unificada vigente + cambios,
+// para el mensaje de confirmación antes de la corrida.
+router.get('/verificar', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const d = new Date();
+    const anio = Number(req.query.anio) || d.getFullYear();
+    const mes = Number(req.query.mes) || (d.getMonth() + 1);
+    res.json(await verificarEscalas(anio, mes));
+  } catch (e) { next(e); }
+});
+
+// POST /api/escala/adoptar { anio, mes } — registra la adopción de la escala vigente (histórico).
+router.post('/adoptar', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const d = new Date();
+    const anio = Number(b.anio) || d.getFullYear();
+    const mes = Number(b.mes) || (d.getMonth() + 1);
+    const _r = await autoActualizarEscalas(anio, mes, { adoptadoPor: req.user.dni });
+    logAudit(req.user.dni, 'escala.adoptar', `Período ${anio}-${String(mes).padStart(2,'0')}${_r.escala ? (' — vig. ' + (_r.escala.mesLabel || _r.escala.vigencia)) : ''}`, `escala:${_r.escala ? _r.escala.id : ''}`);
+    res.json(_r);
+  } catch (e) { next(e); }
+});
+
+// GET /api/escala/adopciones — histórico de escalas unificadas adoptadas por período.
+router.get('/adopciones', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT periodo, escala_version_id, vigencia, mes_label AS "mesLabel", resumen, adoptado_por AS "adoptadoPor", created_at AS "createdAt" FROM escala_adopciones ORDER BY periodo DESC, created_at DESC LIMIT 200');
+    res.json(rows);
   } catch (e) { next(e); }
 });
 

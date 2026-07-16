@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { query } from '../db.js';
+import { partirNombre } from '../lib/nombre.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import * as sicoss from '../lib/sicoss.js';
 import * as lsd from '../lib/lsd.js';
@@ -594,6 +595,38 @@ const CAMPOS = {
   cuentas_incompletas: [['empresa','Empresa'],['legNum','Legajo'],['nom','Nombre'],['pctTotal','% asignado','num'],['cuentas','Cuentas','int']],
 };
 
+// Datasets cuyo campo de nombre viene como "APELLIDO, NOMBRE": se parte en columnas
+// separadas Apellido / Nombre (dejando además el nombre completo). Clave = dataset, valor = campo origen.
+const NOMBRE_SRC = {
+  empleados: 'nom', nomina: 'nombre', costos: 'nombre', liquidaciones: 'nombre',
+  fichadas: 'empleado', cbus: 'empleado', elementos: 'empleado', beneficios: 'empleado',
+  licencias: 'empleado', sanciones: 'empleado', anticipos: 'empleado', licencias_vigentes: 'empleado',
+  dotacion: 'nom', prueba: 'nom', cumpleanios: 'nom', aniversarios: 'nom', cuentas_incompletas: 'nom',
+};
+// Devuelve los campos del dataset con Apellido/Nombre insertados tras el campo de nombre completo.
+function camposConNombre(key) {
+  const src = NOMBRE_SRC[key]; const base = CAMPOS[key] || [];
+  if (!src) return base;
+  const out = [];
+  for (const c of base) {
+    if (c[0] === src) {
+      const label = c[1] === 'Nombre' ? 'Nombre completo' : c[1];
+      out.push(c[2] !== undefined ? [c[0], label, c[2]] : [c[0], label]);
+      out.push(['apellido', 'Apellido']);
+      out.push(['nombrePila', 'Nombre']);
+    } else out.push(c);
+  }
+  return out;
+}
+// Enriquece cada fila con apellido/nombrePila a partir del campo de nombre completo.
+function partirNombreEnFilas(key, rows) {
+  const src = NOMBRE_SRC[key]; if (!src) return;
+  for (const r of rows) {
+    const { apellido, nombre } = partirNombre(r[src]);
+    r.apellido = apellido; r.nombrePila = nombre;
+  }
+}
+
 router.get('/datasets', (req, res) => res.json(REPORT_DATASETS));
 
 router.get('/dataset/:key', async (req, res, next) => {
@@ -727,7 +760,8 @@ router.get('/dataset/:key', async (req, res, next) => {
     if (empresa && !['nomina', 'costos', 'liquidaciones', 'empresas', 'conceptos', 'masa_convenio'].includes(key)) {
       rows = rows.filter((r) => r.empresa === empresa);
     }
-    res.json({ key, label: meta.label, periodo: meta.periodo, anio, mes, campos: CAMPOS[key] || [], rows });
+    partirNombreEnFilas(key, rows);
+    res.json({ key, label: meta.label, periodo: meta.periodo, anio, mes, campos: camposConNombre(key), rows });
   } catch (e) { next(e); }
 });
 

@@ -57,8 +57,9 @@ router.post('/', soloRRHH, async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.titulo || !String(b.titulo).trim()) return res.status(400).json({ error: 'El título es obligatorio' });
-    const r = await query('INSERT INTO encuestas (titulo, descripcion, anonima, estado, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING id',
-      [String(b.titulo).trim(), b.descripcion || null, b.anonima !== false, 'borrador', req.user.dni]);
+    const tipo = ['clima', 'pulso', 'enps'].includes(b.tipo) ? b.tipo : 'clima';
+    const r = await query('INSERT INTO encuestas (titulo, descripcion, anonima, estado, tipo, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
+      [String(b.titulo).trim(), b.descripcion || null, b.anonima !== false, 'borrador', tipo, req.user.dni]);
     res.status(201).json({ ok: true, id: r.rows[0].id });
   } catch (e) { next(e); }
 });
@@ -70,6 +71,7 @@ router.put('/:id', soloRRHH, async (req, res, next) => {
     if (b.titulo !== undefined) { args.push(String(b.titulo).trim()); sets.push(`titulo=$${args.length}`); }
     if (b.descripcion !== undefined) { args.push(b.descripcion || null); sets.push(`descripcion=$${args.length}`); }
     if (b.anonima !== undefined) { args.push(b.anonima !== false); sets.push(`anonima=$${args.length}`); }
+    if (b.tipo !== undefined && ['clima', 'pulso', 'enps'].includes(b.tipo)) { args.push(b.tipo); sets.push(`tipo=$${args.length}`); }
     if (estado) { args.push(estado); sets.push(`estado=$${args.length}`); }
     if (!sets.length) return res.status(400).json({ error: 'Nada para actualizar' });
     args.push(req.params.id);
@@ -93,7 +95,7 @@ router.post('/:id/preguntas', soloRRHH, async (req, res, next) => {
     const b = req.body || {};
     if (!b.texto || !String(b.texto).trim()) return res.status(400).json({ error: 'El texto es obligatorio' });
     const r = await query('INSERT INTO encuesta_preguntas (encuesta_id, texto, tipo, orden) VALUES ($1,$2,$3,$4) RETURNING id',
-      [req.params.id, String(b.texto).trim(), b.tipo === 'texto' ? 'texto' : 'escala', Number(b.orden) || 0]);
+      [req.params.id, String(b.texto).trim(), ['texto', 'nps'].includes(b.tipo) ? b.tipo : 'escala', Number(b.orden) || 0]);
     res.status(201).json({ ok: true, id: r.rows[0].id });
   } catch (e) { next(e); }
 });
@@ -115,6 +117,13 @@ router.get('/:id/resultados', soloRRHH, async (req, res, next) => {
         const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }; let suma = 0, tot = 0;
         for (const r of rows) { dist[r.valor] = r.n; suma += r.valor * r.n; tot += r.n; }
         p.promedio = tot ? Math.round((suma / tot) * 100) / 100 : null; p.respuestas = tot; p.distribucion = dist;
+      } else if (p.tipo === 'nps') {
+        const rows = (await query('SELECT valor, count(*)::int AS n FROM encuesta_respuestas WHERE pregunta_id=$1 AND valor IS NOT NULL GROUP BY valor', [p.id])).rows;
+        let prom = 0, det = 0, pas = 0, tot = 0;
+        for (const r of rows) { const v = Number(r.valor); tot += r.n; if (v >= 9) prom += r.n; else if (v <= 6) det += r.n; else pas += r.n; }
+        p.respuestas = tot;
+        p.enps = tot ? Math.round(((prom - det) / tot) * 100) : null;   // eNPS: -100 a +100
+        p.promotores = prom; p.pasivos = pas; p.detractores = det;
       } else {
         p.textos = (await query('SELECT texto FROM encuesta_respuestas WHERE pregunta_id=$1 AND texto IS NOT NULL ORDER BY created_at DESC', [p.id])).rows.map((r) => r.texto);
       }

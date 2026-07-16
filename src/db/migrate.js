@@ -15,8 +15,10 @@ async function main() {
     await pool.query('DROP TABLE IF EXISTS empleados CASCADE; DROP TABLE IF EXISTS empresas CASCADE;');
   }
   const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-  await pool.query(sql);
-  console.log('[migrate] esquema aplicado ✓');
+  const { aplicarSchema } = await import('./applySchema.js');
+  const r = await aplicarSchema(pool, sql);
+  if (r.errores.length) { console.error(`[migrate] ${r.errores.length} sentencia(s) con error (de ${r.total}):`); for (const e of r.errores) console.error(`  ✗ ${e.error} — en: ${e.sql}…`); }
+  else console.log(`[migrate] esquema aplicado ✓ (${r.total} sentencias)`);
 
   // Migraciones idempotentes posteriores al schema (claves foráneas, correlativo, puestos).
   try {

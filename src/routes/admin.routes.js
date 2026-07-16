@@ -4,6 +4,12 @@ import { query } from '../db.js';
 import { config } from '../config.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { empSlug } from '../lib/identity.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { valoresLegalesVigentes } from './valoresLegales.routes.js';
+import { ganTablaParaFecha } from '../lib/gananciasParams.js';
+import { escalaUnificadaVigente, conveniosVigentes } from '../lib/escalasAuto.js';
 
 const router = Router();
 router.use(requireAuth, requireRole('admin'));
@@ -214,6 +220,38 @@ router.put('/centros/:id/empresas', async (req, res, next) => {
     await audit(req.user.dni, 'centro_empresas', `${ids.length} empresa(s)`, String(centroId));
     res.json({ ok: true });
   } catch (e) { next(e); }
+});
+
+// GET /api/admin/estado-sistema — panel de salud + automatizaciones (para "Estado del sistema").
+router.get('/estado-sistema', async (req, res, next) => {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const out = { ts: new Date().toISOString(), db: {}, backup: {}, automatizaciones: {} };
+  // Base de datos
+  try { const t0 = Date.now(); await query('SELECT 1'); out.db = { ok: true, ms: Date.now() - t0 }; }
+  catch (e) { out.db = { ok: false, error: e.message }; }
+  // Último respaldo
+  try {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const dir = process.env.BACKUP_DIR || path.join(__dirname, '..', '..', 'backups');
+    const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => /^portal_rrhh_.*\.sql$/.test(f))
+      .map((f) => ({ f, t: fs.statSync(path.join(dir, f)).mtime })).sort((a, b) => b.t - a.t) : [];
+    out.backup = files.length
+      ? { ok: true, ultimo: files[0].f, fecha: files[0].t, cantidad: files.length, auto: String(process.env.BACKUP_AUTO || 'true') !== 'false' }
+      : { ok: false, mensaje: 'Sin respaldos todavía', auto: String(process.env.BACKUP_AUTO || 'true') !== 'false' };
+  } catch (e) { out.backup = { ok: false, error: e.message }; }
+  // Valores legales vigentes
+  try { const v = await valoresLegalesVigentes(hoy); out.automatizaciones.valoresLegales = v ? { ok: true, vigenciaDesde: v.vigencia_desde } : { ok: false, mensaje: 'Sin valores cargados' }; }
+  catch (e) { out.automatizaciones.valoresLegales = { ok: false, error: e.message }; }
+  // Tabla de Ganancias vigente
+  try { const g = await ganTablaParaFecha(hoy); out.automatizaciones.ganancias = g ? { ok: true, periodo: g.periodo || null } : { ok: false, mensaje: 'Sin tabla vigente' }; }
+  catch (e) { out.automatizaciones.ganancias = { ok: false, error: e.message }; }
+  // Escala unificada + convenios vigentes
+  try {
+    const esc = await escalaUnificadaVigente(hoy);
+    const convs = await conveniosVigentes(hoy);
+    out.automatizaciones.escala = esc ? { ok: true, vigencia: esc.vigencia, mesLabel: esc.mes_label, convenios: convs.length } : { ok: false, mensaje: 'Sin escala unificada cargada' };
+  } catch (e) { out.automatizaciones.escala = { ok: false, error: e.message }; }
+  res.json(out);
 });
 
 export default router;

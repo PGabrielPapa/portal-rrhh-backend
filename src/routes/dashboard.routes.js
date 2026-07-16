@@ -236,4 +236,67 @@ router.get('/gerente', requireRole('manager', 'rrhh', 'admin'), async (req, res,
   } catch (e) { next(e); }
 });
 
+// ── Tablero de TALENTO (anual): rotación, ausentismo y dotación. ──
+// Complementa al tablero mensual de RR.HH. con métricas de gestión de personas.
+router.get('/talento', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const anio = Number(req.query.anio) || new Date().getFullYear();
+    const y0 = `${anio}-01-01`, y1 = `${anio}-12-31`;
+    const emp = (await query(
+      `SELECT e.id, e.ingreso, e.activo, em.nombre AS empresa, e.data
+         FROM empleados e JOIN empresas em ON em.id=e.empresa_id`)).rows;
+    const activos = emp.filter((x) => x.activo);
+    const dotacion = activos.length;
+
+    // Altas del año (por fecha de ingreso) y bajas del año (tabla bajas por fecha_baja).
+    const altasAnio = emp.filter((x) => x.ingreso && String(x.ingreso).slice(0, 10) >= y0 && String(x.ingreso).slice(0, 10) <= y1).length;
+    let bajasRows = [];
+    try { bajasRows = (await query(`SELECT fecha_baja, causa FROM bajas WHERE fecha_baja >= $1 AND fecha_baja <= $2`, [y0, y1])).rows; } catch (e) { console.warn('[talento] bajas:', e.message); }
+    const bajasAnio = bajasRows.length;
+
+    // Índice de rotación: bajas / dotación promedio del año (estimada) * 100.
+    const dotFin = dotacion;
+    const dotIni = Math.max(0, dotFin - altasAnio + bajasAnio);
+    const dotProm = (dotIni + dotFin) / 2 || dotFin || 1;
+    const rotacion = r2((bajasAnio / dotProm) * 100);
+
+    // Serie mensual altas vs bajas.
+    const serie = Array.from({ length: 12 }, (_, i) => ({ mes: i + 1, altas: 0, bajas: 0 }));
+    for (const x of emp) { const d = x.ingreso ? String(x.ingreso).slice(0, 10) : ''; if (d >= y0 && d <= y1) serie[Number(d.slice(5, 7)) - 1].altas++; }
+    for (const b of bajasRows) { const d = String(b.fecha_baja).slice(0, 10); if (d >= y0 && d <= y1) serie[Number(d.slice(5, 7)) - 1].bajas++; }
+
+    // Antigüedad y edad promedio + distribución por antigüedad.
+    const hoyMs = Date.now();
+    const anios = (d) => (hoyMs - new Date(String(d).slice(0, 10) + 'T12:00:00').getTime()) / (365.25 * 864e5);
+    const antigs = activos.filter((x) => x.ingreso).map((x) => anios(x.ingreso));
+    const antiguedadProm = antigs.length ? r2(antigs.reduce((a, b) => a + b, 0) / antigs.length) : 0;
+    const edades = activos.map((x) => x.data?.fecha_nac).filter(Boolean).map((f) => anios(f));
+    const edadProm = edades.length ? r2(edades.reduce((a, b) => a + b, 0) / edades.length) : 0;
+    const buckets = [{ k: '< 1 año', min: 0, max: 1 }, { k: '1 a 3', min: 1, max: 3 }, { k: '3 a 5', min: 3, max: 5 }, { k: '5 a 10', min: 5, max: 10 }, { k: '10+', min: 10, max: 999 }];
+    const distribAntiguedad = buckets.map((b) => ({ rango: b.k, n: antigs.filter((a) => a >= b.min && a < b.max).length }));
+
+    // Ausentismo del año (licencias aprobadas, excluye vacaciones), total y por tipo.
+    let ausTipos = [];
+    try {
+      ausTipos = (await query(
+        `SELECT tipo, COALESCE(SUM(dias),0)::int AS dias, COUNT(*)::int AS casos FROM licencias
+           WHERE estado='aprobada' AND desde <= $2 AND hasta >= $1 AND tipo NOT ILIKE '%vacac%'
+           GROUP BY tipo ORDER BY dias DESC`, [y0, y1])).rows;
+    } catch (e) { console.warn('[talento] ausentismo:', e.message); }
+    const diasAusencia = ausTipos.reduce((a, t) => a + Number(t.dias), 0);
+    // Tasa aprox.: días de ausencia / (dotación × 220 días laborables al año) × 100.
+    const tasaAusentismo = dotacion ? r2((diasAusencia / (dotacion * 220)) * 100) : 0;
+
+    const porEmpresa = {};
+    for (const x of activos) { const k = x.empresa || '—'; porEmpresa[k] = (porEmpresa[k] || 0) + 1; }
+
+    res.json({
+      anio, dotacion, altasAnio, bajasAnio, rotacion, antiguedadProm, edadProm,
+      tasaAusentismo, diasAusencia,
+      serie, distribAntiguedad, ausentismoPorTipo: ausTipos.map((t) => ({ tipo: t.tipo, dias: Number(t.dias), casos: Number(t.casos) })),
+      porEmpresa: Object.entries(porEmpresa).map(([empresa, n]) => ({ empresa, n })).sort((a, b) => b.n - a.n),
+    });
+  } catch (e) { next(e); }
+});
+
 export default router;

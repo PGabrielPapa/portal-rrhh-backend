@@ -11,7 +11,10 @@
     "migrate": "node src/db/migrate.js",
     "seed": "node src/db/seed.js",
     "db:reset": "node src/db/migrate.js --reset && node src/db/seed.js",
-    "test": "node test/liquidacion.test.js && node test/formulas.test.js"
+    "test": "node test/liquidacion.test.js && node test/formulas.test.js && node test/workflow.test.js && node test/nombre.test.js",
+    "backup": "node src/db/backup.js",
+    "check": "node src/db/check.js",
+    "restore": "node src/db/restore.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

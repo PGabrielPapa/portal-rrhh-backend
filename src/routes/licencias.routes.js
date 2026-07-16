@@ -5,6 +5,8 @@ import { idsEquipoDe } from '../lib/equipo.js';
 import { reglaDe, topeExamen, REGLAS } from '../lib/licenciasReglas.js';
 import { validarAdjunto, mimeSeguro } from '../lib/adjuntos.js';
 import { equipoEfectivo, tieneDelegacion, notaDelegacion } from '../lib/delegaciones.js';
+import { ordenarPasos, pasoActual, puedeResolver, resultadoDecision } from '../lib/workflowEngine.js';
+import { avisarAprobadorPendiente, avisarSolicitante } from '../lib/notifAprob.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -16,6 +18,22 @@ function diasEntre(desde, hasta) {
   return Math.round((d2 - d1) / 86400000) + 1;
 }
 function diasPorAntiguedad(anios) { if (anios < 5) return 14; if (anios < 10) return 21; if (anios < 20) return 28; return 35; }
+
+// Snapshot del flujo de aprobación configurado para 'licencias' (si existe). Devuelve
+// el JSON de pasos como string, o null si no hay workflow (→ flujo clásico PATCH).
+async function wfSnapLicencias() {
+  try {
+    const wf = (await query("SELECT pasos FROM workflows WHERE activo AND proceso='licencias' ORDER BY updated_at DESC LIMIT 1")).rows[0];
+    if (wf && Array.isArray(wf.pasos) && wf.pasos.length) return JSON.stringify(wf.pasos);
+  } catch (e) { /* sin workflow: flujo clásico */ }
+  return null;
+}
+
+// Puesto (puesto_id) del usuario, para pasos de workflow por puesto.
+async function puestoDe(userId) {
+  const r = (await query('SELECT puesto_id FROM empleados WHERE id=$1', [userId])).rows[0];
+  return r ? r.puesto_id : null;
+}
 
 // Info de vacaciones del empleado: corresponden por antigüedad + saldo + disponible.
 async function getVacInfo(empleadoId) {
@@ -151,10 +169,12 @@ router.post('/', async (req, res, next) => {
         return res.status(400).json({ error: `El máximo para ${regla.nombre} es ${regla.tope} día(s) (${regla.base}); estás pidiendo ${dias}.` });
       }
     }
+    const wfSnap = await wfSnapLicencias();
     const ins = await query(
-      `INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo) VALUES ($1,$2,$3,$4,$5,$6)
+      `INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo, workflow) VALUES ($1,$2,$3,$4,$5,$6,$7)
        RETURNING id, empleado_id, tipo, desde, hasta, dias, motivo, estado, created_at, justificacion, comprobante_nombre, comprobante_mime, (comprobante_data IS NOT NULL) AS tiene_comprobante`,
-      [req.user.id, tipo, desde, hasta, dias, motivo || null]);
+      [req.user.id, tipo, desde, hasta, dias, motivo || null, wfSnap]);
+    if (wfSnap) { try { avisarAprobadorPendiente({ proceso: 'licencias', paso: ordenarPasos(JSON.parse(wfSnap))[0], resumen: `${tipo}: ${desde} a ${hasta}` }); } catch (e) { /* noop */ } }
     res.status(201).json(ins.rows[0]);
   } catch (e) { next(e); }
 });
@@ -184,12 +204,14 @@ router.post('/justificar', async (req, res, next) => {
     { const v = validarAdjunto({ nombre: comprobanteNombre, mime: comprobanteMime, data: comprobanteData }); if (!v.ok) return res.status(400).json({ error: v.error }); }
     if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
     const dias = diasEntre(desde, hasta);
+    const wfSnap = await wfSnapLicencias();
     const ins = await query(
-      `INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo, estado, justificacion, comprobante_nombre, comprobante_mime, comprobante_data)
-       VALUES ($1,$2,$3,$4,$5,$6,'pendiente',true,$7,$8,$9)
+      `INSERT INTO licencias (empleado_id, tipo, desde, hasta, dias, motivo, estado, justificacion, comprobante_nombre, comprobante_mime, comprobante_data, workflow)
+       VALUES ($1,$2,$3,$4,$5,$6,'pendiente',true,$7,$8,$9,$10)
        RETURNING id, empleado_id, tipo, desde, hasta, dias, motivo, estado, created_at, justificacion, comprobante_nombre, comprobante_mime, (comprobante_data IS NOT NULL) AS tiene_comprobante`,
       [req.user.id, String(tipo).trim(), desde, hasta, dias, motivo || null,
-       comprobanteNombre || 'comprobante', comprobanteMime || 'application/octet-stream', comprobanteData]);
+       comprobanteNombre || 'comprobante', comprobanteMime || 'application/octet-stream', comprobanteData, wfSnap]);
+    if (wfSnap) { try { avisarAprobadorPendiente({ proceso: 'licencias', paso: ordenarPasos(JSON.parse(wfSnap))[0], resumen: `${String(tipo).trim()}: ${desde} a ${hasta}` }); } catch (e) { /* noop */ } }
     res.status(201).json(ins.rows[0]);
   } catch (e) { next(e); }
 });
@@ -262,6 +284,59 @@ router.delete('/:id', async (req, res, next) => {
     }
     await query('DELETE FROM licencias WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// GET /api/licencias/:id/flujo — pasos del workflow, aprobaciones y paso actual.
+router.get('/:id/flujo', async (req, res, next) => {
+  try {
+    const l = (await query('SELECT empleado_id, estado, workflow FROM licencias WHERE id=$1', [req.params.id])).rows[0];
+    if (!l) return res.status(404).json({ error: 'Licencia no encontrada' });
+    const pasos = Array.isArray(l.workflow) ? l.workflow : [];
+    const aprob = (await query('SELECT orden, rol, etiqueta, decision, actor_nom, actor_dni, comentario, at FROM licencia_aprobaciones WHERE licencia_id=$1 ORDER BY at', [req.params.id])).rows;
+    const actual = l.estado === 'pendiente' ? pasoActual(pasos, aprob) : null;
+    let puede = false;
+    if (actual) {
+      const uPuesto = await puestoDe(req.user.id);
+      const enEquipo = req.user.role === 'manager' ? (await equipoEfectivo(req.user, 'licencias')).has(l.empleado_id) : false;
+      puede = puedeResolver(actual, { role: req.user.role, puestoId: uPuesto }, { enEquipo });
+    }
+    res.json({ estado: l.estado, tieneWorkflow: pasos.length > 0, pasos: ordenarPasos(pasos), aprobaciones: aprob, pasoActual: actual, puedeResolver: puede });
+  } catch (e) { next(e); }
+});
+
+// POST /api/licencias/:id/aprobar { decision: 'aprobado'|'rechazado', comentario? }
+router.post('/:id/aprobar', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const decision = b.decision === 'rechazado' ? 'rechazado' : (b.decision === 'aprobado' ? 'aprobado' : null);
+    if (!decision) return res.status(400).json({ error: 'Decisión inválida' });
+    const l = (await query('SELECT empleado_id, estado, workflow FROM licencias WHERE id=$1', [req.params.id])).rows[0];
+    if (!l) return res.status(404).json({ error: 'Licencia no encontrada' });
+    if (l.estado !== 'pendiente') return res.status(409).json({ error: 'La licencia ya fue resuelta' });
+    const pasos = Array.isArray(l.workflow) ? l.workflow : [];
+    if (!pasos.length) return res.status(409).json({ error: 'Esta licencia no tiene flujo configurado; usá la aprobación clásica.' });
+    const aprob = (await query('SELECT orden, decision FROM licencia_aprobaciones WHERE licencia_id=$1', [req.params.id])).rows;
+    const paso = pasoActual(pasos, aprob);
+    if (!paso) return res.status(409).json({ error: 'No hay pasos pendientes' });
+    const uPuesto = await puestoDe(req.user.id);
+    const enEquipo = req.user.role === 'manager' ? (await equipoEfectivo(req.user, 'licencias')).has(l.empleado_id) : false;
+    if (!puedeResolver(paso, { role: req.user.role, puestoId: uPuesto }, { enEquipo }))
+      return res.status(403).json({ error: `Este paso lo resuelve ${paso.etiqueta || (paso.puesto ? 'un puesto específico' : 'el rol ' + paso.rol)}.` });
+
+    await query('INSERT INTO licencia_aprobaciones (licencia_id, orden, rol, etiqueta, decision, actor_dni, actor_nom, comentario) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [req.params.id, paso.orden, paso.rol || null, paso.etiqueta || null, decision, req.user.dni, req.user.nom || req.user.dni, b.comentario || null]);
+
+    const r = resultadoDecision(pasos, aprob, paso, decision);
+    if (r.estado === 'rechazado') {
+      await query("UPDATE licencias SET estado='rechazada', resuelto_por=$1, resuelto_at=now() WHERE id=$2", [req.user.dni, req.params.id]);
+      avisarSolicitante({ empleadoId: l.empleado_id, proceso: 'licencias', estado: 'rechazada' });
+      return res.json({ ok: true, estado: 'rechazada' });
+    }
+    if (r.estado === 'pendiente') { avisarAprobadorPendiente({ proceso: 'licencias', paso: r.siguiente }); return res.json({ ok: true, estado: 'pendiente', siguiente: r.siguiente }); }
+    await query("UPDATE licencias SET estado='aprobada', resuelto_por=$1, resuelto_at=now() WHERE id=$2", [req.user.dni, req.params.id]);
+    avisarSolicitante({ empleadoId: l.empleado_id, proceso: 'licencias', estado: 'aprobada' });
+    res.json({ ok: true, estado: 'aprobada' });
   } catch (e) { next(e); }
 });
 

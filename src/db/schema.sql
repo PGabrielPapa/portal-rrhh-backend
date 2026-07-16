@@ -1533,3 +1533,337 @@ CREATE TABLE IF NOT EXISTS campos_adicionales (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (entidad, clave)
 );
+
+-- Bandas salariales (compensaciones): una banda por puesto, con mínimo, punto
+-- medio y máximo. Permite calcular el compa-ratio (sueldo / punto medio) y
+-- detectar remuneraciones por debajo o por encima de la banda.
+CREATE TABLE IF NOT EXISTS bandas_salariales (
+  id         SERIAL PRIMARY KEY,
+  puesto_id  INTEGER NOT NULL REFERENCES puestos(id) ON DELETE CASCADE,
+  minimo     NUMERIC(14,2) NOT NULL DEFAULT 0,
+  medio      NUMERIC(14,2) NOT NULL DEFAULT 0,
+  maximo     NUMERIC(14,2) NOT NULL DEFAULT 0,
+  moneda     TEXT NOT NULL DEFAULT 'ARS',
+  nota       TEXT,
+  activo     BOOLEAN NOT NULL DEFAULT true,
+  updated_by TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (puesto_id)
+);
+
+-- ── Reclutamiento avanzado: origen y evaluación por criterios del candidato ──
+ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS origen TEXT;                      -- referido | portal | linkedin | consultora | otro
+ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS puntaje NUMERIC(5,2);            -- puntaje ponderado (0-100), calculado
+ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS evaluacion JSONB NOT NULL DEFAULT '[]'::jsonb;  -- [{criterio,peso,puntaje}]
+
+-- ── LMS: módulos/lecciones de cada curso, itinerarios y progreso ──
+CREATE TABLE IF NOT EXISTS curso_modulos (
+  id         SERIAL PRIMARY KEY,
+  curso_id   INTEGER NOT NULL REFERENCES cursos(id) ON DELETE CASCADE,
+  orden      INTEGER NOT NULL DEFAULT 0,
+  titulo     TEXT NOT NULL,
+  tipo       TEXT NOT NULL DEFAULT 'lectura',   -- lectura | video | quiz | tarea
+  url        TEXT,
+  contenido  TEXT,
+  activo     BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_curso_modulos_curso ON curso_modulos(curso_id);
+
+CREATE TABLE IF NOT EXISTS itinerarios (
+  id         SERIAL PRIMARY KEY,
+  nombre     TEXT NOT NULL,
+  descripcion TEXT,
+  activo     BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS itinerario_cursos (
+  itinerario_id INTEGER NOT NULL REFERENCES itinerarios(id) ON DELETE CASCADE,
+  curso_id      INTEGER NOT NULL REFERENCES cursos(id) ON DELETE CASCADE,
+  orden         INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (itinerario_id, curso_id)
+);
+CREATE TABLE IF NOT EXISTS formacion_progreso (
+  inscripcion_id INTEGER NOT NULL REFERENCES formacion_inscripciones(id) ON DELETE CASCADE,
+  modulo_id      INTEGER NOT NULL REFERENCES curso_modulos(id) ON DELETE CASCADE,
+  completado     BOOLEAN NOT NULL DEFAULT false,
+  fecha          TIMESTAMPTZ,
+  PRIMARY KEY (inscripcion_id, modulo_id)
+);
+
+-- ── OKRs (objetivos y resultados clave) ──
+CREATE TABLE IF NOT EXISTS okrs (
+  id          SERIAL PRIMARY KEY,
+  ambito      TEXT NOT NULL DEFAULT 'empleado',  -- empresa | equipo | empleado
+  empleado_id INTEGER REFERENCES empleados(id) ON DELETE CASCADE,
+  titulo      TEXT NOT NULL,
+  periodo     TEXT,                              -- p. ej. 2026-Q3
+  estado      TEXT NOT NULL DEFAULT 'activo',    -- activo | cerrado
+  created_by  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS okr_resultados (
+  id          SERIAL PRIMARY KEY,
+  okr_id      INTEGER NOT NULL REFERENCES okrs(id) ON DELETE CASCADE,
+  descripcion TEXT NOT NULL,
+  valor_inicial NUMERIC(14,2) NOT NULL DEFAULT 0,
+  valor_actual  NUMERIC(14,2) NOT NULL DEFAULT 0,
+  valor_objetivo NUMERIC(14,2) NOT NULL DEFAULT 100,
+  unidad      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_okr_resultados_okr ON okr_resultados(okr_id);
+
+-- ── Feedback 360 ──
+CREATE TABLE IF NOT EXISTS feedback_solicitudes (
+  id          SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,  -- evaluado
+  periodo     TEXT,
+  estado      TEXT NOT NULL DEFAULT 'abierta',   -- abierta | cerrada
+  competencias JSONB NOT NULL DEFAULT '[]'::jsonb, -- lista de competencias a evaluar
+  created_by  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS feedback_respuestas (
+  id           SERIAL PRIMARY KEY,
+  solicitud_id INTEGER NOT NULL REFERENCES feedback_solicitudes(id) ON DELETE CASCADE,
+  evaluador    TEXT,                              -- nombre o identificación del evaluador
+  relacion     TEXT NOT NULL DEFAULT 'par',       -- jefe | par | reporte | auto
+  respuestas   JSONB NOT NULL DEFAULT '[]'::jsonb, -- [{competencia,puntaje,comentario}]
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_resp_sol ON feedback_respuestas(solicitud_id);
+
+-- ── Comunicación interna: comunicados (muro) con acuse y reconocimientos entre pares ──
+CREATE TABLE IF NOT EXISTS comunicados (
+  id         SERIAL PRIMARY KEY,
+  titulo     TEXT NOT NULL,
+  cuerpo     TEXT NOT NULL DEFAULT '',
+  autor_dni  TEXT,
+  fijado     BOOLEAN NOT NULL DEFAULT false,
+  activo     BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS comunicado_lecturas (
+  comunicado_id INTEGER NOT NULL REFERENCES comunicados(id) ON DELETE CASCADE,
+  empleado_id   INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (comunicado_id, empleado_id)
+);
+CREATE TABLE IF NOT EXISTS reconocimientos (
+  id            SERIAL PRIMARY KEY,
+  de_empleado_id  INTEGER REFERENCES empleados(id) ON DELETE SET NULL,
+  para_empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  valor         TEXT,                            -- p. ej. "Trabajo en equipo", "Compromiso"
+  mensaje       TEXT NOT NULL DEFAULT '',
+  publico       BOOLEAN NOT NULL DEFAULT true,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_reconocimientos_para ON reconocimientos(para_empleado_id);
+
+-- Encuestas: tipo de encuesta (clima | pulso | enps) para pulsos recurrentes y eNPS.
+ALTER TABLE encuestas ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'clima';
+
+-- ── Fichaje web (self check-in) — AISLADO del pipeline Pro-Soft (fichadas_periodo). ──
+-- No alimenta ni pisa las fichadas importadas del reloj; es un registro independiente.
+CREATE TABLE IF NOT EXISTS fichadas_web (
+  id          SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  tipo        TEXT NOT NULL DEFAULT 'entrada',  -- entrada | salida
+  lat         NUMERIC(9,6),
+  lng         NUMERIC(9,6),
+  precision_m NUMERIC(8,1),
+  origen      TEXT NOT NULL DEFAULT 'web'
+);
+CREATE INDEX IF NOT EXISTS idx_fichadas_web_emp ON fichadas_web(empleado_id, ts);
+
+-- ── Firma digital de documentos: RR.HH. distribuye documentos (contratos, políticas)
+--    y el empleado los firma (acuse). Distinto del recibo (que ya tiene su propio acuse). ──
+CREATE TABLE IF NOT EXISTS documentos_firma (
+  id          SERIAL PRIMARY KEY,
+  titulo      TEXT NOT NULL,
+  descripcion TEXT NOT NULL DEFAULT '',
+  url         TEXT,
+  created_by  TEXT,
+  activo      BOOLEAN NOT NULL DEFAULT true,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS documento_destinatarios (
+  documento_id INTEGER NOT NULL REFERENCES documentos_firma(id) ON DELETE CASCADE,
+  empleado_id  INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  firmado_at   TIMESTAMPTZ,
+  firma_nombre TEXT,
+  firma_ip     TEXT,
+  PRIMARY KEY (documento_id, empleado_id)
+);
+CREATE INDEX IF NOT EXISTS idx_doc_dest_emp ON documento_destinatarios(empleado_id);
+
+-- Feedback 360: evaluadores invitados a responder una solicitud (para autogestión del empleado).
+CREATE TABLE IF NOT EXISTS feedback_invitados (
+  id           SERIAL PRIMARY KEY,
+  solicitud_id INTEGER NOT NULL REFERENCES feedback_solicitudes(id) ON DELETE CASCADE,
+  empleado_id  INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  relacion     TEXT NOT NULL DEFAULT 'par',
+  respondido_at TIMESTAMPTZ,
+  UNIQUE (solicitud_id, empleado_id)
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_inv_emp ON feedback_invitados(empleado_id);
+
+-- ── SICORE/SIRE (retenciones de Ganancias 4ª): diseño de registro versionado + log ──
+CREATE TABLE IF NOT EXISTS sicore_diseno (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1,
+  modo TEXT NOT NULL DEFAULT 'SICORE',      -- SICORE | SIRE
+  descripcion TEXT,
+  url_arca TEXT,
+  actualizado_por TEXT,
+  actualizado_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT sicore_unica CHECK (id = 1)
+);
+CREATE TABLE IF NOT EXISTS sicore_generaciones (
+  id SERIAL PRIMARY KEY, version_diseno INTEGER NOT NULL, modo TEXT, anio INTEGER, mes INTEGER,
+  empresa TEXT, cantidad INTEGER, created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sicore_gen ON sicore_generaciones(anio, mes, created_at DESC);
+
+-- ── Matriz de antigüedad para fijar el básico (por convenio/categoría o global) ──
+CREATE TABLE IF NOT EXISTS matriz_antiguedad (
+  id        SERIAL PRIMARY KEY,
+  nombre    TEXT NOT NULL,
+  convenio  TEXT,                                  -- código de convenio (vacío = cualquiera)
+  categoria TEXT,                                  -- categoría (vacío = cualquiera)
+  tramos    JSONB NOT NULL DEFAULT '[]'::jsonb,    -- [{hastaAnios, basico}]  (ordenado; último = tope)
+  activo    BOOLEAN NOT NULL DEFAULT true,
+  updated_by TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ── Modalidades de contratación configurables (indeterminado, plazo fijo, eventual,
+--    pasantía, práctica profesionalizante, etc.) ──
+CREATE TABLE IF NOT EXISTS modalidades_contratacion (
+  id            SERIAL PRIMARY KEY,
+  nombre        TEXT NOT NULL,
+  cod_afip      TEXT,                              -- código de modalidad de contratación (F.931/SICOSS)
+  periodo_prueba BOOLEAN NOT NULL DEFAULT true,    -- ¿aplica período de prueba?
+  indemnizacion BOOLEAN NOT NULL DEFAULT true,     -- ¿genera indemnización por antigüedad al cese?
+  sac           BOOLEAN NOT NULL DEFAULT true,     -- ¿genera SAC?
+  nota          TEXT,
+  activo        BOOLEAN NOT NULL DEFAULT true,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ── Diccionario de competencias (catálogo central para desempeño / 360) ──
+CREATE TABLE IF NOT EXISTS competencias (
+  id         SERIAL PRIMARY KEY,
+  nombre     TEXT NOT NULL,
+  categoria  TEXT,                                 -- p. ej. Liderazgo, Técnica, Actitudinal
+  descripcion TEXT,
+  niveles    JSONB NOT NULL DEFAULT '[]'::jsonb,   -- [{nivel, descripcion}]
+  activo     BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ── Estructura organizativa: árbol de unidades (dirección/gerencia/área/sector) ──
+CREATE TABLE IF NOT EXISTS unidades_org (
+  id            SERIAL PRIMARY KEY,
+  nombre        TEXT NOT NULL,
+  tipo          TEXT NOT NULL DEFAULT 'area',      -- direccion | gerencia | area | sector | otro
+  padre_id      INTEGER REFERENCES unidades_org(id) ON DELETE SET NULL,
+  responsable_id INTEGER REFERENCES empleados(id) ON DELETE SET NULL,
+  empresa       TEXT,
+  activo        BOOLEAN NOT NULL DEFAULT true,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- el legajo se asigna a una unidad vía empleados.data.unidadId (sin columna nueva).
+
+-- ── Gestión de posiciones / vacantes (headcount planning) ──
+CREATE TABLE IF NOT EXISTS posiciones (
+  id            SERIAL PRIMARY KEY,
+  nombre        TEXT NOT NULL,
+  puesto_id     INTEGER REFERENCES puestos(id) ON DELETE SET NULL,
+  unidad_id     INTEGER REFERENCES unidades_org(id) ON DELETE SET NULL,
+  empresa       TEXT,
+  dotacion      INTEGER NOT NULL DEFAULT 1,        -- dotación planificada
+  estado        TEXT NOT NULL DEFAULT 'abierta',   -- abierta | congelada | cerrada
+  nota          TEXT,
+  activo        BOOLEAN NOT NULL DEFAULT true,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ── Motor de workflows configurable: definición de flujos de aprobación por proceso ──
+CREATE TABLE IF NOT EXISTS workflows (
+  id         SERIAL PRIMARY KEY,
+  proceso    TEXT NOT NULL,                        -- licencias | adelantos | vacaciones | ... 
+  nombre     TEXT NOT NULL,
+  pasos      JSONB NOT NULL DEFAULT '[]'::jsonb,   -- [{orden, rol|puesto, etiqueta, obligatorio}]
+  activo     BOOLEAN NOT NULL DEFAULT true,
+  updated_by TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ── Aplicación efectiva de workflows: aprobación multi-nivel de adelantos ──
+ALTER TABLE anticipos ADD COLUMN IF NOT EXISTS workflow JSONB;   -- snapshot de pasos al crear (null = flujo clásico)
+CREATE TABLE IF NOT EXISTS anticipo_aprobaciones (
+  id          SERIAL PRIMARY KEY,
+  anticipo_id INTEGER NOT NULL REFERENCES anticipos(id) ON DELETE CASCADE,
+  orden       INTEGER NOT NULL,
+  rol         TEXT,
+  etiqueta    TEXT,
+  decision    TEXT NOT NULL,               -- aprobado | rechazado
+  actor_dni   TEXT,
+  actor_nom   TEXT,
+  comentario  TEXT,
+  at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_anticipo_aprob ON anticipo_aprobaciones(anticipo_id, orden);
+
+-- ── Aplicación efectiva de workflows: aprobación multi-nivel de licencias ──
+ALTER TABLE licencias ADD COLUMN IF NOT EXISTS workflow JSONB;   -- snapshot de pasos al crear (null = flujo clásico)
+CREATE TABLE IF NOT EXISTS licencia_aprobaciones (
+  id          SERIAL PRIMARY KEY,
+  licencia_id INTEGER NOT NULL REFERENCES licencias(id) ON DELETE CASCADE,
+  orden       INTEGER NOT NULL,
+  rol         TEXT,
+  etiqueta    TEXT,
+  decision    TEXT NOT NULL,               -- aprobado | rechazado
+  actor_dni   TEXT,
+  actor_nom   TEXT,
+  comentario  TEXT,
+  at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_licencia_aprob ON licencia_aprobaciones(licencia_id, orden);
+
+-- ── Aplicación efectiva de workflows: aprobación multi-nivel de sanciones ──
+ALTER TABLE sanciones ADD COLUMN IF NOT EXISTS workflow JSONB;   -- snapshot de pasos al solicitar (null = flujo clásico)
+CREATE TABLE IF NOT EXISTS sancion_aprobaciones (
+  id          SERIAL PRIMARY KEY,
+  sancion_id  INTEGER NOT NULL REFERENCES sanciones(id) ON DELETE CASCADE,
+  orden       INTEGER NOT NULL,
+  rol         TEXT,
+  etiqueta    TEXT,
+  decision    TEXT NOT NULL,               -- aprobado | rechazado
+  actor_dni   TEXT,
+  actor_nom   TEXT,
+  comentario  TEXT,
+  at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sancion_aprob ON sancion_aprobaciones(sancion_id, orden);
+
+-- ── Adopción/verificación de la escala salarial unificada (histórico por período) ──
+-- Registra qué versión de la escala unificada quedó adoptada en cada corrida/mes,
+-- manteniendo el histórico (una fila por período+versión). No pisa las versiones.
+CREATE TABLE IF NOT EXISTS escala_adopciones (
+  id                SERIAL PRIMARY KEY,
+  periodo           TEXT NOT NULL,               -- YYYY-MM
+  escala_version_id INTEGER REFERENCES escala_versiones(id) ON DELETE SET NULL,
+  vigencia          DATE,
+  mes_label         TEXT,
+  resumen           JSONB,                       -- { nCategorias, convenios:[...], porcentaje, origen }
+  adoptado_por      TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (periodo, escala_version_id)
+);
+CREATE INDEX IF NOT EXISTS idx_escala_adop ON escala_adopciones(periodo, created_at DESC);

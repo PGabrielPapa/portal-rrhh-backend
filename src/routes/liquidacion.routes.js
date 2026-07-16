@@ -10,6 +10,8 @@ import { embargosOpts } from './embargos.routes.js';
 import { novedadesOpts } from './novedades.routes.js';
 import { esSinGoce } from '../lib/licenciasReglas.js';
 import { valoresLegalesVigentes, verificarValoresLegales, autoActualizarValores } from './valoresLegales.routes.js';
+import { autoActualizarEscalas } from '../lib/escalasAuto.js';
+import { logAudit } from '../lib/audit.js';
 import { paramsParaFecha } from './parametros.routes.js';
 import { cargarAux } from './valoresAux.routes.js';
 const router = Router();
@@ -81,6 +83,46 @@ function convBasicoDe(m, emp) {
   for (const t of m[code]) { if (String(t.titulo) === titulo) { for (const c of (t.cats || [])) { if (String(c.cat) === cat) return Number(c.basico) || 0; } } }
   return 0;
 }
+
+// Matriz de antigüedad: fija el básico por tramos de años. 0 si no hay matriz aplicable.
+async function matrizAntigActivas() {
+  try { const { rows } = await query('SELECT convenio, categoria, tramos FROM matriz_antiguedad WHERE activo=true'); return rows; }
+  catch { return []; }
+}
+function aniosAntigMat(ingreso, anio, mes) {
+  if (!ingreso) return 0;
+  const ing = new Date(String(ingreso).slice(0, 10) + 'T12:00:00'); if (isNaN(ing)) return 0;
+  const ref = new Date(Number(anio), Number(mes) - 1, 1);
+  let a = ref.getFullYear() - ing.getFullYear();
+  if (ref.getMonth() < ing.getMonth()) a--;
+  return Math.max(0, a);
+}
+function basicoAntiguedadDe(matrices, emp, anio, mes) {
+  const conv = String(emp?.data?.cod_convenio || '').toUpperCase();
+  const cat = String(emp?.data?.categoria_convenio || '');
+  const aplica = (matrices || []).filter((m) => (!m.convenio || String(m.convenio).toUpperCase() === conv) && (!m.categoria || m.categoria === cat));
+  if (!aplica.length) return 0;
+  // Preferir la más específica (con convenio y/o categoría definidos).
+  aplica.sort((a, b) => ((b.convenio ? 1 : 0) + (b.categoria ? 1 : 0)) - ((a.convenio ? 1 : 0) + (a.categoria ? 1 : 0)));
+  const tramos = (aplica[0].tramos || []).slice().sort((a, b) => Number(a.hastaAnios) - Number(b.hastaAnios));
+  if (!tramos.length) return 0;
+  const anios = aniosAntigMat(emp?.ingreso, anio, mes);
+  for (const t of tramos) if (anios <= Number(t.hastaAnios)) return Number(t.basico) || 0;
+  return Number(tramos[tramos.length - 1].basico) || 0;   // supera el último tramo → tope
+}
+
+// Modalidad de contratación del empleado: ¿genera indemnización por antigüedad? (default sí)
+async function indemnizaAplicaDe(emp) {
+  const id = emp?.data?.modalidadId;
+  if (!id) return true;
+  try { const r = (await query('SELECT indemnizacion FROM modalidades_contratacion WHERE id=$1', [id])).rows[0]; return r ? r.indemnizacion !== false : true; }
+  catch { return true; }
+}
+async function modalidadesMap() {
+  try { const { rows } = await query('SELECT id, indemnizacion FROM modalidades_contratacion'); const m = {}; for (const r of rows) m[r.id] = r.indemnizacion !== false; return m; }
+  catch { return {}; }
+}
+function indemnizaAplicaMap(m, emp) { const id = emp?.data?.modalidadId; return id ? (m[id] !== false) : true; }
 
 async function getEmp(id) {
   const er = await query(`SELECT e.*, em.nombre AS empresa_nombre, em.cuit AS empresa_cuit, em.data AS empresa_data FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE e.id=$1`, [id]);
@@ -268,6 +310,7 @@ function filtrarConceptosFormula(lista, emp, anio, mes) {
 // ¿El concepto por fórmula aplica en este tipo de liquidación?
 // Por defecto (sin tipos declarados) solo mensual/quincena, como hasta ahora.
 function aplicaEnTipo(c, tipo) {
+  if (Array.isArray(c.motivosEgreso) && c.motivosEgreso.length) return tipo === 'final'; // conceptos por motivo de egreso: solo en la final
   const t = Array.isArray(c.tipos) && c.tipos.length ? c.tipos : ['mensual', 'quincenal_1', 'quincenal_2'];
   return t.includes(tipo);
 }
@@ -277,7 +320,7 @@ function aplicaEnTipo(c, tipo) {
 async function conceptosFormulaActivos() {
   try {
     const { rows } = await query("SELECT codigo, descripcion, formula, data FROM conceptos WHERE activo=true AND formula IS NOT NULL AND formula <> '' AND (data->>'esFormula')='true' ORDER BY COALESCE(NULLIF(data->>'orden','')::int, 0), codigo");
-    return rows.map((r) => { const d = r.data || {}; return { codigo: r.codigo, descripcion: r.descripcion, formula: r.formula, base: d.base || 'rem', condicion: d.condicion || null, alcanceEmpresa: d.alcanceEmpresa || '', alcanceConvenio: d.alcanceConvenio || '', alcanceSindicato: d.alcanceSindicato || '', desde: d.desde || '', hasta: d.hasta || '', soloLegajos: Array.isArray(d.soloLegajos) ? d.soloLegajos.map(Number).filter(Boolean) : [], tipos: Array.isArray(d.tipos) ? d.tipos : [] }; });
+    return rows.map((r) => { const d = r.data || {}; return { codigo: r.codigo, descripcion: r.descripcion, formula: r.formula, base: d.base || 'rem', condicion: d.condicion || null, alcanceEmpresa: d.alcanceEmpresa || '', alcanceConvenio: d.alcanceConvenio || '', alcanceSindicato: d.alcanceSindicato || '', desde: d.desde || '', hasta: d.hasta || '', soloLegajos: Array.isArray(d.soloLegajos) ? d.soloLegajos.map(Number).filter(Boolean) : [], tipos: Array.isArray(d.tipos) ? d.tipos : [], cantidad: d.cantidad || null, valorUnit: d.valorUnit || null, unidad: d.unidad || null, motivosEgreso: Array.isArray(d.motivosEgreso) ? d.motivosEgreso : [] }; });
   } catch { return []; }
 }
 async function cuotasAnticiposDe(empleadoId, anio, mes) {
@@ -313,6 +356,7 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
     const convBasico = convBasicoDe(await convMap(), emp);
+    const basicoAnt = basicoAntiguedadDe(await matrizAntigActivas(), emp, anio, mes);
     const emb = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
     const nov = _esMensual(t) ? { ...await novedadesOpts(empleadoId, anio, mes), ...await licenciasSinGoceOpts(empleadoId, anio, mes) } : {};
     const varProm = (t === 'vacaciones' || _esMensual(t)) ? await promedioVariablesMes(empleadoId, anio, mes) : {};
@@ -320,7 +364,7 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const ajPend = _esMensual(t) ? await ajustePendiente(empleadoId, anio, mes) : 0;
     const cForm = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, t));
     const auxF = cForm.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
-    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ...nov, ...varProm, ...emb, ...extra }));
+    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ...nov, ...varProm, ...emb, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -341,6 +385,7 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
     const convBasico = convBasicoDe(await convMap(), emp);
+    const basicoAnt = basicoAntiguedadDe(await matrizAntigActivas(), emp, anio, mes);
     const emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
     const nov = _esMensual(tipo) ? { ...await novedadesOpts(empleadoId, anio, mes), ...await licenciasSinGoceOpts(empleadoId, anio, mes) } : {};
     const varProm = (tipo === 'vacaciones' || _esMensual(tipo)) ? await promedioVariablesMes(empleadoId, anio, mes) : {};
@@ -349,7 +394,7 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     if (_esMensual(tipo)) { await resetAjusteNeto(empleadoId, anio, mes); ajPend = await ajustePendiente(empleadoId, anio, mes); }
     const cFormG = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo));
     const auxFG = cFormG.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
-    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...nov, ...varProm, ...emb, ...extra });
+    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...nov, ...varProm, ...emb, ...extra });
     let correlativoG = 1;
     if (tipo === 'complementaria' || tipo === 'extra_norem') { const _mg = await query('SELECT COALESCE(MAX(correlativo),0) AS n FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes=$3 AND tipo=$4', [empleadoId, Number(anio), Number(mes), tipo]); correlativoG = Number(_mg.rows[0].n) + 1; }
     const client = await pool.connect();
@@ -460,6 +505,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
 
     if (empresa && await periodoCerrado(empresa, anio, mes)) return res.status(409).json({ error: `El período ${String(mes).padStart(2,'0')}/${anio} de ${empresa} está cerrado` });
     try { await autoActualizarValores(); } catch (e) { /* no bloquea la corrida */ }
+    try { await autoActualizarEscalas(anio, mes, { adoptadoPor: req.user.dni }); } catch (e) { /* no bloquea la corrida */ }
     const verVal = await verificarValoresLegales(anio, mes);
     if (verVal.faltan) return res.status(409).json({ error: verVal.mensaje });
     const params = await getParamsConValores(anio, mes);
@@ -468,6 +514,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const sMap = await sindMap();
     const cMap = await convMap();
     const cFormTodos = await conceptosFormulaActivos();
+    const mAntTodos = await matrizAntigActivas();
     const auxCorrida = cFormTodos.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const client = await pool.connect();
     let corridaId, totalNeto = 0, cant = 0;
@@ -498,7 +545,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
           if (!(montoEmp > 0)) continue; // sin base (p. ej. % sobre bruto 0): no se genera recibo
           _extra = { montoAjuste: montoEmp, conceptoAjuste: (conceptoExtra && String(conceptoExtra).trim()) || (tipo === 'extra_norem' ? 'Extraordinaria no remunerativa' : 'Extraordinaria remunerativa') };
         }
-        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
+        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
         totalNeto += recibo.totales.neto; cant++;
         const rr = await db(
           `INSERT INTO recibos (empleado_id, anio, mes, tipo, correlativo, neto, data, created_by, corrida_id, publicado)
@@ -514,6 +561,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       await db('UPDATE corridas SET total_neto=$1, cant=$2 WHERE id=$3', [totalNeto, cant, corridaId]);
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+    logAudit(req.user.dni, 'liquidacion.corrida', `${tipo} ${String(mes).padStart(2,'0')}/${anio}${empresa ? (' · ' + empresa) : ''} — ${cant} recibo(s), neto ${totalNeto}`, `corrida:${corridaId}`);
     res.status(201).json({ ok: true, id: corridaId, cant, totalNeto, avisoValores: verVal.desactualizado ? verVal.mensaje : null });
   } catch (e) { next(e); }
 });
@@ -555,6 +603,7 @@ router.post('/corrida/:id/aprobar', requireRole('rrhh', 'admin'), async (req, re
   try {
     const r = await query(`UPDATE corridas SET estado='aprobada', aprobado_por=$1, aprobado_at=now() WHERE id=$2 AND estado='borrador' RETURNING id`, [req.user.dni, req.params.id]);
     if (!r.rowCount) return res.status(409).json({ error: 'La corrida no existe o no está en borrador' });
+    logAudit(req.user.dni, 'liquidacion.aprobar', `Corrida ${req.params.id} aprobada`, `corrida:${req.params.id}`);
     res.json({ ok: true, estado: 'aprobada' });
   } catch (e) { next(e); }
 });
@@ -567,7 +616,33 @@ router.post('/corrida/:id/publicar', requireRole('rrhh', 'admin'), async (req, r
     if (c.estado !== 'aprobada') return res.status(409).json({ error: 'La corrida debe estar aprobada antes de publicar' });
     await query('UPDATE recibos SET publicado=true WHERE corrida_id=$1', [req.params.id]);
     await query(`UPDATE corridas SET estado='publicada', publicado_at=now() WHERE id=$1`, [req.params.id]);
-    res.json({ ok: true, estado: 'publicada' });
+    // Aviso a cada empleado: mensaje interno (siempre) por su recibo publicado.
+    let avisados = 0;
+    try {
+      const ins = await query(
+        `INSERT INTO mensajes (empleado_id, titulo, cuerpo, autor, direccion)
+           SELECT r.empleado_id,
+                  'Recibo disponible ' || lpad(r.mes::text,2,'0') || '/' || r.anio,
+                  'Tu recibo de haberes de ' || lpad(r.mes::text,2,'0') || '/' || r.anio || ' ya está disponible en "Mis recibos".',
+                  'sistema', 'a_empleado'
+             FROM recibos r WHERE r.corrida_id=$1 AND r.empleado_id IS NOT NULL`, [req.params.id]);
+      avisados = ins.rowCount || 0;
+    } catch (e) { console.error('[publicar] aviso interno:', e.message); }
+    // Aviso por mail (best-effort, si SMTP está configurado): notificación breve, sin bloquear la respuesta.
+    (async () => {
+      try {
+        const { enviarMail, mailConfigurado } = await import('../lib/mailer.js');
+        if (!mailConfigurado()) return;
+        const dest = (await query(
+          `SELECT r.anio, r.mes, e.email FROM recibos r JOIN empleados e ON e.id=r.empleado_id
+            WHERE r.corrida_id=$1 AND e.email IS NOT NULL AND e.email<>''`, [req.params.id])).rows;
+        for (const d of dest) {
+          try { await enviarMail({ to: d.email, subject: `Recibo de haberes ${String(d.mes).padStart(2,'0')}/${d.anio} disponible`, text: 'Tu recibo ya está disponible en el Portal de RR.HH. → Mis recibos.', html: '<p>Tu recibo de haberes ya está disponible en el Portal de RR.HH. &rarr; <b>Mis recibos</b>.</p>' }); } catch { /* noop */ }
+        }
+      } catch (e) { console.error('[publicar] aviso mail:', e.message); }
+    })();
+    logAudit(req.user.dni, 'liquidacion.publicar', `Corrida ${req.params.id} publicada — ${avisados} empleado(s) avisado(s)`, `corrida:${req.params.id}`);
+    res.json({ ok: true, estado: 'publicada', avisados });
   } catch (e) { next(e); }
 });
 
@@ -833,8 +908,9 @@ router.post('/simular-final', requireRole('rrhh', 'admin'), async (req, res, nex
     if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
     const params = await getParams();
     const fe = new Date(fechaEgreso + 'T12:00:00');
+    const indAplica = await indemnizaAplicaDe(emp);
     const escenarios = SUPUESTOS_BAJA.map((sup) => {
-      const rec = calcularRecibo(emp, params, { anio: fe.getFullYear(), mes: fe.getMonth() + 1, tipo: 'final', fechaEgreso, motivoBaja: sup.v, diasVacNoGozadas: Number(diasVacNoGozadas) || 0 });
+      const rec = calcularRecibo(emp, params, { anio: fe.getFullYear(), mes: fe.getMonth() + 1, tipo: 'final', fechaEgreso, motivoBaja: sup.v, diasVacNoGozadas: Number(diasVacNoGozadas) || 0, indemnizaAplica: indAplica });
       return { supuesto: sup.v, label: sup.lbl, neto: rec.totales.neto, totalHaberes: rec.totales.totalHaberes, haberes: rec.haberes, detalle: rec.detalle };
     });
     res.json({ empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, ingreso: emp.ingreso }, escenarios });
@@ -853,6 +929,7 @@ router.post('/simular-final-masivo', requireRole('rrhh', 'admin'), async (req, r
     if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
     const emps = (await query(`SELECT e.*, em.nombre AS empresa_nombre FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')} ORDER BY em.nombre, e.leg_num`, pr)).rows;
     const params = await getParams();
+    const modMap = await modalidadesMap();
     const fe = new Date(fechaEgreso + 'T12:00:00');
     const dvac = Number(diasVacNoGozadas) || 0;
     const r2n = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -861,7 +938,7 @@ router.post('/simular-final-masivo', requireRole('rrhh', 'admin'), async (req, r
       const base = { legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} };
       const netos = {};
       for (const sp of lista) {
-        const rec = calcularRecibo(base, params, { anio: fe.getFullYear(), mes: fe.getMonth() + 1, tipo: 'final', fechaEgreso, motivoBaja: sp.v, diasVacNoGozadas: dvac });
+        const rec = calcularRecibo(base, params, { anio: fe.getFullYear(), mes: fe.getMonth() + 1, tipo: 'final', fechaEgreso, motivoBaja: sp.v, diasVacNoGozadas: dvac, indemnizaAplica: indemnizaAplicaMap(modMap, base) });
         netos[sp.v] = r2n(rec.totales.neto); tot[sp.v] += rec.totales.neto;
       }
       return { legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, ingreso: r.ingreso, netos };

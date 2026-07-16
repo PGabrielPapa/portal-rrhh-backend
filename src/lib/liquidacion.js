@@ -170,7 +170,8 @@ export function calcularRecibo(emp, params, opts) {
   const esFC = !d.cod_sindicato || String(d.cod_sindicato).toUpperCase() === 'FC';
 
   // Si el empleado tiene categoría de convenio que define básico, ese tiene prioridad (luego básico cargado / escala).
-  const basico = num(opts?.convBasico) || num(d.basico) || num(d.sueldo) || num(emp.bruto);
+  // Prioridad del básico: matriz de antigüedad > convenio/categoría > básico del legajo > sueldo > bruto.
+  const basico = num(opts?.basicoPorAntiguedad) || num(opts?.convBasico) || num(d.basico) || num(d.sueldo) || num(emp.bruto);
   const anios = aniosAntiguedad(emp.ingreso, anio, mes);
   const sind = opts?.sind || null;
   const pctAntig = (sind && Number(sind.pctAntigPorAnio) > 0) ? Number(sind.pctAntigPorAnio) : num(p.pctAntiguedadPorAnio);
@@ -248,10 +249,13 @@ export function calcularRecibo(emp, params, opts) {
     detalle.sacProporcional = { monto: round2(sacP.monto), dias: sacP.dias };
     // Indemnizaciones según el supuesto legal de la baja.
     const motivo = opts?.motivoBaja || 'renuncia';
+    // Modalidad de contratación: si no genera indemnización por antigüedad (eventual, pasantía,
+    // práctica profesionalizante), no se calcula la indemnización del Art. 245/247/etc.
+    const _indemnAplica = opts?.indemnizaAplica !== false;
     const aniosAntServicio = (parseDate(fEg) - parseDate(emp.ingreso)) / (365.25 * 86400000);
     const finContratoMedia = motivo === 'fin_contrato' && aniosAntServicio > 1; // Art. 250: plazo fijo cumplido > 1 año
-    const conIndemPlena = ['sin_causa', 'despido_indirecto', 'incapacidad_absoluta'].includes(motivo); // Art. 245 / 246 / 212 4°
-    const conMediaIndem = ['fallecimiento', 'fuerza_mayor', 'incapacidad_parcial'].includes(motivo) || finContratoMedia; // Art. 248 / 247 / 212 1°-3° / 250: 50%
+    const conIndemPlena = _indemnAplica && ['sin_causa', 'despido_indirecto', 'incapacidad_absoluta'].includes(motivo); // Art. 245 / 246 / 212 4°
+    const conMediaIndem = _indemnAplica && (['fallecimiento', 'fuerza_mayor', 'incapacidad_parcial'].includes(motivo) || finContratoMedia); // Art. 248 / 247 / 212 1°-3° / 250: 50%
     const debePreaviso = ['sin_causa', 'fuerza_mayor', 'despido_indirecto'].includes(motivo);
     let pagarPreaviso = true;
     if (opts?.pagarPreaviso === true || opts?.pagarPreaviso === false) pagarPreaviso = opts.pagarPreaviso;
@@ -387,15 +391,28 @@ export function calcularRecibo(emp, params, opts) {
     _ctxF.__aux = opts?.auxFormulas || {};
     const _macrosF = opts?.macrosFormulas || null;
     detalle.conceptosFormula = [];
+    const _motivoEg = opts?.motivoBaja || null;
     for (const cf of _conceptosForm) {
       try {
+        // Conceptos asociados a motivos de egreso: solo se aplican en la liquidación final y si el motivo coincide.
+        if (Array.isArray(cf.motivosEgreso) && cf.motivosEgreso.length && (tipo !== 'final' || !cf.motivosEgreso.includes(_motivoEg))) continue;
         if (cf.condicion && String(cf.condicion).trim() && evaluarFormula(cf.condicion, _ctxF, { macros: _macrosF }) === 0) continue;
-        const val = round2(evaluarFormula(cf.formula, _ctxF, { macros: _macrosF }));
+        // Fórmula en 3 partes (Tango): importe = cantidad × valor unitario. Si no, un único importe.
+        let val, cantidad = null, valorUnit = null;
+        if (cf.cantidad && String(cf.cantidad).trim() && cf.valorUnit && String(cf.valorUnit).trim()) {
+          cantidad = round2(evaluarFormula(cf.cantidad, _ctxF, { macros: _macrosF }));
+          valorUnit = round2(evaluarFormula(cf.valorUnit, _ctxF, { macros: _macrosF }));
+          val = round2(cantidad * valorUnit);
+        } else {
+          val = round2(evaluarFormula(cf.formula, _ctxF, { macros: _macrosF }));
+        }
         if (!val) continue;
         const base = cf.base || 'rem';
-        if (base === 'descuento') _formDesc.push({ concepto: cf.descripcion || cf.codigo || 'Concepto', monto: val });
-        else haberes.push({ concepto: cf.descripcion || cf.codigo || 'Concepto', tipo: base === 'norem' ? 'norem' : base === 'exento' ? 'exento' : 'rem', monto: val });
-        detalle.conceptosFormula.push({ codigo: cf.codigo || null, descripcion: cf.descripcion || null, base, monto: val });
+        const item = { concepto: cf.descripcion || cf.codigo || 'Concepto', monto: val };
+        if (cantidad != null) { item.cantidad = cantidad; item.valor = valorUnit; if (cf.unidad) item.unidad = cf.unidad; }
+        if (base === 'descuento') _formDesc.push(item);
+        else haberes.push({ ...item, tipo: base === 'norem' ? 'norem' : base === 'exento' ? 'exento' : 'rem' });
+        detalle.conceptosFormula.push({ codigo: cf.codigo || null, descripcion: cf.descripcion || null, base, monto: val, cantidad, valor: valorUnit, unidad: cf.unidad || null });
       } catch (e) { /* fórmula inválida: se omite, no frena la liquidación */ }
     }
   }

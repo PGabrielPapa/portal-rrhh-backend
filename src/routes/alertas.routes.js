@@ -76,6 +76,24 @@ async function construirAlertas(dias) {
       }
     } catch (e) { console.warn('[alertas] valores legales:', e.message); }
 
+    // Paritarias/escalas sin actualizar: si la última versión vigente de un convenio (o de la
+    // escala unificada) tiene una antigüedad mayor al umbral, probablemente haya una paritaria nueva.
+    try {
+      const MESES = Math.max(1, Number(process.env.PARITARIA_MESES || 6));
+      const mesesDesde = (fechaISO) => { if (!fechaISO) return 999; const f = new Date(fechaISO); const n = new Date(); return (n.getFullYear() - f.getFullYear()) * 12 + (n.getMonth() - f.getMonth()); };
+      const hoyISO = new Date().toISOString().slice(0, 10);
+      const convs = (await query(
+        `SELECT DISTINCT ON (cv.codigo) cv.codigo, cv.vigencia, c.nombre
+           FROM convenio_versiones cv LEFT JOIN convenios c ON c.codigo = cv.codigo
+          ORDER BY cv.codigo, cv.vigencia DESC, cv.created_at DESC`)).rows;
+      for (const cv of convs) {
+        const m = mesesDesde(cv.vigencia);
+        if (m >= MESES) out.push({ tipo: 'Paritaria', titulo: `${cv.nombre || cv.codigo} — escala sin actualizar`, detalle: `Última vigencia ${cv.vigencia} (hace ${m} meses). Verificá si hay una paritaria nueva.`, fecha: cv.vigencia, dias: -m * 30, severidad: m >= (MESES + 3) ? 'urgente' : 'proximo' });
+      }
+      const esc = (await query('SELECT vigencia, mes_label FROM escala_versiones WHERE vigencia <= $1 ORDER BY vigencia DESC, created_at DESC LIMIT 1', [hoyISO])).rows[0];
+      if (esc) { const m = mesesDesde(esc.vigencia); if (m >= MESES) out.push({ tipo: 'Escala unificada', titulo: 'Escala unificada sin actualizar', detalle: `Vigente desde ${esc.mes_label || esc.vigencia} (hace ${m} meses).`, fecha: esc.vigencia, dias: -m * 30, severidad: m >= (MESES + 3) ? 'urgente' : 'proximo' }); }
+    } catch (e) { console.warn('[alertas] paritarias:', e.message); }
+
     out.sort((a, b) => a.dias - b.dias);
     const resumen = { total: out.length, vencidos: out.filter((x) => x.severidad === 'vencido').length, urgentes: out.filter((x) => x.severidad === 'urgente').length };
     return { horizonte, resumen, alertas: out };
