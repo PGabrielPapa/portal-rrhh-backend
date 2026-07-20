@@ -120,6 +120,27 @@ test('SAC = 50% de la mejor remuneración del semestre', () => {
   assert.equal(sac, 600000);
 });
 
+// Decreto 612/2026: la base de los APORTES/CONTRIBUCIONES SOLIDARIAS (no afiliados) es la
+// remuneración mensual, habitual y permanente — expuesta a las fórmulas como `baseSolidaria`.
+// La cuota de AFILIACIÓN sindical NO se ve afectada por el decreto (sigue su base habitual).
+const empSind = { ...empBase, data: { cod_sindicato: 'SC' } };  // empleado con sindicato (no FC)
+
+test('Decreto 612/2026: aporte solidario (baseSolidaria) excluye horas extra', () => {
+  const cf = [{ codigo: 'SOL', descripcion: 'Aporte solidario (no afiliados)', formula: 'baseSolidaria * 0.02', tipo: 'aporte' }];
+  const sinHE = calcularRecibo(empSind, P, { anio: 2026, mes: 6, tipo: 'mensual', calcularGanancias: false, conceptosFormula: cf });
+  const conHE = calcularRecibo(empSind, P, { anio: 2026, mes: 6, tipo: 'mensual', calcularGanancias: false, conceptosFormula: cf, horasExtra50: 20 });
+  assert.ok(conHE.totales.totalRemun > sinHE.totales.totalRemun, 'las HE deben aumentar el total remunerativo');
+  const solSin = (sinHE.detalle.conceptosFormula.find((c) => c.codigo === 'SOL') || {}).monto;
+  const solCon = (conHE.detalle.conceptosFormula.find((c) => c.codigo === 'SOL') || {}).monto;
+  assert.equal(round2(solCon), round2(solSin), 'el aporte solidario no debe cambiar por las HE');
+});
+
+test('Decreto 612/2026: la cuota de AFILIACIÓN sindical NO se altera (base habitual)', () => {
+  const conHE = calcularRecibo(empSind, P, { anio: 2026, mes: 6, tipo: 'mensual', calcularGanancias: false, horasExtra50: 20 });
+  const base = conHE.totales.totalRemun;  // base habitual (con tope SIPA) usada por la afiliación
+  assert.equal(round2(aporte(conHE, /Cuota sindical/)), round2(base * 0.02), 'la afiliación sigue su base habitual');
+});
+
 console.log('\nSiRADIG (topes RG 4003)');
 test('honorarios médicos: 40% y tope 5% de ganancia neta', () => {
   const med = [{ tipo: '7', periodos: [{ mesDesde: 1, mesHasta: 6, montoMensual: 1000000 }] }];

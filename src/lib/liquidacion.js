@@ -386,6 +386,10 @@ export function calcularRecibo(emp, params, opts) {
     const _cx = {}; for (const [k, v] of Object.entries(d)) if (k.startsWith('cx_')) _cx[k] = num(v);
     const _ctxF = { basico, sueldo: num(d.sueldo), complemento, norem: noRem, noRem, antiguedad_monto: antiguedad,
       bruto: num(emp.bruto), anios, remun: regularRemun, dias: num(opts?.diasTrabajados) || 30,
+      // Decreto 612/2026: base de aportes/contribuciones SOLIDARIAS = remuneración mensual,
+      // habitual y permanente (= regularRemun; excluye HE, SAC, vacaciones, gratificaciones, no rem.).
+      // Configurá los conceptos solidarios (p. ej. aporte 'no afiliados') sobre esta variable.
+      baseSolidaria: regularRemun, baseSindical: regularRemun,
       he50: num(opts?.horasExtra50), he100: num(opts?.horasExtra100), ausencias: num(opts?.ausenciasInjustificadas),
       feriados: num(opts?.feriadosTrabajados), smvm: num(p.smvmMensual || p.smvm), topeSipa: num(p.topeAportesMax), ..._cx };
     _ctxF.__aux = opts?.auxFormulas || {};
