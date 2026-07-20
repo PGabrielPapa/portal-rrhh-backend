@@ -1867,3 +1867,21 @@ CREATE TABLE IF NOT EXISTS escala_adopciones (
   UNIQUE (periodo, escala_version_id)
 );
 CREATE INDEX IF NOT EXISTS idx_escala_adop ON escala_adopciones(periodo, created_at DESC);
+
+-- Histórico de afiliación sindical del empleado. Un empleado se considera AFILIADO
+-- en una fecha si tiene un período con desde <= fecha y (hasta IS NULL o hasta >= fecha).
+-- Se usa para decidir los aportes/contribuciones SOLIDARIAS (Decreto 612/2026): alcanzan
+-- a los NO afiliados dentro de convenio. Los fuera de convenio no generan aporte solidario.
+CREATE TABLE IF NOT EXISTS afiliaciones_sindicales (
+  id            SERIAL PRIMARY KEY,
+  empleado_id   INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  cod_sindicato TEXT,
+  desde         DATE NOT NULL,
+  hasta         DATE,                              -- NULL = afiliación vigente (abierta)
+  observacion   TEXT,
+  data          JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by    TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_afiliaciones_emp ON afiliaciones_sindicales(empleado_id, desde DESC);

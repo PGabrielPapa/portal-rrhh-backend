@@ -141,6 +141,15 @@ test('Decreto 612/2026: la cuota de AFILIACIÓN sindical NO se altera (base habi
   assert.equal(round2(aporte(conHE, /Cuota sindical/)), round2(base * 0.02), 'la afiliación sigue su base habitual');
 });
 
+test('Solidario con condición noAfiliado: aplica a no afiliado y no a afiliado', () => {
+  const cf = [{ codigo: 'SOL', descripcion: 'Aporte solidario (no afiliados)', condicion: 'noAfiliado', formula: 'baseSolidaria * 0.02', tipo: 'aporte' }];
+  const noAfi = calcularRecibo({ ...empSind, data: { cod_sindicato: 'SC', afiliadoSindical: 'no' } }, P, { anio: 2026, mes: 6, tipo: 'mensual', calcularGanancias: false, conceptosFormula: cf });
+  const afi = calcularRecibo({ ...empSind, data: { cod_sindicato: 'SC', afiliadoSindical: 'si' } }, P, { anio: 2026, mes: 6, tipo: 'mensual', calcularGanancias: false, conceptosFormula: cf });
+  const m = (r) => (r.detalle.conceptosFormula.find((c) => c.codigo === 'SOL') || { monto: 0 }).monto;
+  assert.ok(m(noAfi) > 0, 'el no afiliado debe pagar el aporte solidario');
+  assert.equal(m(afi), 0, 'el afiliado NO debe pagar el aporte solidario');
+});
+
 console.log('\nSiRADIG (topes RG 4003)');
 test('honorarios médicos: 40% y tope 5% de ganancia neta', () => {
   const med = [{ tipo: '7', periodos: [{ mesDesde: 1, mesHasta: 6, montoMensual: 1000000 }] }];

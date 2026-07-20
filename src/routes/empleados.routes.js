@@ -630,4 +630,59 @@ router.post('/masivo', requireRole('rrhh', 'admin'), async (req, res, next) => {
   } catch (e) { await client.query('ROLLBACK'); next(e); } finally { client.release(); }
 });
 
+
+// ── Histórico de afiliación sindical (Decreto 612/2026: base para aportes solidarios) ──
+router.get('/:id/afiliaciones', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT id, empleado_id, cod_sindicato, desde, hasta, observacion, created_by, created_at
+         FROM afiliaciones_sindicales WHERE empleado_id = $1 ORDER BY desde DESC, id DESC`, [req.params.id]);
+    const hoy = new Date().toISOString().slice(0, 10);
+    const afiliadoHoy = rows.some((r) => String(r.desde) <= hoy && (r.hasta == null || String(r.hasta) >= hoy));
+    res.json({ afiliadoHoy, items: rows });
+  } catch (e) { next(e); }
+});
+
+router.post('/:id/afiliaciones', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { desde, hasta, cod_sindicato, observacion } = req.body || {};
+    if (!desde) return res.status(400).json({ error: 'La fecha de alta (desde) es obligatoria.' });
+    if (hasta && String(hasta) < String(desde)) return res.status(400).json({ error: 'La fecha de baja no puede ser anterior al alta.' });
+    const emp = (await query('SELECT id FROM empleados WHERE id=$1', [req.params.id])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'Empleado no encontrado.' });
+    const { rows } = await query(
+      `INSERT INTO afiliaciones_sindicales (empleado_id, cod_sindicato, desde, hasta, observacion, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [req.params.id, (cod_sindicato || null), desde, (hasta || null), (observacion || null), req.user.dni]);
+    logAudit(req.user.dni, 'afiliacion_alta', `alta afiliación desde ${desde}${hasta ? ' hasta ' + hasta : ''}`, String(req.params.id));
+    res.status(201).json({ ok: true, id: rows[0].id });
+  } catch (e) { next(e); }
+});
+
+router.patch('/afiliaciones/:aid', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const cur = (await query('SELECT * FROM afiliaciones_sindicales WHERE id=$1', [req.params.aid])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'Afiliación no encontrada.' });
+    const desde = req.body?.desde ?? cur.desde;
+    const hasta = ('hasta' in (req.body || {})) ? (req.body.hasta || null) : cur.hasta;
+    const cod = ('cod_sindicato' in (req.body || {})) ? (req.body.cod_sindicato || null) : cur.cod_sindicato;
+    const obs = ('observacion' in (req.body || {})) ? (req.body.observacion || null) : cur.observacion;
+    if (hasta && String(hasta) < String(desde)) return res.status(400).json({ error: 'La fecha de baja no puede ser anterior al alta.' });
+    await query('UPDATE afiliaciones_sindicales SET desde=$1, hasta=$2, cod_sindicato=$3, observacion=$4, updated_at=now() WHERE id=$5',
+      [desde, hasta, cod, obs, req.params.aid]);
+    logAudit(req.user.dni, 'afiliacion_edita', `edita afiliación #${cur.id} (desde ${desde}${hasta ? ', hasta ' + hasta : ''})`, String(cur.empleado_id));
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/afiliaciones/:aid', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const cur = (await query('SELECT empleado_id FROM afiliaciones_sindicales WHERE id=$1', [req.params.aid])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'Afiliación no encontrada.' });
+    await query('DELETE FROM afiliaciones_sindicales WHERE id=$1', [req.params.aid]);
+    logAudit(req.user.dni, 'afiliacion_baja', `elimina afiliación #${req.params.aid}`, String(cur.empleado_id));
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 export default router;

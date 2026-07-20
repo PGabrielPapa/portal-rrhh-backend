@@ -384,12 +384,20 @@ export function calcularRecibo(emp, params, opts) {
   const _conceptosForm = Array.isArray(opts?.conceptosFormula) ? opts.conceptosFormula : [];
   if (_conceptosForm.length) {
     const _cx = {}; for (const [k, v] of Object.entries(d)) if (k.startsWith('cx_')) _cx[k] = num(v);
+    // Afiliación resuelta por histórico (opts.afiliadoSindical, calculada por la ruta según la
+    // fecha del período). Fallback al flag guardado en el legajo por compatibilidad.
+    const _afiliadoSind = (opts?.afiliadoSindical === true || opts?.afiliadoSindical === 'si')
+      || (opts?.afiliadoSindical == null && (d.afiliadoSindical === true || d.afiliadoSindical === 'si' || d.afiliadoSindical === 'sí'));
     const _ctxF = { basico, sueldo: num(d.sueldo), complemento, norem: noRem, noRem, antiguedad_monto: antiguedad,
       bruto: num(emp.bruto), anios, remun: regularRemun, dias: num(opts?.diasTrabajados) || 30,
       // Decreto 612/2026: base de aportes/contribuciones SOLIDARIAS = remuneración mensual,
       // habitual y permanente (= regularRemun; excluye HE, SAC, vacaciones, gratificaciones, no rem.).
       // Configurá los conceptos solidarios (p. ej. aporte 'no afiliados') sobre esta variable.
       baseSolidaria: regularRemun, baseSindical: regularRemun,
+      // Afiliación sindical. afiliado=1 si tiene afiliación vigente a la fecha del período;
+      // noAfiliado=1 solo si está dentro de convenio y NO afiliado (los aportes solidarios
+      // alcanzan a los no afiliados). Usá noAfiliado en la condición del concepto solidario.
+      afiliado: _afiliadoSind ? 1 : 0, noAfiliado: (!esFC && !_afiliadoSind) ? 1 : 0,
       he50: num(opts?.horasExtra50), he100: num(opts?.horasExtra100), ausencias: num(opts?.ausenciasInjustificadas),
       feriados: num(opts?.feriadosTrabajados), smvm: num(p.smvmMensual || p.smvm), topeSipa: num(p.topeAportesMax), ..._cx };
     _ctxF.__aux = opts?.auxFormulas || {};

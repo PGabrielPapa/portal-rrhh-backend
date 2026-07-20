@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query, pool } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { calcularRecibo, factorNoHabitual, TIPOS_SAC, TIPOS_NO_HABITUAL_B } from '../lib/liquidacion.js';
+import { afiliadoEnFecha, afiliadosEnFecha } from '../lib/afiliaciones.js';
 import { ganTablaParaFecha, autoActualizarGanancias } from '../lib/gananciasParams.js';
 import { periodoCerrado } from './cierres.routes.js';
 import { idsEquipoDe } from '../lib/equipo.js';
@@ -364,7 +365,8 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const ajPend = _esMensual(t) ? await ajustePendiente(empleadoId, anio, mes) : 0;
     const cForm = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, t));
     const auxF = cForm.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
-    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ...nov, ...varProm, ...emb, ...extra }));
+    const _afil = await afiliadoEnFecha(empleadoId, anio, mes);
+    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, afiliadoSindical: _afil, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ...nov, ...varProm, ...emb, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -394,7 +396,8 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     if (_esMensual(tipo)) { await resetAjusteNeto(empleadoId, anio, mes); ajPend = await ajustePendiente(empleadoId, anio, mes); }
     const cFormG = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo));
     const auxFG = cFormG.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
-    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...nov, ...varProm, ...emb, ...extra });
+    const _afilG = await afiliadoEnFecha(empleadoId, anio, mes);
+    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilG, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...nov, ...varProm, ...emb, ...extra });
     let correlativoG = 1;
     if (tipo === 'complementaria' || tipo === 'extra_norem') { const _mg = await query('SELECT COALESCE(MAX(correlativo),0) AS n FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes=$3 AND tipo=$4', [empleadoId, Number(anio), Number(mes), tipo]); correlativoG = Number(_mg.rows[0].n) + 1; }
     const client = await pool.connect();
@@ -527,6 +530,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       );
       corridaId = cr.rows[0].id;
       const empMap = await getEmpsMap(emps.map((e) => e.id));
+      const _afilSet = await afiliadosEnFecha(emps.map((e) => e.id), anio, mes);
       for (const { id } of emps) {
         const emp = empMap.get(id);
         if (!emp) continue;
@@ -545,7 +549,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
           if (!(montoEmp > 0)) continue; // sin base (p. ej. % sobre bruto 0): no se genera recibo
           _extra = { montoAjuste: montoEmp, conceptoAjuste: (conceptoExtra && String(conceptoExtra).trim()) || (tipo === 'extra_norem' ? 'Extraordinaria no remunerativa' : 'Extraordinaria remunerativa') };
         }
-        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
+        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilSet.has(id), fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
         totalNeto += recibo.totales.neto; cant++;
         const rr = await db(
           `INSERT INTO recibos (empleado_id, anio, mes, tipo, correlativo, neto, data, created_by, corrida_id, publicado)
