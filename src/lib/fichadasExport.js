@@ -22,7 +22,7 @@ export function nombreMes(mes) {
 function estadoLabel(e) {
   switch (e) {
     case 'ok': return 'OK';
-    case 'no-laborable': return 'Finde/feriado (a favor)';
+    case 'no-laborable': return 'Sáb/dom/feriado (extra)';
     case 'revisar': return 'Revisar (marca incompleta)';
     case 'licencia': return 'Licencia';
     case 'licencia-portal': return 'Licencia (portal)';
@@ -40,10 +40,17 @@ function novedadTexto(x) {
   return '';
 }
 
+// "Extra/saldo del día": el saldo a favor del día (neto − jornada). En hábiles
+// puede compensar déficit de otros días (o ir al banco si es ≤30 min); en
+// sábado es 50 % y en domingo/feriado 100 %. El total de extra del mes se
+// calcula a nivel período (banco compensatorio corrido).
 function extraTexto(x) {
-  const e = (x.extra50Min || 0) + (x.extra100Min || 0);
-  if (e <= 0) return '';
-  return minToHhmm(e) + (x.extraComputa ? '' : ' (<30m)');
+  const s = typeof x.saldoMin === 'number' ? x.saldoMin : null;
+  if (s == null || s <= 0) return '';
+  const t = x.tipoDia;
+  if (t === 'domingo' || t === 'feriado') return minToHhmm(s) + ' (100%)';
+  if (t === 'sabado') return minToHhmm(s) + ' (50%)';
+  return minToHhmm(s) + (s <= 30 ? ' (banco)' : ' (50%)');
 }
 
 // Totales del período (espeja el objeto `tot` de la consulta).
@@ -266,7 +273,15 @@ export function buildPdf(periodo, rows) {
       doc.x = left;
       doc.fontSize(10).fillColor('#111').text(`${r.nom}  ·  Legajo ${r.leg_num}  ·  ${r.empresa}`, left, doc.y);
       doc.x = left;
-      doc.fontSize(7.5).fillColor(MUT).text(`Banco del mes: ${minToHhmm(r.data?.bancoNetoMin || 0)} · Días trabajados: ${r.data?.diasTrabajados || 0}`, left, doc.y);
+      {
+        const dd = r.data || {};
+        const e50 = dd.horasExtra50Min || 0, e100 = dd.horasExtra100Min || 0;
+        const banco = dd.bancoNetoMin || 0;
+        const bancoTxt = banco < 0 ? `A recuperar: ${minToHhmm(-banco)}` : `Banco de horas: ${minToHhmm(banco)}`;
+        doc.fontSize(7.5).fillColor(MUT).text(
+          `Extra a liquidar: ${minToHhmm(e50 + e100)} (50%: ${minToHhmm(e50)} · 100%: ${minToHhmm(e100)}) · ${bancoTxt} · Días trabajados: ${dd.diasTrabajados || 0}`,
+          left, doc.y);
+      }
       doc.moveDown(0.2);
       drawTable(doc, left, pageW, detCols, dias.map((x) => ({
         fecha: x.fecha, dia: x.dia || '',

@@ -87,6 +87,48 @@ function* rangoFechas(desde, hasta) {
 }
 
 /**
+ * Cálculo de extras y banco de horas — NETEO DE TODO EL PERÍODO.
+ * Clasifica cada día y luego compensa el tiempo en contra contra el a favor:
+ *   • Día HÁBIL con excedente > 30 min → hora extra 50 % (bruta).
+ *   • Día HÁBIL con excedente 1..30 min → banco chico (a favor, no se paga).
+ *   • Día HÁBIL con déficit → tiempo en contra.
+ *   • SÁBADO trabajado → todo el neto es hora extra 50 % (no compensa la semana).
+ *   • DOMINGO / FERIADO trabajado → todo el neto es hora extra 100 % (no compensa).
+ * El TIEMPO EN CONTRA descuenta PRIMERO el banco chico y después la hora extra
+ * de días hábiles (el sábado/domingo/feriado NO se tocan). Solo si sobra déficit
+ * queda "a recuperar". Así nunca hay hora extra y tiempo a recuperar a la vez.
+ * Los días sin marca / licencia / a revisar (saldoMin null) no computan.
+ * Resultado: a.horasExtra50Min, a.horasExtra100Min, a.bancoNetoMin (+ a favor /
+ * − a recuperar) y a.aRecuperarMin.
+ */
+function calcularTotales(a) {
+  let extra50wd = 0, extra50sab = 0, extra100 = 0, bancoChico = 0, deficit = 0;
+  for (const d of a.dias) {
+    if (typeof d.saldoMin !== 'number') continue;      // sin-marca / licencia / revisar
+    const s = d.saldoMin;
+    if (d.tipoDia === 'sabado') { if (s > 0) extra50sab += s; continue; }
+    if (d.tipoDia === 'domingo' || d.tipoDia === 'feriado') { if (s > 0) extra100 += s; continue; }
+    // Día hábil.
+    if (s > UMBRAL_EXTRA_MIN) extra50wd += s;           // más de 30 min → extra (bruta)
+    else if (s > 0) bancoChico += s;                   // 30 min o menos → banco chico
+    else if (s < 0) deficit += -s;                     // tiempo en contra
+  }
+  // Compensar el tiempo en contra: primero con el banco chico, después con la
+  // extra de días hábiles. El finde/feriado no compensa.
+  let rem = deficit;
+  const usaBanco = Math.min(rem, bancoChico); bancoChico -= usaBanco; rem -= usaBanco;
+  const usaExtra = Math.min(rem, extra50wd); extra50wd -= usaExtra; rem -= usaExtra;
+  const aRecuperar = rem;                              // déficit que no se pudo compensar
+  const bancoFavor = aRecuperar > 0 ? 0 : bancoChico;  // a favor que sobró (excluyente con a recuperar)
+
+  a.horasExtra50Min = extra50wd + extra50sab;
+  a.horasExtra100Min = extra100;
+  a.horasExtraDescartadaMin = 0;
+  a.bancoNetoMin = bancoFavor - aRecuperar;            // + a favor / − a recuperar
+  a.aRecuperarMin = aRecuperar;
+}
+
+/**
  * @param {Array<Array>} rows  Filas de la hoja (la primera es el encabezado).
  * @param {{desde?:string, hasta?:string, feriados?:Set<string>|string[]}} [opts]
  * @returns {{ porLegajo, filas, legajos, columnasFaltantes }}
@@ -141,27 +183,32 @@ export function parseExtendido(rows, opts = {}) {
     }
     const a = acc[leg];
 
-    const hsNetas = hhmmToMin(cell(r, 'hsNetas'));
     const fecha = fechaISO(cell(r, 'fecha'));
-    // Día laborable = lunes a viernes y NO feriado. Ya NO se usa "Hs Normal" del
-    // reloj (viene 0 para varios empleados y marcaba todo como finde/feriado).
-    const esLaborable = esDiaHabil(fecha) && !feriados.has(fecha);
+    // Tipo de día: hábil (lun-vie sin feriado), sábado, domingo o feriado.
+    const w = diaSemanaISO(fecha); // 0=Dom … 6=Sáb
+    const tipoDia = feriados.has(fecha) ? 'feriado' : (w === 0 ? 'domingo' : (w === 6 ? 'sabado' : 'habil'));
+    const esLaborable = tipoDia === 'habil';
     // Jornada esperada según el TURNO (9 hs por defecto; 10 hs en "Hormigon/
     // mamposteria Leloir"). En finde/feriado → 0.
     const jornadaTurno = JORNADA_POR_TURNO[normTurno(cell(r, 'turno'))] || JORNADA_DEFAULT;
     const jornadaDia = esLaborable ? jornadaTurno : 0;
     a.jornadaTurnoMin = jornadaTurno; // se usa para completar días faltantes
-    const e50 = hhmmToMin(cell(r, 'extra50'));
-    const e100 = hhmmToMin(cell(r, 'extra100'));
-    const tarde = hhmmToMin(cell(r, 'tarde'));
+    // Neto trabajado calculado desde las MARCAS (E1/S1..E4/S4), descontando salidas
+    // intermedias. NO se usa "Hs Netas" de Pro-Soft (no aplica nuestra lógica).
+    let netMin = 0, marcaSuelta = false, algunaMarca = false;
+    for (const [ek, sk] of [['e1', 's1'], ['e2', 's2'], ['e3', 's3'], ['e4', 's4']]) {
+      const em = norm(cell(r, ek)), sm = norm(cell(r, sk));
+      if (em || sm) algunaMarca = true;
+      if (em && sm) { const d = hhmmToMin(sm) - hhmmToMin(em); if (d > 0) netMin += d; }
+      else if (em || sm) marcaSuelta = true; // marca impar → incompleta
+    }
+    const tarde = hhmmToMin(cell(r, 'tarde')); // informativo (no entra al cálculo)
     const comentario = norm(cell(r, 'comentarios')); // Vacaciones, Licencia, ART, Estudio, Home Office...
     const esHomeOffice = /home\s*office/i.test(comentario);  // trabajo remoto: cuenta como día trabajado
     const esLicencia = comentario.length > 0 && !esHomeOffice;
-    const algunaMarca = ['e1', 's1', 'e2', 's2', 'e3', 's3', 'e4', 's4'].some((k) => norm(cell(r, k)));
-    const marcaCompleta = !esLicencia && !!norm(cell(r, 'e1')) && !!norm(cell(r, 's1')) && hsNetas > 0;
+    const marcaCompleta = !esLicencia && netMin > 0 && !marcaSuelta;
     const entrada = norm(cell(r, 'e1')) || norm(cell(r, 'e2')) || norm(cell(r, 'e3')) || norm(cell(r, 'e4'));
     const salida = norm(cell(r, 's4')) || norm(cell(r, 's3')) || norm(cell(r, 's2')) || norm(cell(r, 's1'));
-    const extraDiaMin = e50 + e100;
 
     if (esHomeOffice) {
       // Home Office: día de trabajo real (todavía no fichan desde casa, se carga
@@ -170,7 +217,7 @@ export function parseExtendido(rows, opts = {}) {
       a.hsNetasMin += jornadaDia;
       a.dias.push({
         fecha, dia: norm(cell(r, 'dia')), entrada: '', salida: '',
-        hsNetasMin: jornadaDia, hsNormalMin: jornadaDia, saldoMin: 0,
+        hsNetasMin: jornadaDia, hsNormalMin: jornadaDia, saldoMin: 0, tipoDia,
         extra50Min: 0, extra100Min: 0, extraComputa: false, tardeMin: 0,
         completa: false, estado: 'home-office', comentario,
       });
@@ -181,41 +228,33 @@ export function parseExtendido(rows, opts = {}) {
       a.licenciasProsoft[comentario] = (a.licenciasProsoft[comentario] || 0) + 1;
       a.dias.push({
         fecha, dia: norm(cell(r, 'dia')), entrada: '', salida: '',
-        hsNetasMin: 0, hsNormalMin: jornadaDia, saldoMin: null,
+        hsNetasMin: 0, hsNormalMin: jornadaDia, saldoMin: null, tipoDia,
         extra50Min: 0, extra100Min: 0, extraComputa: false, tardeMin: 0,
         completa: false, estado: 'licencia', comentario,
       });
     } else {
-      if (hsNetas > 0) { a.diasTrabajados++; a.hsNetasMin += hsNetas; }
-      // Banco de horas (saldo): solo días con marca completa. Jornada 9h en
-      // laborables; finde/feriado (jornadaDia=0) → todo lo trabajado a favor.
-      if (marcaCompleta) a.bancoNetoMin += (hsNetas - jornadaDia);
-
-      // Hora extra por DÍA: se paga si el extra del día superó el umbral (30 min).
-      if (extraDiaMin >= UMBRAL_EXTRA_MIN) { a.horasExtra50Min += e50; a.horasExtra100Min += e100; }
-      else if (extraDiaMin > 0) a.horasExtraDescartadaMin += extraDiaMin;
-
-      if (tarde > 0) {
-        if (marcaCompleta) { a.tardanzasMin += tarde; a.diasTardanza++; }
-        else a.diasARevisar.push({ fecha, motivo: 'Tardanza con marca incompleta', tarde: minToHhmm(tarde) });
-      } else if (algunaMarca && hsNetas <= 0) {
-        a.diasARevisar.push({ fecha, motivo: 'Marca incompleta (sin horas netas)' });
+      if (netMin > 0) { a.diasTrabajados++; a.hsNetasMin += netMin; }
+      if (tarde > 0 && marcaCompleta) { a.tardanzasMin += tarde; a.diasTardanza++; }
+      if (algunaMarca && marcaSuelta && !marcaCompleta) {
+        a.diasARevisar.push({ fecha, motivo: 'Marca incompleta (cantidad impar de fichadas)' });
       }
 
       // Detalle diario: días con actividad, o días laborables sin marca (posible
       // ausencia → la ruta lo cruza con licencias del portal para decidir).
-      const hayActividad = algunaMarca || hsNetas > 0 || tarde > 0;
+      // El saldo (neto − jornada) y las extras/banco se calculan luego en
+      // calcularTotales() con el banco compensatorio corrido.
+      const hayActividad = algunaMarca || netMin > 0;
       if (hayActividad || esLaborable) {
         let estado;
-        if (marcaCompleta && !esLaborable) estado = 'no-laborable';   // sábado/domingo/feriado
+        if (marcaCompleta && !esLaborable) estado = 'no-laborable';   // sábado/domingo/feriado trabajado
         else if (marcaCompleta) estado = 'ok';
         else if (hayActividad) estado = 'revisar';                    // marca incompleta
         else estado = 'sin-marca';                                    // laborable sin marca
         a.dias.push({
           fecha, dia: norm(cell(r, 'dia')), entrada, salida,
-          hsNetasMin: hsNetas, hsNormalMin: jornadaDia,
-          saldoMin: marcaCompleta ? (hsNetas - jornadaDia) : null,
-          extra50Min: e50, extra100Min: e100, extraComputa: extraDiaMin >= UMBRAL_EXTRA_MIN,
+          hsNetasMin: netMin, hsNormalMin: jornadaDia,
+          saldoMin: marcaCompleta ? (netMin - jornadaDia) : null, tipoDia,
+          extra50Min: 0, extra100Min: 0, extraComputa: false,
           tardeMin: tarde, completa: marcaCompleta, estado, comentario: '',
         });
       }
@@ -233,7 +272,7 @@ export function parseExtendido(rows, opts = {}) {
         if (!esDiaHabil(iso) || feriados.has(iso) || existentes.has(iso)) continue;
         a.dias.push({
           fecha: iso, dia: DOW[diaSemanaISO(iso)], entrada: '', salida: '',
-          hsNetasMin: 0, hsNormalMin: jd, saldoMin: null,
+          hsNetasMin: 0, hsNormalMin: jd, saldoMin: null, tipoDia: 'habil',
           extra50Min: 0, extra100Min: 0, extraComputa: false, tardeMin: 0,
           completa: false, estado: 'sin-marca', comentario: '',
         });
@@ -241,6 +280,9 @@ export function parseExtendido(rows, opts = {}) {
       a.dias.sort((x, y) => x.fecha.localeCompare(y.fecha));
     }
   }
+
+  // Cálculo definitivo de extras y banco con el banco compensatorio CORRIDO.
+  for (const a of Object.values(acc)) { a.dias.sort((x, y) => x.fecha.localeCompare(y.fecha)); calcularTotales(a); }
 
   return { porLegajo: acc, filas, legajos: Object.keys(acc).length, columnasFaltantes: faltantes };
 }

@@ -171,15 +171,13 @@ router.get('/gerente', requireRole('manager', 'rrhh', 'admin'), async (req, res,
         const tMin = Number(dd.tardanzasMin || 0);
         if (tMin > 0) { tardanzasCasos++; tardanzasMin += tMin; rankingTarde.push({ nom: r.nom, min: tMin }); }
         const dias = Array.isArray(dd.dias) ? dd.dias : [];
-        let extraBruta = 0, deficit = 0;
         for (const x of dias) {
           const lm = Number(x.tardeMin || 0);
           if (lm > 0) detalleTarde.push({ nom: r.nom, fecha: x.fecha || null, dia: x.dia || null, entrada: x.entrada || null, min: lm });
-          const ss = typeof x.saldoMin === 'number' ? x.saldoMin : null;
-          if (ss == null) continue;
-          if (ss >= 30) extraBruta += ss; else if (ss < 0) deficit += -ss;
         }
-        const ext = Math.max(0, extraBruta - deficit);
+        // Total de horas extra ya calculado por el parser (50 % + 100 %, con el
+        // banco compensatorio corrido).
+        const ext = Number(dd.horasExtra50Min || 0) + Number(dd.horasExtra100Min || 0);
         if (ext > 0) { extraMin += ext; rankingExtra.push({ nom: r.nom, min: ext }); }
       }
       rankingExtra.sort((a, b) => b.min - a.min); rankingExtra = rankingExtra.slice(0, 5);

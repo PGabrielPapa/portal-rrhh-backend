@@ -29,6 +29,7 @@ function vista(a) {
     horasExtraDescartadaMin: a.horasExtraDescartadaMin,
     bancoNeto: minToHhmm(a.bancoNetoMin),
     bancoNetoMin: a.bancoNetoMin,
+    aRecuperarMin: a.aRecuperarMin || (a.bancoNetoMin < 0 ? -a.bancoNetoMin : 0),
     tardanzas: minToHhmm(a.tardanzasMin),
     tardanzasMin: a.tardanzasMin,
     diasTardanza: a.diasTardanza,
@@ -134,7 +135,7 @@ export async function procesarParsed({ parsed, anio, mes, confirmar, origen = 'p
       const data = {
         legajoProsoft: m.legajoProsoft, diasTrabajados: m.diasTrabajados, hsNetasMin: m.hsNetasMin,
         horasExtra50Min: m.horasExtra50Min, horasExtra100Min: m.horasExtra100Min,
-        horasExtraDescartadaMin: m.horasExtraDescartadaMin, bancoNetoMin: m.bancoNetoMin,
+        horasExtraDescartadaMin: m.horasExtraDescartadaMin, bancoNetoMin: m.bancoNetoMin, aRecuperarMin: m.aRecuperarMin,
         tardanzasMin: m.tardanzasMin, diasTardanza: m.diasTardanza, diasARevisar: m.diasARevisar,
         licenciasProsoft: m.licenciasProsoft, diasLicencia: m.diasLicencia,
         diasInjustificados: m.diasInjustificados, diasLicenciaConflicto: m.diasLicenciaConflicto, dias: m.dias,

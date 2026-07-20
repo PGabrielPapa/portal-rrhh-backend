@@ -200,16 +200,22 @@ router.post('/desde-fichadas', requireRole('rrhh', 'admin'), async (req, res, ne
     let creadas = 0, conExtra = 0;
     for (const r of rows) {
       const d = r.data || {};
-      const dias = Array.isArray(d.dias) ? d.dias : [];
-      let extraBruta = 0, deficit = 0;
-      for (const x of dias) { const sMin = typeof x.saldoMin === 'number' ? x.saldoMin : null; if (sMin == null) continue; if (sMin >= 30) extraBruta += sMin; else if (sMin < 0) deficit += -sMin; }
-      const liquidableMin = Math.max(0, extraBruta - deficit);
-      const horas = Math.round((liquidableMin / 60) * 100) / 100;
-      if (horas > 0) {
+      // Extra ya calculado por el parser (banco compensatorio corrido), separado
+      // en 50 % (hábil + sábado) y 100 % (domingo/feriado).
+      const h50 = Math.round(((d.horasExtra50Min || 0) / 60) * 100) / 100;
+      const h100 = Math.round(((d.horasExtra100Min || 0) / 60) * 100) / 100;
+      let algo = false;
+      if (h50 > 0) {
         await query('INSERT INTO novedades (empleado_id, anio, mes, tipo, cantidad, monto, detalle, origen, created_by) VALUES ($1,$2,$3,$4,$5,0,$6,$7,$8)',
-          [r.empleado_id, anio, mes, 'he50', horas, 'Horas extra de fichadas (autorizadas)', 'fichadas', req.user?.email || '']);
-        creadas++; conExtra++;
+          [r.empleado_id, anio, mes, 'he50', h50, 'Horas extra 50% de fichadas (autorizadas)', 'fichadas', req.user?.email || '']);
+        creadas++; algo = true;
       }
+      if (h100 > 0) {
+        await query('INSERT INTO novedades (empleado_id, anio, mes, tipo, cantidad, monto, detalle, origen, created_by) VALUES ($1,$2,$3,$4,$5,0,$6,$7,$8)',
+          [r.empleado_id, anio, mes, 'he100', h100, 'Horas extra 100% de fichadas (autorizadas)', 'fichadas', req.user?.email || '']);
+        creadas++; algo = true;
+      }
+      if (algo) conExtra++;
     }
     res.json({ ok: true, fichadasAutorizadas: rows.length, conExtra, creadas });
   } catch (e) { next(e); }

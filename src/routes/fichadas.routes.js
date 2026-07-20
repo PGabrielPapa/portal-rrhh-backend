@@ -68,6 +68,24 @@ router.get('/importaciones/log', requireRole('rrhh', 'admin'), async (req, res, 
   } catch (e) { next(e); }
 });
 
+// DELETE /api/fichadas/importaciones/todo — limpia TODO el historial de importaciones.
+// Solo borra el registro del historial; NO toca las fichadas ya cargadas.
+router.delete('/importaciones/todo', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM fichadas_importaciones');
+    res.json({ ok: true, borradas: r.rowCount });
+  } catch (e) { next(e); }
+});
+
+// DELETE /api/fichadas/importaciones/:id — borra un registro del historial (solo el log).
+router.delete('/importaciones/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM fichadas_importaciones WHERE id=$1', [Number(req.params.id)]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Importación no encontrada.' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 // GET /api/fichadas/:anio/:mes/export?formato=xlsx|pdf — descarga del período
 // con el MISMO contenido que la consulta (resumen + tabla + detalle diario).
 // (Debe ir ANTES de /:anio/:mes para que matchee la ruta más específica.)
@@ -75,24 +93,32 @@ router.get('/:anio/:mes/export', requireRole('rrhh', 'admin'), async (req, res, 
   try {
     const anio = Number(req.params.anio), mes = Number(req.params.mes);
     const formato = String(req.query.formato || 'xlsx').toLowerCase();
-    const empresa = req.query.empresa ? String(req.query.empresa) : null;
+    // `empresa` y `sucursal` aceptan una o VARIAS opciones separadas por coma (selección múltiple).
+    const empresas = req.query.empresa
+      ? String(req.query.empresa).split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    const sucursales = req.query.sucursal
+      ? String(req.query.sucursal).split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
     if (!anio || !mes || mes < 1 || mes > 12) return res.status(400).json({ error: 'Período inválido.' });
 
     const cond = ['f.anio = $1', 'f.mes = $2'];
     const params = [anio, mes];
-    if (empresa) { params.push(empresa); cond.push(`em.nombre = $${params.length}`); }
+    if (empresas.length) { params.push(empresas); cond.push(`em.nombre = ANY($${params.length}::text[])`); }
+    if (sucursales.length) { params.push(sucursales); cond.push(`(e.data->>'lugar') = ANY($${params.length}::text[])`); }
     const { rows } = await query(
-      `SELECT f.empleado_id, e.leg_num, e.nom, em.nombre AS empresa, f.data
+      `SELECT f.empleado_id, e.leg_num, e.nom, em.nombre AS empresa, (e.data->>'lugar') AS sucursal, f.data
          FROM fichadas_periodo f
          JOIN empleados e ON e.id = f.empleado_id
          JOIN empresas em ON em.id = e.empresa_id
         WHERE ${cond.join(' AND ')}
-        ORDER BY e.nom`,
+        ORDER BY em.nombre, e.nom`,
       params
     );
-    if (!rows.length) return res.status(404).json({ error: `No hay fichadas importadas para ${nombreMes(mes)} ${anio}${empresa ? ` (${empresa})` : ''}.` });
+    const scope = [...empresas, ...sucursales];
+    if (!rows.length) return res.status(404).json({ error: `No hay fichadas importadas para ${nombreMes(mes)} ${anio}${scope.length ? ` (${scope.join(', ')})` : ''}.` });
 
-    const slug = empresa ? '_' + empresa.replace(/[^\w]+/g, '') : '';
+    const slug = scope.length ? '_' + scope.map((e) => e.replace(/[^\w]+/g, '')).join('-') : '';
     const base = `Fichadas_${anio}-${String(mes).padStart(2, '0')}${slug}`;
     if (formato === 'pdf') {
       const buf = await buildPdf({ anio, mes }, rows);
@@ -170,24 +196,19 @@ router.get('/:anio/:mes/liquidables', requireRole('rrhh', 'admin'), async (req, 
     );
     const out = rows.map((r) => {
       const d = r.data || {};
-      // Extra POR DÍA: solo días con saldo a favor ≥ 30 min. Los <30/día no suman
-      // (van a banco de horas). El extra compensa primero el tiempo en contra.
-      const dias = Array.isArray(d.dias) ? d.dias : [];
-      let extraBruta = 0, deficit = 0, bancoChico = 0;
-      for (const x of dias) {
-        const s = typeof x.saldoMin === 'number' ? x.saldoMin : null;
-        if (s == null) continue;
-        if (s >= 30) extraBruta += s;
-        else if (s > 0) bancoChico += s;
-        else if (s < 0) deficit += -s;
-      }
+      // Los totales ya vienen del parser con el banco compensatorio corrido:
+      // extra 50 (hábil >30/día + sábado) + extra 100 (domingo/feriado). El banco
+      // (+ a favor / − a recuperar) es el saldo compensatorio que quedó.
+      const banco = d.bancoNetoMin || 0;
       return {
         empleado_id: r.empleado_id, leg_num: r.leg_num, nom: r.nom, empresa: r.empresa,
         tardanzas_min: d.tardanzasMin || 0,
-        resultado_mes_min: d.bancoNetoMin || 0,
-        extra_liquidable_min: Math.max(0, extraBruta - deficit),
-        tiempo_a_recuperar_min: Math.max(0, deficit - extraBruta),
-        banco_horas_min: bancoChico,
+        resultado_mes_min: banco,
+        extra_liquidable_min: (d.horasExtra50Min || 0) + (d.horasExtra100Min || 0),
+        extra_50_min: d.horasExtra50Min || 0,
+        extra_100_min: d.horasExtra100Min || 0,
+        tiempo_a_recuperar_min: banco < 0 ? -banco : (d.aRecuperarMin || 0),
+        banco_horas_min: banco > 0 ? banco : 0,
         ger_por: r.ger_por, ger_at: r.ger_at,
       };
     });
@@ -195,18 +216,12 @@ router.get('/:anio/:mes/liquidables', requireRole('rrhh', 'admin'), async (req, 
   } catch (e) { next(e); }
 });
 
-// Extra neto liquidable del período (mismo criterio que /liquidables y calcLiquidable del front):
-// solo días con saldo a favor >= 30 min suman; el extra compensa primero el tiempo en contra.
+// Extra neto liquidable del período (mismo criterio que /liquidables y calcLiquidable
+// del front): total de horas extra ya calculadas por el parser (50 % + 100 %). El
+// tiempo en contra ya fue compensado dentro del banco corrido.
 function extraNetoMin(data) {
   const d = data || {};
-  const dias = Array.isArray(d.dias) ? d.dias : [];
-  let extraBruta = 0, deficit = 0;
-  for (const x of dias) {
-    const ss = typeof x.saldoMin === 'number' ? x.saldoMin : null;
-    if (ss == null) continue;
-    if (ss >= 30) extraBruta += ss; else if (ss < 0) deficit += -ss;
-  }
-  return Math.max(0, extraBruta - deficit);
+  return (d.horasExtra50Min || 0) + (d.horasExtra100Min || 0);
 }
 
 // PATCH /api/fichadas/:id/aprobacion  { etapa:'rrhh'|'gerencia', accion:'aprobar'|'rechazar', obs? }
@@ -357,11 +372,13 @@ router.get('/:anio/:mes', requireRole('rrhh', 'admin'), async (req, res, next) =
         ORDER BY e.nom`,
       [anio, mes]
     );
-    // Anota el responsable directo (a dónde va el 2º control) y limpia edata del payload.
+    // Anota el responsable directo (a dónde va el 2º control) y la sucursal
+    // (lugar de trabajo), y limpia edata del payload.
     const out = rows.map((r) => {
       const responsable = responsableDe({ nom: r.nom, cat: r.cat, empresa: r.empresa, data: r.edata });
+      const sucursal = r.edata?.lugar || '';
       const { edata, ...rest } = r;
-      return { ...rest, responsable };
+      return { ...rest, responsable, sucursal };
     });
     res.json(out);
   } catch (e) { next(e); }
