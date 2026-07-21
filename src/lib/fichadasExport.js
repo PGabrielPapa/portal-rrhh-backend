@@ -44,6 +44,12 @@ function novedadTexto(x) {
 // puede compensar déficit de otros días (o ir al banco si es ≤30 min); en
 // sábado es 50 % y en domingo/feriado 100 %. El total de extra del mes se
 // calcula a nivel período (banco compensatorio corrido).
+// Fichadas del día + aviso de intervalo intermedio sin trabajar (a revisar).
+function marcasCon(x) {
+  const base = x.marcas || (x.entrada ? `${x.entrada}-${x.salida || '?'}` : '');
+  if ((x.intermedioMin || 0) > 0) return `${base} · ⚠ ${minToHhmm(x.intermedioMin)} sin trabajar (revisar)`;
+  return base;
+}
 function extraTexto(x) {
   const s = typeof x.saldoMin === 'number' ? x.saldoMin : null;
   if (s == null || s <= 0) return '';
@@ -130,7 +136,7 @@ export function buildXlsx(periodo, rows) {
   XLSX.utils.book_append_sheet(wb, wsEmp, 'Por empleado');
 
   // — Hoja 3: Detalle diario (una fila por empleado/día) —
-  const detHeader = ['Legajo', 'Empleado', 'Fecha', 'Día', 'Entrada', 'Salida', 'Hs Netas', 'Jornada', 'Saldo día', 'Extra', 'Tarde', 'Estado', 'Novedad / Licencia'];
+  const detHeader = ['Legajo', 'Empleado', 'Fecha', 'Día', 'Fichadas (entrada-salida)', 'Hs Netas', 'Jornada', 'Saldo día', 'Extra', 'Tarde', 'Estado', 'Novedad / Licencia'];
   const detAoa = [detHeader];
   for (const r of rows) {
     const dias = r.data?.dias || [];
@@ -140,8 +146,7 @@ export function buildXlsx(periodo, rows) {
         r.nom,
         x.fecha,
         x.dia || '',
-        x.entrada || '',
-        x.salida || '',
+        marcasCon(x),
         x.hsNetasMin > 0 ? minToHhmm(x.hsNetasMin) : '',
         minToHhmm(x.hsNormalMin || 0),
         x.saldoMin == null ? '' : minToHhmm(x.saldoMin),
@@ -153,7 +158,7 @@ export function buildXlsx(periodo, rows) {
     }
   }
   const wsDet = XLSX.utils.aoa_to_sheet(detAoa);
-  wsDet['!cols'] = [{ wch: 9 }, { wch: 30 }, { wch: 12 }, { wch: 6 }, { wch: 8 }, { wch: 8 }, { wch: 9 }, { wch: 9 }, { wch: 10 }, { wch: 12 }, { wch: 8 }, { wch: 26 }, { wch: 46 }];
+  wsDet['!cols'] = [{ wch: 9 }, { wch: 30 }, { wch: 12 }, { wch: 6 }, { wch: 26 }, { wch: 9 }, { wch: 9 }, { wch: 10 }, { wch: 12 }, { wch: 8 }, { wch: 26 }, { wch: 46 }];
   wsDet['!freeze'] = { xSplit: 0, ySplit: 1 };
   XLSX.utils.book_append_sheet(wb, wsDet, 'Detalle diario');
 
@@ -252,10 +257,9 @@ export function buildPdf(periodo, rows) {
 
     // ── Detalle diario por empleado ──
     const detCols = [
-      { k: 'fecha', t: 'Fecha', w: 0.09, a: 'left' },
+      { k: 'fecha', t: 'Fecha', w: 0.08, a: 'left' },
       { k: 'dia', t: 'Día', w: 0.06, a: 'left' },
-      { k: 'entrada', t: 'Entrada', w: 0.07, a: 'left' },
-      { k: 'salida', t: 'Salida', w: 0.07, a: 'left' },
+      { k: 'marcas', t: 'Fichadas (entrada-salida)', w: 0.16, a: 'left' },
       { k: 'netas', t: 'Hs Netas', w: 0.07, a: 'right' },
       { k: 'jornada', t: 'Jornada', w: 0.07, a: 'right' },
       { k: 'saldo', t: 'Saldo día', w: 0.07, a: 'right' },
@@ -285,7 +289,7 @@ export function buildPdf(periodo, rows) {
       doc.moveDown(0.2);
       drawTable(doc, left, pageW, detCols, dias.map((x) => ({
         fecha: x.fecha, dia: x.dia || '',
-        entrada: x.entrada || '—', salida: x.salida || '—',
+        marcas: marcasCon(x) || '—', _interv: (x.intermedioMin || 0) > 0,
         netas: x.hsNetasMin > 0 ? minToHhmm(x.hsNetasMin) : '—',
         jornada: minToHhmm(x.hsNormalMin || 0),
         saldo: x.saldoMin == null ? '—' : minToHhmm(x.saldoMin), _saldo: x.saldoMin,
@@ -296,6 +300,7 @@ export function buildPdf(periodo, rows) {
       })), {
         fontSize: 7.5,
         colorFor: (row, col) => {
+          if (col.k === 'marcas' && row._interv) return AMBER;
           if (col.k === 'saldo') return row._saldo == null ? MUT : (row._saldo < 0 ? RED : GREEN);
           if (col.k === 'tarde' && row._tarde) return AMBER;
           if (col.k === 'estado') {

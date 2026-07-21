@@ -3,7 +3,7 @@
 // importación por Excel como la conexión directa con Pro-Soft, así ambos caminos
 // calculan y guardan EXACTAMENTE igual.
 import { pool, query } from '../db.js';
-import { normLegajo, minToHhmm } from './fichadasProsoft.js';
+import { normLegajo, minToHhmm, recomputarTotales, aplicarIntermedioDia } from './fichadasProsoft.js';
 
 // Feriados (YYYY-MM-DD) dentro de un rango, como Set. Se pasan a parseExtendido
 // para no exigir jornada ni marcar injustificado en días feriados.
@@ -111,6 +111,27 @@ export async function procesarParsed({ parsed, anio, mes, confirmar, origen = 'p
     }
     m.diasInjustificados = injust;
     m.diasLicenciaConflicto = conflicto;
+  }
+
+  // ── Ajustes manuales de intervalo intermedio (persisten entre reimportaciones) ──
+  // Los días marcados por RR.HH. como "computar como jornada" suman ese tiempo al
+  // neto y se recalculan los totales del período.
+  if (ids.length) {
+    const { rows: aj } = await query(
+      `SELECT empleado_id, to_char(fecha,'YYYY-MM-DD') AS fecha FROM fichadas_ajuste_intermedio WHERE empleado_id = ANY($1::int[])`,
+      [ids]);
+    if (aj.length) {
+      const set = new Set(aj.map((a) => `${a.empleado_id}|${a.fecha}`));
+      for (const m of matcheados) {
+        let cambio = false;
+        for (const d of (m.dias || [])) {
+          if ((d.intermedioMin || 0) > 0 && set.has(`${m.empleadoId}|${d.fecha}`) && !d.computarIntermedio) {
+            aplicarIntermedioDia(d, true); cambio = true;
+          }
+        }
+        if (cambio) Object.assign(m, recomputarTotales(m.dias));
+      }
+    }
   }
 
   const resumen = {

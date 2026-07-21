@@ -10,7 +10,7 @@ import multer from 'multer';
 import * as XLSX from 'xlsx';
 import { pool, query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
-import { parseExtendido, normLegajo, minToHhmm } from '../lib/fichadasProsoft.js';
+import { parseExtendido, normLegajo, minToHhmm, recomputarTotales, aplicarIntermedioDia } from '../lib/fichadasProsoft.js';
 import { buildXlsx, buildPdf, nombreMes } from '../lib/fichadasExport.js';
 import { idsDirectosDe } from '../lib/equipo.js';
 import { getValidador } from '../lib/organigrama.js';
@@ -223,6 +223,32 @@ function extraNetoMin(data) {
   const d = data || {};
   return (d.horasExtra50Min || 0) + (d.horasExtra100Min || 0);
 }
+
+// PATCH /api/fichadas/:id/dia-intermedio { fecha, computar } — marca (o desmarca) el
+// intervalo intermedio de un día como jornada trabajada. Suma ese tiempo al neto,
+// recalcula el período y guarda el ajuste (persiste entre reimportaciones).
+router.patch('/:id/dia-intermedio', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { fecha, computar } = req.body || {};
+    if (!fecha) return res.status(400).json({ error: 'Indicá la fecha del día.' });
+    const cur = (await query('SELECT id, empleado_id, data FROM fichadas_periodo WHERE id=$1', [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'Período no encontrado.' });
+    const data = cur.data || {};
+    const dia = (data.dias || []).find((d) => d.fecha === fecha);
+    if (!dia) return res.status(404).json({ error: 'No se encontró ese día en el período.' });
+    if (!((dia.intermedioMin || 0) > 0)) return res.status(400).json({ error: 'Ese día no tiene intervalo intermedio para computar.' });
+
+    aplicarIntermedioDia(dia, !!computar);
+    Object.assign(data, recomputarTotales(data.dias));
+    await query('UPDATE fichadas_periodo SET data=$1 WHERE id=$2', [JSON.stringify(data), cur.id]);
+    if (computar) {
+      await query(`INSERT INTO fichadas_ajuste_intermedio (empleado_id, fecha) VALUES ($1,$2) ON CONFLICT (empleado_id, fecha) DO NOTHING`, [cur.empleado_id, fecha]);
+    } else {
+      await query('DELETE FROM fichadas_ajuste_intermedio WHERE empleado_id=$1 AND fecha=$2', [cur.empleado_id, fecha]);
+    }
+    res.json({ ok: true, computar: !!computar });
+  } catch (e) { next(e); }
+});
 
 // PATCH /api/fichadas/:id/aprobacion  { etapa:'rrhh'|'gerencia', accion:'aprobar'|'rechazar', obs? }
 router.patch('/:id/aprobacion', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {

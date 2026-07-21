@@ -784,6 +784,14 @@ CREATE TABLE IF NOT EXISTS feriados (
   descripcion TEXT,
   tipo        TEXT NOT NULL DEFAULT 'nacional'
 );
+
+-- Ajuste manual: días donde el intervalo intermedio (salida/entrada del medio) se
+-- computa como jornada trabajada (RR.HH. lo confirma). Persiste entre reimportaciones.
+CREATE TABLE IF NOT EXISTS fichadas_ajuste_intermedio (
+  empleado_id INTEGER NOT NULL,
+  fecha       DATE NOT NULL,
+  PRIMARY KEY (empleado_id, fecha)
+);
 INSERT INTO feriados (fecha, descripcion, tipo) VALUES
   ('2026-01-01','Año Nuevo','nacional'),
   ('2026-02-16','Carnaval','nacional'),

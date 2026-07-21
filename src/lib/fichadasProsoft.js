@@ -101,9 +101,11 @@ function* rangoFechas(desde, hasta) {
  * Resultado: a.horasExtra50Min, a.horasExtra100Min, a.bancoNetoMin (+ a favor /
  * − a recuperar) y a.aRecuperarMin.
  */
-function calcularTotales(a) {
+// Calcula los totales del período a partir del arreglo de días (orden indiferente).
+// Reutilizable: lo usa el parser y también el ajuste manual de intervalos.
+export function recomputarTotales(dias) {
   let extra50wd = 0, extra50sab = 0, extra100 = 0, bancoChico = 0, deficit = 0;
-  for (const d of a.dias) {
+  for (const d of (dias || [])) {
     if (typeof d.saldoMin !== 'number') continue;      // sin-marca / licencia / revisar
     const s = d.saldoMin;
     if (d.tipoDia === 'sabado') { if (s > 0) extra50sab += s; continue; }
@@ -120,13 +122,28 @@ function calcularTotales(a) {
   const usaExtra = Math.min(rem, extra50wd); extra50wd -= usaExtra; rem -= usaExtra;
   const aRecuperar = rem;                              // déficit que no se pudo compensar
   const bancoFavor = aRecuperar > 0 ? 0 : bancoChico;  // a favor que sobró (excluyente con a recuperar)
-
-  a.horasExtra50Min = extra50wd + extra50sab;
-  a.horasExtra100Min = extra100;
-  a.horasExtraDescartadaMin = 0;
-  a.bancoNetoMin = bancoFavor - aRecuperar;            // + a favor / − a recuperar
-  a.aRecuperarMin = aRecuperar;
+  return {
+    horasExtra50Min: extra50wd + extra50sab,
+    horasExtra100Min: extra100,
+    horasExtraDescartadaMin: 0,
+    bancoNetoMin: bancoFavor - aRecuperar,             // + a favor / − a recuperar
+    aRecuperarMin: aRecuperar,
+  };
 }
+
+// Marca (o desmarca) el intervalo intermedio de un día como jornada trabajada:
+// suma (o resta) ese tiempo al neto y recalcula el saldo del día. Idempotente.
+export function aplicarIntermedioDia(d, computar) {
+  if (!d) return d;
+  const target = !!computar, cur = !!d.computarIntermedio, im = d.intermedioMin || 0;
+  if (target === cur || im <= 0) { d.computarIntermedio = target && im > 0; return d; }
+  d.hsNetasMin = (d.hsNetasMin || 0) + (target ? im : -im);
+  d.computarIntermedio = target;
+  if (typeof d.saldoMin === 'number') d.saldoMin = d.hsNetasMin - (d.hsNormalMin || 0);
+  return d;
+}
+
+function calcularTotales(a) { Object.assign(a, recomputarTotales(a.dias)); }
 
 /**
  * @param {Array<Array>} rows  Filas de la hoja (la primera es el encabezado).
@@ -196,11 +213,23 @@ export function parseExtendido(rows, opts = {}) {
     // Neto trabajado calculado desde las MARCAS (E1/S1..E4/S4), descontando salidas
     // intermedias. NO se usa "Hs Netas" de Pro-Soft (no aplica nuestra lógica).
     let netMin = 0, marcaSuelta = false, algunaMarca = false;
+    const segmentos = [];    // pares entrada/salida trabajados del día
+    const marcasSueltas = []; // marcas sin par (para mostrar/revisar)
     for (const [ek, sk] of [['e1', 's1'], ['e2', 's2'], ['e3', 's3'], ['e4', 's4']]) {
       const em = norm(cell(r, ek)), sm = norm(cell(r, sk));
       if (em || sm) algunaMarca = true;
-      if (em && sm) { const d = hhmmToMin(sm) - hhmmToMin(em); if (d > 0) netMin += d; }
-      else if (em || sm) marcaSuelta = true; // marca impar → incompleta
+      if (em && sm) { const d = hhmmToMin(sm) - hhmmToMin(em); if (d > 0) netMin += d; segmentos.push({ e: em, s: sm }); }
+      else if (em || sm) { marcaSuelta = true; marcasSueltas.push(em || sm); } // marca impar → incompleta
+    }
+    // Todas las fichadas del día en orden (para mostrar en el detalle): "07:48-11:59 · 13:12-17:04".
+    const marcasTexto = segmentos.map((p) => `${p.e}-${p.s}`).concat(marcasSueltas.map((m) => `${m}-?`)).join(' · ');
+    // Tiempo INTERMEDIO sin trabajar (entre el primer ingreso y la última salida,
+    // menos lo efectivamente trabajado). Cuando hay más de un tramo, ese hueco puede
+    // ser almuerzo (bien descontado) o no; se marca para que RR.HH. lo revise.
+    let intermedioMin = 0;
+    if (segmentos.length > 1) {
+      const ini = hhmmToMin(segmentos[0].e), fin = hhmmToMin(segmentos[segmentos.length - 1].s);
+      intermedioMin = Math.max(0, (fin - ini) - netMin);
     }
     const tarde = hhmmToMin(cell(r, 'tarde')); // informativo (no entra al cálculo)
     const comentario = norm(cell(r, 'comentarios')); // Vacaciones, Licencia, ART, Estudio, Home Office...
@@ -251,7 +280,7 @@ export function parseExtendido(rows, opts = {}) {
         else if (hayActividad) estado = 'revisar';                    // marca incompleta
         else estado = 'sin-marca';                                    // laborable sin marca
         a.dias.push({
-          fecha, dia: norm(cell(r, 'dia')), entrada, salida,
+          fecha, dia: norm(cell(r, 'dia')), entrada, salida, marcas: marcasTexto, nMarcas: segmentos.length, intermedioMin,
           hsNetasMin: netMin, hsNormalMin: jornadaDia,
           saldoMin: marcaCompleta ? (netMin - jornadaDia) : null, tipoDia,
           extra50Min: 0, extra100Min: 0, extraComputa: false,
