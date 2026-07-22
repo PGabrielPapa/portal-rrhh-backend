@@ -792,6 +792,21 @@ CREATE TABLE IF NOT EXISTS fichadas_ajuste_intermedio (
   fecha       DATE NOT NULL,
   PRIMARY KEY (empleado_id, fecha)
 );
+
+-- Reglas por turno (el turno viene de Pro-Soft; los horarios se cargan acá).
+--   jornada_min  = jornada diaria en minutos (540 = 9 h, 600 = 10 h).
+--   inicio       = horario de ingreso fijado 'HH:MM' (para turnos restringidos).
+--   restringido  = true → la entrada ANTES del horario no computa (extra/compensación
+--                  solo si se queda DESPUÉS). false → cuenta todo (comportamiento normal).
+CREATE TABLE IF NOT EXISTS turnos_reglas (
+  turno       TEXT PRIMARY KEY,
+  jornada_min INTEGER NOT NULL DEFAULT 540,
+  inicio      TEXT,
+  restringido BOOLEAN NOT NULL DEFAULT false,
+  updated_at  TIMESTAMPTZ DEFAULT now()
+);
+INSERT INTO turnos_reglas (turno, jornada_min) VALUES ('Hormigon/ mamposteria Leloir', 600)
+  ON CONFLICT (turno) DO NOTHING;
 INSERT INTO feriados (fecha, descripcion, tipo) VALUES
   ('2026-01-01','Año Nuevo','nacional'),
   ('2026-02-16','Carnaval','nacional'),

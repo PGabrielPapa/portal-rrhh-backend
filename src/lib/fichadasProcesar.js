@@ -3,7 +3,7 @@
 // importación por Excel como la conexión directa con Pro-Soft, así ambos caminos
 // calculan y guardan EXACTAMENTE igual.
 import { pool, query } from '../db.js';
-import { normLegajo, minToHhmm, recomputarTotales, aplicarIntermedioDia } from './fichadasProsoft.js';
+import { normLegajo, minToHhmm, normTurno, recomputarTotales, aplicarIntermedioDia } from './fichadasProsoft.js';
 
 // Feriados (YYYY-MM-DD) dentro de un rango, como Set. Se pasan a parseExtendido
 // para no exigir jornada ni marcar injustificado en días feriados.
@@ -13,6 +13,31 @@ export async function getFeriadosSet(desde, hasta) {
     `SELECT to_char(fecha, 'YYYY-MM-DD') AS d FROM feriados WHERE fecha BETWEEN $1 AND $2`,
     [desde, hasta]);
   return new Set(rows.map((r) => r.d));
+}
+
+// "HH:MM" → minutos (para el horario de inicio del turno). Inválido → null.
+const inicioAMin = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '').trim()); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+
+// Reglas de turno como Map (normTurno → {jornadaMin, inicioMin, restringido}) para
+// pasar a parseExtendido. El parser recorta la entrada temprana en turnos restringidos.
+export async function getTurnosReglas() {
+  const map = new Map();
+  try {
+    const { rows } = await query('SELECT turno, jornada_min, inicio, restringido FROM turnos_reglas');
+    for (const r of rows) {
+      map.set(normTurno(r.turno), { jornadaMin: Number(r.jornada_min) || 540, inicioMin: inicioAMin(r.inicio), restringido: !!r.restringido });
+    }
+  } catch { /* tabla aún no creada */ }
+  return map;
+}
+
+// Inserta los turnos vistos en la importación que todavía no estén configurados
+// (con jornada 9 h por defecto), para que aparezcan en la pantalla de reglas.
+export async function autodetectarTurnos(turnosVistos) {
+  for (const t of (turnosVistos || [])) {
+    if (!t) continue;
+    try { await query(`INSERT INTO turnos_reglas (turno) VALUES ($1) ON CONFLICT (turno) DO NOTHING`, [t]); } catch { /* noop */ }
+  }
 }
 
 // Da formato de presentación a un agregado por empleado.
@@ -54,6 +79,8 @@ function vista(a) {
  * @returns {{resumen, matcheados, sinMatch}}
  */
 export async function procesarParsed({ parsed, anio, mes, confirmar, origen = 'prosoft-extendido', importadoPor = null, archivoNombre = null, soloPendientes = false, desde = null, hasta = null }) {
+  // Autodetectar turnos nuevos para que aparezcan en la pantalla de reglas.
+  if (parsed && parsed.turnosVistos && parsed.turnosVistos.length) await autodetectarTurnos(parsed.turnosVistos);
   // Mapa de empleados del portal por legajo normalizado.
   const { rows: emps } = await query(
     `SELECT e.id, e.leg_num, e.nom, em.nombre AS empresa FROM empleados e JOIN empresas em ON em.id = e.empresa_id`

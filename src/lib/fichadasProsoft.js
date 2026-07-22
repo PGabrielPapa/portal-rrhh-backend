@@ -28,7 +28,7 @@ const JORNADA_DEFAULT = 540;
 // Jornada (en minutos) por TURNO cuando difiere de las 9 hs. Clave = nombre del
 // turno normalizado (sin espacios/símbolos/mayúsculas). Hoy el único de 10 hs es
 // "Hormigon/ mamposteria Leloir". Si aparecen más turnos distintos, agregarlos acá.
-const normTurno = (s) => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]/g, '');
+export const normTurno = (s) => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]/g, '');
 const JORNADA_POR_TURNO = {
   [normTurno('Hormigon/ mamposteria Leloir')]: 600, // 10 hs
 };
@@ -168,6 +168,7 @@ export function parseExtendido(rows, opts = {}) {
   const cell = (r, k) => (idx[k] >= 0 && idx[k] < r.length ? r[idx[k]] : undefined);
 
   const acc = {}; // legajoNorm → agregado
+  const turnosVistos = new Set(); // nombres de turno presentes (para autodetección)
   let filas = 0;
 
   for (let i = 1; i < rows.length; i++) {
@@ -205,20 +206,37 @@ export function parseExtendido(rows, opts = {}) {
     const w = diaSemanaISO(fecha); // 0=Dom … 6=Sáb
     const tipoDia = feriados.has(fecha) ? 'feriado' : (w === 0 ? 'domingo' : (w === 6 ? 'sabado' : 'habil'));
     const esLaborable = tipoDia === 'habil';
-    // Jornada esperada según el TURNO (9 hs por defecto; 10 hs en "Hormigon/
-    // mamposteria Leloir"). En finde/feriado → 0.
-    const jornadaTurno = JORNADA_POR_TURNO[normTurno(cell(r, 'turno'))] || JORNADA_DEFAULT;
+    // Regla del turno (jornada + recorte). El turno viene de Pro-Soft; los horarios
+    // se cargan en la tabla turnos_reglas y llegan acá por opts.turnos.
+    const turnoRaw = norm(cell(r, 'turno'));
+    const nt = normTurno(turnoRaw);
+    const regla = (opts.turnos instanceof Map) ? opts.turnos.get(nt) : null;
+    if (turnoRaw && turnosVistos) turnosVistos.add(turnoRaw);
+    // Jornada esperada según el TURNO (regla cargada → JORNADA_POR_TURNO → 9 hs). Finde/feriado → 0.
+    const jornadaTurno = (regla && regla.jornadaMin) || JORNADA_POR_TURNO[nt] || JORNADA_DEFAULT;
     const jornadaDia = esLaborable ? jornadaTurno : 0;
     a.jornadaTurnoMin = jornadaTurno; // se usa para completar días faltantes
+    // Turno RESTRINGIDO: la entrada ANTES del horario fijado NO computa. Se recorta
+    // el ingreso al horario de inicio (max(entrada, inicio)). Quedarse después SÍ cuenta.
+    const inicioRecorte = (regla && regla.restringido && typeof regla.inicioMin === 'number') ? regla.inicioMin : null;
     // Neto trabajado calculado desde las MARCAS (E1/S1..E4/S4), descontando salidas
     // intermedias. NO se usa "Hs Netas" de Pro-Soft (no aplica nuestra lógica).
-    let netMin = 0, marcaSuelta = false, algunaMarca = false;
+    let netMin = 0, marcaSuelta = false, algunaMarca = false, recorteMin = 0;
     const segmentos = [];    // pares entrada/salida trabajados del día
     const marcasSueltas = []; // marcas sin par (para mostrar/revisar)
     for (const [ek, sk] of [['e1', 's1'], ['e2', 's2'], ['e3', 's3'], ['e4', 's4']]) {
       const em = norm(cell(r, ek)), sm = norm(cell(r, sk));
       if (em || sm) algunaMarca = true;
-      if (em && sm) { const d = hhmmToMin(sm) - hhmmToMin(em); if (d > 0) netMin += d; segmentos.push({ e: em, s: sm }); }
+      if (em && sm) {
+        const eMin = hhmmToMin(em), sMin = hhmmToMin(sm);
+        let eEff = eMin;
+        if (inicioRecorte != null && eMin < inicioRecorte) { // recorta lo trabajado antes del horario
+          eEff = inicioRecorte;
+          recorteMin += Math.max(0, Math.min(sMin, inicioRecorte) - eMin);
+        }
+        const d = sMin - eEff;
+        if (d > 0) { netMin += d; segmentos.push({ e: em, s: sm }); }
+      }
       else if (em || sm) { marcaSuelta = true; marcasSueltas.push(em || sm); } // marca impar → incompleta
     }
     // Todas las fichadas del día en orden (para mostrar en el detalle): "07:48-11:59 · 13:12-17:04".
@@ -281,6 +299,7 @@ export function parseExtendido(rows, opts = {}) {
         else estado = 'sin-marca';                                    // laborable sin marca
         a.dias.push({
           fecha, dia: norm(cell(r, 'dia')), entrada, salida, marcas: marcasTexto, nMarcas: segmentos.length, intermedioMin,
+          turno: turnoRaw, recorteMin,
           hsNetasMin: netMin, hsNormalMin: jornadaDia,
           saldoMin: marcaCompleta ? (netMin - jornadaDia) : null, tipoDia,
           extra50Min: 0, extra100Min: 0, extraComputa: false,
@@ -313,5 +332,5 @@ export function parseExtendido(rows, opts = {}) {
   // Cálculo definitivo de extras y banco con el banco compensatorio CORRIDO.
   for (const a of Object.values(acc)) { a.dias.sort((x, y) => x.fecha.localeCompare(y.fecha)); calcularTotales(a); }
 
-  return { porLegajo: acc, filas, legajos: Object.keys(acc).length, columnasFaltantes: faltantes };
+  return { porLegajo: acc, filas, legajos: Object.keys(acc).length, columnasFaltantes: faltantes, turnosVistos: [...turnosVistos] };
 }

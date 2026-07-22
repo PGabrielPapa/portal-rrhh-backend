@@ -15,7 +15,7 @@ import { buildXlsx, buildPdf, nombreMes } from '../lib/fichadasExport.js';
 import { idsDirectosDe } from '../lib/equipo.js';
 import { getValidador } from '../lib/organigrama.js';
 import { equipoEfectivo, esGestorDeTarea, notaDelegacion } from '../lib/delegaciones.js';
-import { procesarParsed, getFeriadosSet } from '../lib/fichadasProcesar.js';
+import { procesarParsed, getFeriadosSet, getTurnosReglas } from '../lib/fichadasProcesar.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -44,7 +44,8 @@ router.post('/importar', requireRole('rrhh', 'admin'), upload.single('archivo'),
     }
 
     const feriados = await getFeriadosSet(desde, hasta);
-    const parsed = parseExtendido(rows, { desde, hasta, feriados });
+    const turnos = await getTurnosReglas();
+    const parsed = parseExtendido(rows, { desde, hasta, feriados, turnos });
     if (parsed.columnasFaltantes.length) {
       return res.status(400).json({ error: `Al Excel le faltan columnas esperadas: ${parsed.columnasFaltantes.join(', ')}. Asegurate de exportar el "Extendido".` });
     }
@@ -68,12 +69,57 @@ router.get('/importaciones/log', requireRole('rrhh', 'admin'), async (req, res, 
   } catch (e) { next(e); }
 });
 
+// POST /api/fichadas/turnos-reglas/sync — trae los turnos de Pro-Soft y deduce las
+// reglas (jornada, horario de ingreso, restringido). No hay que cargarlos a mano.
+router.post('/turnos-reglas/sync', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { prosoftConfigOk, getTurnos, reglasDesdeTurnos } = await import('../lib/prosoft.js');
+    if (!prosoftConfigOk()) return res.status(400).json({ error: 'Pro-Soft no está configurado (PROSOFT_USER / PROSOFT_PASS).' });
+    const turnos = await getTurnos();
+    const reglas = reglasDesdeTurnos(turnos);
+    for (const r of reglas) {
+      await query(
+        `INSERT INTO turnos_reglas (turno, jornada_min, inicio, restringido, updated_at) VALUES ($1,$2,$3,$4,now())
+         ON CONFLICT (turno) DO UPDATE SET jornada_min=EXCLUDED.jornada_min, inicio=EXCLUDED.inicio, restringido=EXCLUDED.restringido, updated_at=now()`,
+        [r.turno, r.jornada_min, r.inicio, r.restringido]);
+    }
+    res.json({ ok: true, sincronizados: reglas.length });
+  } catch (e) { next(e); }
+});
+
 // DELETE /api/fichadas/importaciones/todo — limpia TODO el historial de importaciones.
 // Solo borra el registro del historial; NO toca las fichadas ya cargadas.
 router.delete('/importaciones/todo', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const r = await query('DELETE FROM fichadas_importaciones');
     res.json({ ok: true, borradas: r.rowCount });
+  } catch (e) { next(e); }
+});
+
+// GET /api/fichadas/turnos-reglas — reglas de cada turno (jornada, horario de inicio, restringido).
+router.get('/turnos-reglas', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT turno, jornada_min, inicio, restringido FROM turnos_reglas ORDER BY turno');
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+
+// PUT /api/fichadas/turnos-reglas  { reglas: [{ turno, jornada_min, inicio, restringido }] }
+router.put('/turnos-reglas', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const reglas = Array.isArray(req.body && req.body.reglas) ? req.body.reglas : [];
+    for (const r of reglas) {
+      const turno = String((r && r.turno) || '').trim();
+      if (!turno) continue;
+      const jm = Math.max(1, Math.round(Number(r.jornada_min) || 540));
+      const inicio = /^\d{1,2}:\d{2}$/.test(String((r.inicio || '')).trim()) ? String(r.inicio).trim() : null;
+      const restr = !!r.restringido;
+      await query(
+        `INSERT INTO turnos_reglas (turno, jornada_min, inicio, restringido, updated_at) VALUES ($1,$2,$3,$4,now())
+         ON CONFLICT (turno) DO UPDATE SET jornada_min=EXCLUDED.jornada_min, inicio=EXCLUDED.inicio, restringido=EXCLUDED.restringido, updated_at=now()`,
+        [turno, jm, inicio, restr]);
+    }
+    res.json({ ok: true, guardadas: reglas.length });
   } catch (e) { next(e); }
 });
 

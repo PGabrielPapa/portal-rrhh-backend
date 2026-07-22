@@ -4,7 +4,7 @@
 // Credenciales SIEMPRE por variables de entorno (nunca en código ni git).
 import { config } from '../config.js';
 import { parseExtendido } from './fichadasProsoft.js';
-import { procesarParsed, getFeriadosSet } from './fichadasProcesar.js';
+import { procesarParsed, getFeriadosSet, getTurnosReglas } from './fichadasProcesar.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -76,6 +76,45 @@ export async function getFiltros() {
   return data;
 }
 
+// Trae la definición de TURNOS con sus tramos horarios (hini/hfin/tipo por día).
+// tipo "0" = franja de jornada normal; tipo "1" = franja de hora extra permitida.
+export async function getTurnos() {
+  const r = await api('/turnos');
+  if (!r.ok) throw new Error(`Pro-Soft: /turnos falló (HTTP ${r.status}).`);
+  let data = await r.json();
+  if (typeof data === 'string') { try { data = JSON.parse(data); } catch { /* queda string */ } }
+  return Array.isArray(data) ? data : [];
+}
+
+// Deriva, por turno, la regla para el cálculo: jornada (bloque normal más largo),
+// horario de ingreso (inicio del bloque normal más temprano) y si es "restringido"
+// (no hay ninguna franja que empiece antes del ingreso → la entrada temprana no computa).
+export function reglasDesdeTurnos(turnos) {
+  const toMin = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '').trim()); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+  const hhmm = (m) => (m == null ? null : `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+  const dias = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes'];
+  const out = [];
+  for (const t of (turnos || [])) {
+    const nombre = String(t.turno || '').trim();
+    if (!nombre) continue;
+    // Tramos de un día hábil representativo (el primero que tenga franjas).
+    let tramosDia = [];
+    for (const d of dias) { const f = (t.tramos || []).filter((x) => x[d]); if (f.length) { tramosDia = f; break; } }
+    if (!tramosDia.length) tramosDia = (t.tramos || []);
+    const tipo0 = tramosDia.filter((x) => String(x.tipo) === '0');
+    let jornada = 0, inicio = null;
+    for (const x of tipo0) {
+      let a = toMin(x.hini), b = toMin(x.hfin); if (a == null || b == null) continue;
+      if (b <= a) b += 1440; // cruza medianoche
+      if (b - a > jornada) jornada = b - a;           // jornada = bloque normal más largo
+      if (inicio == null || a < inicio) inicio = a;    // ingreso = bloque normal más temprano
+    }
+    const hayFranjaAntes = tramosDia.some((x) => { const a = toMin(x.hini); return a != null && inicio != null && a < inicio; });
+    out.push({ turno: nombre, jornada_min: jornada || 540, inicio: hhmm(inicio), restringido: !hayFranjaAntes });
+  }
+  return out;
+}
+
 // "6/18/2026" (M/D/YYYY) → "2026-06-18". Tolera ya-ISO.
 export function fechaISO(v) {
   const s = String(v || '').trim();
@@ -120,7 +159,8 @@ export async function getMesParseado(anio, mes) {
 export async function importarRango(desde, hasta, anio, mes, { confirmar = false, soloPendientes = false, importadoPor = null } = {}) {
   const datos = await getResumen(desde, hasta);
   const feriados = await getFeriadosSet(desde, hasta);
-  const parsed = parseExtendido(datosToAoa(datos), { desde, hasta, feriados });
+  const turnos = await getTurnosReglas();
+  const parsed = parseExtendido(datosToAoa(datos), { desde, hasta, feriados, turnos });
   const result = await procesarParsed({
     parsed, anio, mes, confirmar, soloPendientes, desde, hasta,
     origen: 'prosoft-api', importadoPor,
