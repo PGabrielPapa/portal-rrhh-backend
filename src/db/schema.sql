@@ -807,6 +807,54 @@ CREATE TABLE IF NOT EXISTS turnos_reglas (
 );
 INSERT INTO turnos_reglas (turno, jornada_min) VALUES ('Hormigon/ mamposteria Leloir', 600)
   ON CONFLICT (turno) DO NOTHING;
+
+-- ═══════════ Liquidación por PRODUCCIÓN (paralela, sin aportes/contribuciones) ═══════════
+-- Valor hora de producción por categoría/vigencia. YA incluye el presentismo y es
+-- bruto = neto (esta liquidación NO descuenta aportes ni contribuciones).
+-- Valor hora de producción POR EMPLEADO (varía por persona; la categoría es solo etiqueta).
+CREATE TABLE IF NOT EXISTS prod_valor_hora (
+  empleado_id   INTEGER NOT NULL,
+  vigencia      DATE NOT NULL,
+  valor_hora    NUMERIC(14,4) NOT NULL DEFAULT 0,
+  jornada_horas NUMERIC(5,2) NOT NULL DEFAULT 8,   -- 8 o 9 hs según la persona
+  categoria     TEXT,
+  PRIMARY KEY (empleado_id, vigencia)
+);
+-- Contratos (premios por obra/etapa) por empleado. Se suman aparte al total ("Total con contrato").
+CREATE TABLE IF NOT EXISTS prod_contratos (
+  id          SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL,
+  anio        INTEGER, mes INTEGER, quincena INTEGER,
+  fecha_fin   DATE,
+  obra        TEXT, especialidad TEXT,
+  monto       NUMERIC(14,2) NOT NULL DEFAULT 0,
+  nota        TEXT,
+  created_by  TEXT, created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_prod_contratos_emp ON prod_contratos (empleado_id, anio, mes, quincena);
+-- Ajustes (+/-) de producción: herramientas perdidas, préstamos, etc. Negativo = descuento.
+CREATE TABLE IF NOT EXISTS prod_ajustes (
+  id          SERIAL PRIMARY KEY,
+  empleado_id INTEGER NOT NULL,
+  anio        INTEGER, mes INTEGER, quincena INTEGER,
+  concepto    TEXT NOT NULL,
+  monto       NUMERIC(14,2) NOT NULL DEFAULT 0,
+  created_by  TEXT, created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_prod_ajustes_emp ON prod_ajustes (empleado_id, anio, mes, quincena);
+
+-- Escala de JORNAL UOCRA (valor hora + Suma No Remunerativa por categoría/zona/vigencia).
+-- La carga inicial se siembra desde src/data/uocra_escala.seed.json (migrateUocraEscala.js).
+CREATE TABLE IF NOT EXISTS uocra_escala (
+  vigencia   DATE NOT NULL,          -- desde cuándo rige (1º del mes)
+  cct        TEXT NOT NULL DEFAULT '76/75',
+  categoria  TEXT NOT NULL,
+  zona       TEXT NOT NULL DEFAULT 'A',   -- A | B | C | C-Austral
+  valor_hora NUMERIC(14,2),          -- jornal por hora (NULL para mensualizados como Sereno)
+  mensual    NUMERIC(14,2),          -- valor mensual (Sereno)
+  snr        NUMERIC(14,2) NOT NULL DEFAULT 0,  -- Suma No Remunerativa mensual (se paga por mitades)
+  PRIMARY KEY (vigencia, cct, categoria, zona)
+);
 INSERT INTO feriados (fecha, descripcion, tipo) VALUES
   ('2026-01-01','Año Nuevo','nacional'),
   ('2026-02-16','Carnaval','nacional'),

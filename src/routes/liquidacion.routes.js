@@ -15,6 +15,8 @@ import { autoActualizarEscalas } from '../lib/escalasAuto.js';
 import { logAudit } from '../lib/audit.js';
 import { paramsParaFecha } from './parametros.routes.js';
 import { cargarAux } from './valoresAux.routes.js';
+import { escalaUOCRA, rangoQuincena, horasJornalDesdeFichadas, calcReciboJornal, JORNADA_JORNAL_HS } from '../lib/uocraJornal.js';
+import { getFeriadosSet } from '../lib/fichadasProcesar.js';
 const router = Router();
 router.use(requireAuth);
 
@@ -140,6 +142,94 @@ async function getEmpsMap(ids) {
   for (const r of er.rows) m.set(r.id, { id: r.id, legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, empresaCuit: r.empresa_cuit || null, empresaData: r.empresa_data || {}, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} });
   return m;
 }
+// ── JORNAL UOCRA ────────────────────────────────────────────────────────────
+// Normaliza la categoría del legajo a una de la escala UOCRA (o null si no matchea).
+// Tolera mayúsculas/acentos y distintos campos (categoria_convenio, cat, desc_categoria).
+function categoriaUocra(emp) {
+  const sel = String(emp?.data?.categoria_convenio || '');
+  const raw = (sel.includes('||') ? sel.split('||').pop() : sel) || emp?.cat || emp?.data?.desc_categoria || '';
+  const s = String(raw).toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (!s) return null;
+  if (s.includes('ESPECIALIZ')) return 'Oficial Especializado';
+  if (s.includes('MEDIO') || s.includes('1/2') || s.includes('MED ')) return 'Medio Oficial';
+  if (s.includes('AYUDANTE')) return 'Ayudante';
+  if (s.includes('SERENO')) return 'Sereno';
+  if (s.includes('OFICIAL')) return 'Oficial';
+  return null;
+}
+// Es jornalero UOCRA si el convenio o sindicato es UOCRA y la categoría (de obra) NO es Sereno.
+function esJornalUocra(emp) {
+  const conv = String(emp?.data?.cod_convenio || '').toUpperCase();
+  const sind = String(emp?.data?.cod_sindicato || '').toUpperCase();
+  if (conv !== 'UOCRA' && sind !== 'UOCRA') return false;
+  const cat = categoriaUocra(emp);
+  return !!cat && cat !== 'Sereno';
+}
+// Arma el recibo del jornal UOCRA con la MISMA estructura que el mensual (art. 140 LCT):
+// mismas claves haberes/descuentos/totales/composicion → se muestra e imprime igual.
+async function armarReciboJornalUocra(emp, anio, mes, tipo, extra = {}) {
+  const quincena = tipo === 'quincenal_2' ? 2 : 1;
+  const { desde, hasta } = rangoQuincena(anio, mes, quincena);
+  const categoria = categoriaUocra(emp) || 'Oficial';
+  const zona = String(emp.data?.zona || 'A');
+  const fechaRef = extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`;
+  const esc = await escalaUOCRA(categoria, zona, fechaRef);
+  if (!esc || !esc.valorHora) { const e = new Error(`No hay escala UOCRA cargada para categoría "${categoria}" zona ${zona}.`); e.status = 400; throw e; }
+
+  // Fichadas del período → días de la quincena (1–15 / 16–fin).
+  const fp = (await query('SELECT data FROM fichadas_periodo WHERE empleado_id=$1 AND anio=$2 AND mes=$3', [emp.id, anio, mes])).rows[0];
+  const diasQ = ((fp?.data?.dias) || []).filter((d) => d.fecha >= desde && d.fecha <= hasta);
+  const { normalMin, extra50Min, extra100Min } = horasJornalDesdeFichadas(diasQ);
+  const injustificadas = diasQ.filter((d) => d.estado === 'injustificado').length;
+  // Feriados NO trabajados de la quincena (los trabajados ya cuentan como extra 100 %).
+  const feriadosSet = await getFeriadosSet(desde, hasta);
+  const trabajados = new Set(diasQ.filter((d) => (d.hsNetasMin || 0) > 0).map((d) => d.fecha));
+  let feriadosNoTrab = 0; for (const f of feriadosSet) if (!trabajados.has(f)) feriadosNoTrab++;
+  const afiliado = await afiliadoEnFecha(emp.id, anio, mes);
+
+  // Permite override manual (RR.HH. puede ajustar horas/feriados antes de liquidar).
+  const num = (v, d) => (v === undefined || v === null || v === '' ? d : Number(v));
+  // Si RR.HH. FORZÓ las horas (fichadas incompletas/sin fichero), no se arrastran las
+  // ausencias injustificadas de las fichadas → el presentismo se paga, salvo que cargue
+  // explícitamente ausencias injustificadas en el campo correspondiente.
+  const forzoHoras = extra.horasNormales != null && String(extra.horasNormales).trim() !== '';
+  const r = calcReciboJornal({
+    valorHora: esc.valorHora,
+    horasNormales: num(extra.horasNormales, normalMin / 60),
+    injustificadas: num(extra.injustificadas ?? extra.ausenciasInjustificadas, forzoHoras ? 0 : injustificadas),
+    feriadosNoTrab: num(extra.feriadosNoTrab, feriadosNoTrab),
+    jornadaHoras: JORNADA_JORNAL_HS,
+    hsExtra50: num(extra.hsExtra50 ?? extra.horasExtra50, extra50Min / 60),
+    hsExtra100: num(extra.hsExtra100 ?? extra.horasExtra100, extra100Min / 60),
+    afiliado, snr: num(extra.snr, esc.snr), quincena: true,
+  });
+
+  const ed = emp.empresaData || {};
+  const dom = [[ed.dir, ed.nro].filter(Boolean).join(' '), ed.loc, ed.prov, ed.cp ? '(CP ' + ed.cp + ')' : ''].filter(Boolean).join(', ') || null;
+  return {
+    empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, cuil: emp.cuil, cat: emp.cat || categoria, ingreso: emp.ingreso || null },
+    empleador: { razonSocial: emp.empresa, cuit: emp.empresaCuit || null, domicilio: dom },
+    periodo: { anio, mes, tipo, tipoLabel: `${quincena === 1 ? '1ª' : '2ª'} quincena — Jornal UOCRA`, fechaPago: extra.fechaPago || null },
+    haberes: r.haberes, descuentos: r.descuentos, ganancias: null,
+    detalle: { modo: 'jornal-uocra', categoria, zona, valorHora: esc.valorHora, quincena, desde, hasta,
+      horas: { normal: r2j(normalMin / 60), extra50: r2j(extra50Min / 60), extra100: r2j(extra100Min / 60) }, injustificadas, feriadosNoTrab },
+    totales: r.totales,
+    composicion: {
+      remun: r.totales.totalRemun, noRem: r.totales.totalNoRem, exento: 0, descuentos: r.totales.totalDescuentos, neto: r.totales.neto,
+      cargas: {
+        seguridadSocial: { empleador: 0, trabajador: r.aportes.jub },
+        obraSocial: { empleador: 0, trabajador: r2j(r.aportes.os + r.aportes.osNR) },
+        inssjp: { empleador: 0, trabajador: r.aportes.pami },
+        sindical: { empleador: 0, trabajador: r.aportes.sind },
+        art: { empleador: 0, trabajador: 0 }, scvo: { empleador: 0, trabajador: 0 },
+      },
+      costoTotal: r.totales.totalHaberes,
+    },
+    nota: 'Jornal UOCRA (CCT 76/75). Contribuciones patronales (FCL Ley 22.250, IERIC, Fondo Sanidad, CAR, CESLU) se informan en el F.931.',
+  };
+}
+const r2j = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
 async function getParams() { const pr = await query('SELECT data FROM parametros_liq WHERE id = 1'); return pr.rows[0]?.data || {}; }
 // Antes de cada cálculo se superponen los VALORES LEGALES vigentes del período (tope SIPA, SMVM, SCVO, FFEP).
 async function getParamsConValores(anio, mes) {
@@ -351,6 +441,10 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const emp = await getEmp(empleadoId);
     if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
     const t = tipo || 'mensual';
+    // Jornalero UOCRA: recibo de jornal (mismo formato), en quincena 1 o 2.
+    if (esJornalUocra(emp) && (t === 'quincenal_1' || t === 'quincenal_2')) {
+      return res.json(await armarReciboJornalUocra(emp, Number(anio), Number(mes), t, extra));
+    }
     const cuotas = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
     const acumGan = await acumGananciasDe(empleadoId, anio, mes);
     try { await autoActualizarGanancias(anio, mes); } catch (e) { /* no bloquea */ }
@@ -377,6 +471,25 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     if (!empleadoId || !anio || !mes) return res.status(400).json({ error: 'empleadoId, anio y mes son obligatorios' });
     const emp = await getEmp(empleadoId);
     if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
+    // Jornalero UOCRA: arma y guarda el recibo de jornal (mismo formato).
+    if (esJornalUocra(emp) && (tipo === 'quincenal_1' || tipo === 'quincenal_2')) {
+      const reciboJ = await armarReciboJornalUocra(emp, Number(anio), Number(mes), tipo, extra);
+      const cli = await pool.connect();
+      let idJ;
+      try {
+        await cli.query('BEGIN');
+        const insJ = await cli.query(
+          `INSERT INTO recibos (empleado_id, anio, mes, tipo, correlativo, neto, data, created_by, publicado)
+           VALUES ($1,$2,$3,$4,1,$5,$6,$7,true)
+           ON CONFLICT (empleado_id, anio, mes, tipo, correlativo)
+           DO UPDATE SET neto=EXCLUDED.neto, data=EXCLUDED.data, created_by=EXCLUDED.created_by, publicado=true, created_at=now()
+           RETURNING id`,
+          [empleadoId, Number(anio), Number(mes), tipo, reciboJ.totales.neto, JSON.stringify(reciboJ), req.user.dni]);
+        idJ = insJ.rows[0].id;
+        await cli.query('COMMIT');
+      } catch (e) { await cli.query('ROLLBACK'); throw e; } finally { cli.release(); }
+      return res.json({ ok: true, id: idJ, recibo: reciboJ });
+    }
     // Chequeo OBLIGATORIO: SMVM y topes SIPA actualizados para el período (auto-actualiza desde el calendario y bloquea si faltan o están vencidos).
     try { await autoActualizarValores(); } catch (e) { /* si falla la auto-actualización, igual valida lo cargado */ }
     const verValG = await verificarValoresLegales(anio, mes);
@@ -549,7 +662,9 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
           if (!(montoEmp > 0)) continue; // sin base (p. ej. % sobre bruto 0): no se genera recibo
           _extra = { montoAjuste: montoEmp, conceptoAjuste: (conceptoExtra && String(conceptoExtra).trim()) || (tipo === 'extra_norem' ? 'Extraordinaria no remunerativa' : 'Extraordinaria remunerativa') };
         }
-        const recibo = calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilSet.has(id), fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
+        const recibo = (esJornalUocra(emp) && (tipo === 'quincenal_1' || tipo === 'quincenal_2'))
+          ? await armarReciboJornalUocra(emp, Number(anio), Number(mes), tipo, { fechaPago })
+          : calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilSet.has(id), fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
         totalNeto += recibo.totales.neto; cant++;
         const rr = await db(
           `INSERT INTO recibos (empleado_id, anio, mes, tipo, correlativo, neto, data, created_by, corrida_id, publicado)

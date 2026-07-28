@@ -1,0 +1,38 @@
+[
+  {"vigencia":"2026-06-01","cct":"76/75","categoria":"Oficial Especializado","zona":"A","valorHora":6666,"snr":63300},
+  {"vigencia":"2026-06-01","cct":"76/75","categoria":"Oficial","zona":"A","valorHora":5703,"snr":58300},
+  {"vigencia":"2026-06-01","cct":"76/75","categoria":"Medio Oficial","zona":"A","valorHora":5270,"snr":53400},
+  {"vigencia":"2026-06-01","cct":"76/75","categoria":"Ayudante","zona":"A","valorHora":4851,"snr":50300},
+  {"vigencia":"2026-06-01","cct":"76/75","categoria":"Sereno","zona":"A","mensual":881193,"snr":50300},
+
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Oficial Especializado","zona":"A","valorHora":6800,"snr":72900},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Oficial Especializado","zona":"B","valorHora":7548,"snr":80900},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Oficial Especializado","zona":"C","valorHora":10439,"snr":111900},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Oficial Especializado","zona":"C-Austral","valorHora":13599,"snr":145700},
+
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Oficial","zona":"A","valorHora":5817,"snr":67100},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Oficial","zona":"B","valorHora":6460,"snr":74500},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Oficial","zona":"C","valorHora":9787,"snr":103100},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Oficial","zona":"C-Austral","valorHora":11633,"snr":134200},
+
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Medio Oficial","zona":"A","valorHora":5375,"snr":61500},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Medio Oficial","zona":"B","valorHora":5958,"snr":68200},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Medio Oficial","zona":"C","valorHora":9444,"snr":94400},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Medio Oficial","zona":"C-Austral","valorHora":10750,"snr":123000},
+
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Ayudante","zona":"A","valorHora":4948,"snr":57900},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Ayudante","zona":"B","valorHora":5517,"snr":64300},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Ayudante","zona":"C","valorHora":9170,"snr":88900},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Ayudante","zona":"C-Austral","valorHora":9895,"snr":115800},
+
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Sereno","zona":"A","mensual":898817,"snr":57900},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Sereno","zona":"B","mensual":1001322,"snr":64300},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Sereno","zona":"C","mensual":1502627,"snr":88900},
+  {"vigencia":"2026-07-01","cct":"76/75","categoria":"Sereno","zona":"C-Austral","mensual":1797634,"snr":115800},
+
+  {"vigencia":"2026-08-01","cct":"76/75","categoria":"Oficial Especializado","zona":"A","valorHora":7420,"snr":0},
+  {"vigencia":"2026-08-01","cct":"76/75","categoria":"Oficial","zona":"A","valorHora":6348,"snr":0},
+  {"vigencia":"2026-08-01","cct":"76/75","categoria":"Medio Oficial","zona":"A","valorHora":5866,"snr":0},
+  {"vigencia":"2026-08-01","cct":"76/75","categoria":"Ayudante","zona":"A","valorHora":5399,"snr":0},
+  {"vigencia":"2026-08-01","cct":"76/75","categoria":"Sereno","zona":"A","mensual":980858,"snr":0}
+]

@@ -35,6 +35,7 @@ import aprobacionesRoutes from './routes/aprobaciones.routes.js';
 import parametrosRoutes from './routes/parametros.routes.js';
 import conceptosRoutes from './routes/conceptos.routes.js';
 import liquidacionRoutes from './routes/liquidacion.routes.js';
+import produccionRoutes from './routes/produccion.routes.js';
 import recibosRoutes from './routes/recibos.routes.js';
 import licenciasRoutes from './routes/licencias.routes.js';
 import sancionesRoutes from './routes/sanciones.routes.js';
@@ -108,6 +109,7 @@ export function createApp() {
   app.use('/api/parametros', parametrosRoutes);
   app.use('/api/conceptos', conceptosRoutes);
   app.use('/api/liquidacion', liquidacionRoutes);
+  app.use('/api/produccion', produccionRoutes);
   app.use('/api/recibos', recibosRoutes);
   app.use('/api/licencias', licenciasRoutes);
   app.use('/api/sanciones', sancionesRoutes);

@@ -64,6 +64,24 @@ try {
   console.error('[boot] migración de puestos:', e.message);
 }
 
+// Escala de jornal UOCRA (valor hora + SNR por categoría/zona/vigencia): siembra inicial.
+try {
+  const { migrarUocraEscala } = await import('./db/migrateUocraEscala.js');
+  const r = await migrarUocraEscala();
+  if (!r.skip && r.creadas) console.log(`[boot] escala UOCRA sembrada ✓ (${r.creadas} filas)`);
+} catch (e) {
+  console.error('[boot] migración escala UOCRA:', e.message);
+}
+
+// Producción: valor hora ahora es POR EMPLEADO. Migra la tabla si quedó con el esquema viejo (por categoría).
+try {
+  const { migrarProdValorHora } = await import('./db/migrateProdValorHora.js');
+  const r = await migrarProdValorHora();
+  if (!r.skip) console.log('[boot] prod_valor_hora migrada a esquema por empleado ✓');
+} catch (e) {
+  console.error('[boot] migración prod_valor_hora:', e.message);
+}
+
 // Actualización automática de valores legales (tope SIPA, SMVM, SCVO, FFEP) según el calendario publicado.
 try {
   const { autoActualizarValores } = await import('./routes/valoresLegales.routes.js');

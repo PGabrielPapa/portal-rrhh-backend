@@ -5,20 +5,27 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 const router = Router();
 router.use(requireAuth, requireRole('rrhh', 'admin'));
 
-// Siembra inicial de modalidades típicas (idempotente).
+// Sincroniza la lista de modalidades con las de AFIP (codigos_afip tipo=modalidad),
+// agregando las que falten por código (incluida la Ley 22.250). Idempotente: NO pisa
+// ni borra las existentes. Regímenes especiales (construcción 22.250, agrario 22.248,
+// pasantías, becarios, aprendizaje) van SIN indemnización por antigüedad.
+const SIN_INDEMNIZACION = new Set([2, 3, 9, 10, 23, 24, 27]); // códigos AFIP sin indemn. clásica
 async function ensure() {
-  const n = (await query('SELECT COUNT(*)::int c FROM modalidades_contratacion')).rows[0].c;
-  if (n > 0) return;
-  const base = [
-    ['Tiempo indeterminado', '008', true, true, true],
-    ['Plazo fijo', '002', false, true, true],
-    ['Eventual', '004', false, false, true],
-    ['Pasantía', '102', false, false, false],
-    ['Práctica profesionalizante', '103', false, false, false],
-    ['Período de prueba', '008', true, false, true],
-  ];
-  for (const [nombre, cod, pp, ind, sac] of base)
-    await query('INSERT INTO modalidades_contratacion (nombre, cod_afip, periodo_prueba, indemnizacion, sac) VALUES ($1,$2,$3,$4,$5)', [nombre, cod, pp, ind, sac]);
+  const { rows: afip } = await query(`SELECT codigo, nombre FROM codigos_afip WHERE tipo='modalidad' AND activo ORDER BY codigo`);
+  if (!afip.length) {
+    // Fallback: si aún no se cargaron los códigos AFIP, sembrar base mínima (solo si está vacía).
+    if ((await query('SELECT COUNT(*)::int c FROM modalidades_contratacion')).rows[0].c > 0) return;
+    const base = [['Tiempo indeterminado', '008', true, true, true], ['Plazo fijo', '021', false, true, true], ['Eventual', '012', false, false, true], ['Personal de la construcción Ley 22.250', '024', true, false, true]];
+    for (const [nombre, cod, pp, ind, sac] of base) await query('INSERT INTO modalidades_contratacion (nombre, cod_afip, periodo_prueba, indemnizacion, sac) VALUES ($1,$2,$3,$4,$5)', [nombre, cod, pp, ind, sac]);
+    return;
+  }
+  const existentes = new Set((await query('SELECT cod_afip FROM modalidades_contratacion')).rows.map((r) => String(r.cod_afip || '').replace(/\D/g, '').padStart(3, '0')));
+  for (const m of afip) {
+    const cod = String(m.codigo).padStart(3, '0');
+    if (existentes.has(cod)) continue; // ya está esa modalidad
+    const ind = !SIN_INDEMNIZACION.has(Number(m.codigo));
+    await query('INSERT INTO modalidades_contratacion (nombre, cod_afip, periodo_prueba, indemnizacion, sac) VALUES ($1,$2,$3,$4,$5)', [m.nombre, cod, true, ind, true]);
+  }
 }
 
 router.get('/', async (req, res, next) => {

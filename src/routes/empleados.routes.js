@@ -473,6 +473,41 @@ router.post('/masivo-sueldo', requireRole('rrhh', 'admin'), async (req, res, nex
   } catch (e) { await client.query('ROLLBACK'); next(e); } finally { client.release(); }
 });
 
+// POST /api/empleados/actualizar-convenios (rrhh/admin) — actualiza SOLO convenio,
+// categoría de convenio, sindicato y zona, cruzando por CUIL (no toca ningún otro dato).
+// body: { rows: [{ CUIL, Convenio, Categoria, Sindicato, Zona }] }  (tolera nombres de la planilla).
+router.post('/actualizar-convenios', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  const rows = (req.body && req.body.rows) || [];
+  if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'No se recibieron filas.' });
+  const norm = (s) => String(s || '').replace(/\D/g, '');
+  const val = (r, ...keys) => { for (const k of keys) if (r[k] != null && String(r[k]).trim() !== '') return String(r[k]).trim(); return ''; };
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const ex = await client.query('SELECT id, cuil FROM empleados');
+    const byCuil = new Map(); for (const r of ex.rows) if (r.cuil) byCuil.set(norm(r.cuil), r.id);
+    let actualizados = 0; const sinMatch = [];
+    for (const r of rows) {
+      const conv = val(r, 'Convenio', 'Convenio propuesto', 'cod_convenio');
+      if (!conv) continue;                 // filas sin convenio (REVISAR) se saltean
+      const cuil = norm(val(r, 'CUIL', 'cuil'));
+      const id = cuil && byCuil.get(cuil);
+      if (!id) { sinMatch.push(val(r, 'CUIL', 'Apellido y Nombre') || cuil); continue; }
+      const patch = {
+        cod_convenio: conv.toUpperCase(),
+        categoria_convenio: val(r, 'Categoria', 'Categoría convenio', 'categoria_convenio'),
+        cod_sindicato: (val(r, 'Sindicato', 'cod_sindicato') || conv).toUpperCase(),
+        zona: val(r, 'Zona', 'zona') || 'A',
+      };
+      await client.query('UPDATE empleados SET data = data || $1::jsonb WHERE id=$2', [JSON.stringify(patch), id]);
+      actualizados++;
+    }
+    await client.query('COMMIT');
+    logAudit(req.user.dni, 'actualizar_convenios', `${actualizados} legajo(s) actualizados, ${sinMatch.length} sin match`);
+    res.json({ ok: true, actualizados, sinMatch });
+  } catch (e) { await client.query('ROLLBACK'); next(e); } finally { client.release(); }
+});
+
 // POST /api/empleados/import  (rrhh/admin) — alta masiva
 // body: { rows: [{ Legajo, DNI, CUIL, "Apellido y Nombre", Empresa, "Fecha Ingreso", ... }] }
 router.post('/import', requireRole('rrhh', 'admin'), async (req, res, next) => {
