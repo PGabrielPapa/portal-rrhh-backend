@@ -842,6 +842,44 @@ CREATE TABLE IF NOT EXISTS prod_ajustes (
   created_by  TEXT, created_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ix_prod_ajustes_emp ON prod_ajustes (empleado_id, anio, mes, quincena);
+-- Bono (no remunerativo) por categoría según paritaria. Se autocompleta en la corrida por categoría.
+CREATE TABLE IF NOT EXISTS prod_bono_categoria (
+  categoria TEXT NOT NULL,
+  vigencia  DATE NOT NULL,
+  monto     NUMERIC(14,2) NOT NULL DEFAULT 0,
+  PRIMARY KEY (categoria, vigencia)
+);
+-- Bono por EMPLEADO y período (importado de la planilla, columna "Bono"). Es lo que usa la corrida.
+CREATE TABLE IF NOT EXISTS prod_bono (
+  empleado_id INTEGER NOT NULL,
+  anio        INTEGER NOT NULL, mes INTEGER NOT NULL, quincena INTEGER NOT NULL,
+  monto       NUMERIC(14,2) NOT NULL DEFAULT 0,
+  PRIMARY KEY (empleado_id, anio, mes, quincena)
+);
+-- Corridas de producción GUARDADAS (historial de lo liquidado). Cada corrida guarda la foto editada.
+CREATE TABLE IF NOT EXISTS prod_corrida (
+  id        SERIAL PRIMARY KEY,
+  anio      INTEGER NOT NULL, mes INTEGER NOT NULL, quincena INTEGER NOT NULL,
+  empresa   TEXT,
+  nota      TEXT,
+  total_sin NUMERIC(16,2) NOT NULL DEFAULT 0,
+  total_con NUMERIC(16,2) NOT NULL DEFAULT 0,
+  usuario   TEXT, creada TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS prod_corrida_item (
+  id            SERIAL PRIMARY KEY,
+  corrida_id    INTEGER NOT NULL REFERENCES prod_corrida(id) ON DELETE CASCADE,
+  empleado_id   INTEGER NOT NULL,
+  leg_num       TEXT, nom TEXT, cat TEXT,
+  jornada_horas NUMERIC(5,2), valor_hora NUMERIC(14,4),
+  dias NUMERIC(6,2), hs_sem NUMERIC(8,2), hs_sab NUMERIC(8,2), hs_dom NUMERIC(8,2), hs_fer NUMERIC(8,2),
+  basico NUMERIC(14,2), extras NUMERIC(14,2), bono NUMERIC(14,2), retro NUMERIC(14,2), sac NUMERIC(14,2),
+  ajuste NUMERIC(14,2), contratos NUMERIC(14,2),
+  remun_sac NUMERIC(14,2),      -- base para SAC: básico + extras + contratos
+  total_sin NUMERIC(16,2), total_con NUMERIC(16,2)
+);
+CREATE INDEX IF NOT EXISTS ix_prod_corrida_periodo ON prod_corrida (anio, mes, quincena);
+CREATE INDEX IF NOT EXISTS ix_prod_corrida_item_emp ON prod_corrida_item (empleado_id);
 
 -- Escala de JORNAL UOCRA (valor hora + Suma No Remunerativa por categoría/zona/vigencia).
 -- La carga inicial se siembra desde src/data/uocra_escala.seed.json (migrateUocraEscala.js).

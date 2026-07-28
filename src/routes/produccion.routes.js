@@ -93,6 +93,62 @@ router.post('/valores/import', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── Bono (no rem.) por categoría según paritaria ──
+router.get('/bonos', async (req, res, next) => {
+  try {
+    const { rows } = await query("SELECT categoria, to_char(vigencia,'YYYY-MM-DD') AS vigencia, monto FROM prod_bono_categoria ORDER BY categoria, vigencia DESC");
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+router.put('/bonos', async (req, res, next) => {
+  try {
+    const items = Array.isArray(req.body && req.body.bonos) ? req.body.bonos : [];
+    let ok = 0;
+    for (const r of items) {
+      const cat = String((r && r.categoria) || '').trim();
+      const vig = String((r && r.vigencia) || '').trim();
+      if (!cat || !/^\d{4}-\d{2}-\d{2}$/.test(vig)) continue;
+      await query(`INSERT INTO prod_bono_categoria (categoria, vigencia, monto) VALUES ($1,$2,$3)
+                   ON CONFLICT (categoria, vigencia) DO UPDATE SET monto=EXCLUDED.monto`, [cat, vig, num(r.monto)]);
+      ok++;
+    }
+    res.json({ ok: true, guardados: ok });
+  } catch (e) { next(e); }
+});
+router.delete('/bonos', async (req, res, next) => {
+  try {
+    const cat = String(req.query.categoria || '').trim(); const vig = String(req.query.vigencia || '').trim();
+    if (!cat || !vig) return res.status(400).json({ error: 'Falta categoría o vigencia.' });
+    await query('DELETE FROM prod_bono_categoria WHERE categoria=$1 AND vigencia=$2', [cat, vig]);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+// Importa el BONO por empleado desde la planilla LIQUIDACION (columna "Bono"). body: { rows, anio, mes, quincena }
+// rows: [{ Legajo|CUIL, Bono }]. Es el valor por persona tal como figura en la planilla.
+router.post('/bono/import', async (req, res, next) => {
+  try {
+    const rows = (req.body && req.body.rows) || [];
+    const { anio, mes, quincena } = req.body || {};
+    if (!anio || !mes || !quincena) return res.status(400).json({ error: 'anio, mes y quincena son obligatorios.' });
+    if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'No se recibieron filas.' });
+    const val = (r, ...k) => { for (const x of k) if (r[x] != null && String(r[x]).trim() !== '') return r[x]; return ''; };
+    const idx = await indiceLegajos();
+    let ok = 0; const sinMatch = [];
+    for (const r of rows) {
+      const leg = String(val(r, 'Legajo', 'Nro Legajo', 'legajo', 'leg')).replace(/\D/g, '');
+      const cuil = String(val(r, 'CUIL', 'cuil')).replace(/\D/g, '');
+      const id = idx.match(leg, cuil);
+      if (!id) { if (leg || cuil) sinMatch.push(leg || cuil); continue; }
+      const monto = num(val(r, 'Bono', 'bono', 'monto'));
+      await query(`INSERT INTO prod_bono (empleado_id, anio, mes, quincena, monto) VALUES ($1,$2,$3,$4,$5)
+                   ON CONFLICT (empleado_id, anio, mes, quincena) DO UPDATE SET monto=EXCLUDED.monto`,
+        [id, anio, mes, quincena, monto]);
+      ok++;
+    }
+    res.json({ ok: true, importados: ok, sinMatch });
+  } catch (e) { next(e); }
+});
+
 // ── Contratos ──
 router.get('/contratos', async (req, res, next) => {
   try {
@@ -179,6 +235,28 @@ router.delete('/ajustes/:id', async (req, res, next) => {
   try { await query('DELETE FROM prod_ajustes WHERE id=$1', [Number(req.params.id)]); res.json({ ok: true }); }
   catch (e) { next(e); }
 });
+// Guardado masivo de ajustes/descuentos desde la corrida. Por empleado reemplaza TODOS sus ajustes
+// del período por el monto indicado (concepto 'Ajuste (masivo)'). Monto 0 = sin ajuste.
+router.post('/ajustes/masivo', async (req, res, next) => {
+  try {
+    const { anio, mes, quincena } = req.body || {};
+    const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
+    if (!anio || !mes || !quincena) return res.status(400).json({ error: 'anio, mes y quincena son obligatorios.' });
+    let guardados = 0;
+    for (const it of items) {
+      const emp = Number(it && it.empleadoId); if (!emp) continue;
+      const monto = num(it.monto);
+      await query('DELETE FROM prod_ajustes WHERE empleado_id=$1 AND anio=$2 AND mes=$3 AND quincena=$4', [emp, anio, mes, quincena]);
+      if (monto !== 0) {
+        await query(`INSERT INTO prod_ajustes (empleado_id, anio, mes, quincena, concepto, monto, created_by)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [emp, anio, mes, quincena, 'Ajuste (masivo)', monto, req.user.dni]);
+      }
+      guardados++;
+    }
+    res.json({ ok: true, guardados });
+  } catch (e) { next(e); }
+});
 
 // ── Cálculo de la liquidación de producción de un empleado ──
 async function liquidarProd(empleadoId, anio, mes, quincena, over = {}) {
@@ -192,8 +270,17 @@ async function liquidarProd(empleadoId, anio, mes, quincena, over = {}) {
   const fp = (await query('SELECT data FROM fichadas_periodo WHERE empleado_id=$1 AND anio=$2 AND mes=$3', [empleadoId, anio, mes])).rows[0];
   const diasQ = ((fp && fp.data && fp.data.dias) || []).filter((d) => d.fecha >= desde && d.fecha <= hasta);
   const sug = horasProdDesdeFichadas(diasQ, jornadaHoras);
-  const contratos = (await query('SELECT id, obra, especialidad, monto, to_char(fecha_fin,\'YYYY-MM-DD\') AS fecha_fin FROM prod_contratos WHERE empleado_id=$1 AND (anio=$2 OR anio IS NULL) AND (mes=$3 OR mes IS NULL) AND (quincena=$4 OR quincena IS NULL)', [empleadoId, anio, mes, quincena])).rows;
+  // Contratos: se asignan a la quincena por su FECHA FIN (los sin fecha, por anio/mes). Robusto al
+  // valor de "quincena" que se haya guardado en la importación.
+  const contratos = (await query(
+    `SELECT id, obra, especialidad, monto, to_char(fecha_fin,'YYYY-MM-DD') AS fecha_fin FROM prod_contratos
+      WHERE empleado_id=$1 AND (
+        (fecha_fin IS NOT NULL AND fecha_fin BETWEEN $2 AND $3)
+        OR (fecha_fin IS NULL AND anio=$4 AND mes=$5 AND (quincena=$6 OR quincena IS NULL))
+      )`, [empleadoId, desde, hasta, anio, mes, quincena])).rows;
   const ajustes = (await query('SELECT id, concepto, monto FROM prod_ajustes WHERE empleado_id=$1 AND (anio=$2 OR anio IS NULL) AND (mes=$3 OR mes IS NULL) AND (quincena=$4 OR quincena IS NULL)', [empleadoId, anio, mes, quincena])).rows;
+  // Bono por empleado del período (importado de la planilla). Se usa como default si no viene override.
+  const bonoEmp = (await query('SELECT monto FROM prod_bono WHERE empleado_id=$1 AND anio=$2 AND mes=$3 AND quincena=$4', [empleadoId, anio, mes, quincena])).rows[0];
   const cant = {
     diasNormales: num(over.diasNormales, sug.diasNormales),
     hsSemana: num(over.hsSemana, sug.hsSemana),
@@ -201,7 +288,8 @@ async function liquidarProd(empleadoId, anio, mes, quincena, over = {}) {
     hsDomingo: num(over.hsDomingo, sug.hsDomingo),
     hsFeriado: num(over.hsFeriado, sug.hsFeriado),
   };
-  const calc = calcProduccion({ valorHora, jornadaHoras, ...cant, bono: over.bono, retro: over.retro, sac: over.sac, difAnterior: over.difAnterior, ajustes, contratos });
+  const bono = num(over.bono, bonoEmp ? Number(bonoEmp.monto) : 0);
+  const calc = calcProduccion({ valorHora, jornadaHoras, ...cant, bono, retro: over.retro, sac: over.sac, difAnterior: over.difAnterior, ajustes, contratos });
   return { empleado: { id: emp.id, nom: emp.nom, legNum: emp.leg_num, cat: emp.cat }, periodo: { anio, mes, quincena, desde, hasta }, jornadaHoras, cantidades: cant, sugeridas: sug, contratos, ajustes, ...calc };
 }
 
@@ -284,8 +372,134 @@ router.post('/corrida', async (req, res, next) => {
       if (!explicit && r.totalConContrato === 0 && r.totalSinContrato === 0) continue;
       items.push(r); totalSin += r.totalSinContrato; totalCon += r.totalConContrato;
     }
-    res.json({ periodo: { anio, mes, quincena }, cantidad: items.length, totalSinContrato: Math.round(totalSin * 100) / 100, totalConContrato: Math.round(totalCon * 100) / 100, items });
+    // Diagnóstico: qué hay guardado, para entender si faltan contratos/bonos o hay desfasaje de período.
+    const cPer = (await query('SELECT count(*)::int n, count(DISTINCT empleado_id)::int emp FROM prod_contratos WHERE anio=$1 AND mes=$2 AND quincena=$3', [anio, mes, quincena])).rows[0];
+    const cTot = (await query('SELECT count(*)::int n FROM prod_contratos')).rows[0];
+    const cPers = (await query("SELECT DISTINCT anio, mes, quincena FROM prod_contratos ORDER BY 1,2,3")).rows;
+    const bTot = (await query('SELECT count(*)::int n FROM prod_bono_categoria')).rows[0];
+    const debug = {
+      contratosEnPeriodo: cPer.n, contratosEmpleadosEnPeriodo: cPer.emp,
+      contratosTotalDB: cTot.n, periodosContratos: cPers.map((r) => `${r.anio}-${r.mes}-q${r.quincena}`),
+      bonosCargados: bTot.n,
+    };
+    res.json({ periodo: { anio, mes, quincena }, cantidad: items.length, totalSinContrato: Math.round(totalSin * 100) / 100, totalConContrato: Math.round(totalCon * 100) / 100, items, debug });
   } catch (e) { next(e); }
+});
+
+// ── % de aumento a los valores hora (para no reimportar cuando cambia la paritaria) ──
+// body: { pct, vigencia, empresa?, categoria?[], empleadoIds?[] }. Crea una nueva vigencia con
+// el valor actual × (1 + pct/100) para cada empleado alcanzado (mantiene el historial anterior).
+router.post('/valores/aumentar', async (req, res, next) => {
+  try {
+    const pct = num(req.body && req.body.pct);
+    const vig = String(req.body && req.body.vigencia || '').trim();
+    if (!pct || !/^\d{4}-\d{2}-\d{2}$/.test(vig)) return res.status(400).json({ error: 'Falta % o vigencia válida.' });
+    const factor = 1 + pct / 100;
+    let ids = Array.isArray(req.body.empleadoIds) ? req.body.empleadoIds.map(Number).filter(Boolean) : [];
+    if (!ids.length) {
+      const cats = (Array.isArray(req.body.categoria) ? req.body.categoria : String(req.body.categoria || '').split(',')).map((s) => String(s).trim()).filter(Boolean);
+      const cond = ['EXISTS (SELECT 1 FROM prod_valor_hora v WHERE v.empleado_id=e.id)']; const p = [];
+      if (req.body.empresa) { p.push(req.body.empresa); cond.push(`em.nombre=$${p.length}`); }
+      if (cats.length) { p.push(cats); cond.push(`COALESCE(e.cat,'') = ANY($${p.length})`); }
+      ids = (await query(`SELECT e.id FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')}`, p)).rows.map((r) => r.id);
+    }
+    let ok = 0;
+    for (const id of ids) {
+      const cur = (await query('SELECT valor_hora, jornada_horas, categoria FROM prod_valor_hora WHERE empleado_id=$1 AND vigencia<=$2 ORDER BY vigencia DESC LIMIT 1', [id, vig])).rows[0]
+        || (await query('SELECT valor_hora, jornada_horas, categoria FROM prod_valor_hora WHERE empleado_id=$1 ORDER BY vigencia DESC LIMIT 1', [id])).rows[0];
+      if (!cur) continue;
+      const nuevo = Math.round(Number(cur.valor_hora) * factor * 100) / 100;
+      await query(`INSERT INTO prod_valor_hora (empleado_id, vigencia, valor_hora, jornada_horas, categoria) VALUES ($1,$2,$3,$4,$5)
+                   ON CONFLICT (empleado_id, vigencia) DO UPDATE SET valor_hora=EXCLUDED.valor_hora`,
+        [id, vig, nuevo, cur.jornada_horas, cur.categoria]);
+      ok++;
+    }
+    res.json({ ok: true, actualizados: ok, pct });
+  } catch (e) { next(e); }
+});
+
+// ── SAC de producción: 50% de la mejor remuneración mensual del semestre (básico+extras+contratos) ──
+// Toma los datos del historial de corridas guardadas. semestre: mes 1-6 → 1, 7-12 → 2.
+async function sacEmpleado(empleadoId, anio, mes) {
+  const sem = mes <= 6 ? [1, 6] : [7, 12];
+  const { rows } = await query(
+    `SELECT c.mes, SUM(i.remun_sac)::numeric AS remun
+       FROM prod_corrida_item i JOIN prod_corrida c ON c.id=i.corrida_id
+      WHERE i.empleado_id=$1 AND c.anio=$2 AND c.mes BETWEEN $3 AND $4
+      GROUP BY c.mes`, [empleadoId, anio, sem[0], sem[1]]);
+  let mejor = 0;
+  for (const r of rows) mejor = Math.max(mejor, Number(r.remun) || 0);
+  return { mejorRemun: Math.round(mejor * 100) / 100, sac: Math.round((mejor / 2) * 100) / 100, mesesConDatos: rows.length };
+}
+router.get('/sac', async (req, res, next) => {
+  try {
+    const { empleadoId, anio, mes } = req.query;
+    if (!empleadoId || !anio || !mes) return res.status(400).json({ error: 'empleadoId, anio y mes son obligatorios.' });
+    res.json(await sacEmpleado(Number(empleadoId), Number(anio), Number(mes)));
+  } catch (e) { next(e); }
+});
+// SAC de varios (para la corrida masiva). body: { anio, mes, empleadoIds:[] }
+router.post('/sac/masivo', async (req, res, next) => {
+  try {
+    const { anio, mes } = req.body || {};
+    const ids = Array.isArray(req.body.empleadoIds) ? req.body.empleadoIds.map(Number).filter(Boolean) : [];
+    if (!anio || !mes || !ids.length) return res.status(400).json({ error: 'anio, mes y empleadoIds son obligatorios.' });
+    const out = {};
+    for (const id of ids) out[id] = await sacEmpleado(id, Number(anio), Number(mes));
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+// ── Guardar / historial de corridas ──
+// Guarda la foto editada de la corrida. body: { anio, mes, quincena, empresa?, nota?, items:[...] }
+router.post('/corridas', async (req, res, next) => {
+  try {
+    const { anio, mes, quincena, empresa, nota } = req.body || {};
+    const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
+    if (!anio || !mes || !quincena) return res.status(400).json({ error: 'anio, mes y quincena son obligatorios.' });
+    if (!items.length) return res.status(400).json({ error: 'No hay ítems para guardar.' });
+    let totalSin = 0, totalCon = 0;
+    for (const it of items) { totalSin += num(it.totalSin); totalCon += num(it.totalCon); }
+    const cab = await query(
+      `INSERT INTO prod_corrida (anio, mes, quincena, empresa, nota, total_sin, total_con, usuario)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [anio, mes, quincena, empresa || null, nota || null, Math.round(totalSin * 100) / 100, Math.round(totalCon * 100) / 100, req.user.dni]);
+    const cid = cab.rows[0].id;
+    for (const it of items) {
+      const extras = num(it.extras);
+      const contratos = num(it.contratos);
+      const remunSac = Math.round((num(it.basico) + extras + contratos) * 100) / 100;   // base SAC elegida
+      await query(
+        `INSERT INTO prod_corrida_item (corrida_id, empleado_id, leg_num, nom, cat, jornada_horas, valor_hora,
+            dias, hs_sem, hs_sab, hs_dom, hs_fer, basico, extras, bono, retro, sac, ajuste, contratos, remun_sac, total_sin, total_con)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+        [cid, it.empleadoId, it.legNum || null, it.nom || null, it.cat || null, num(it.jornadaHoras, 8), num(it.valorHora),
+         num(it.dias), num(it.hsSem), num(it.hsSab), num(it.hsDom), num(it.hsFer), num(it.basico), extras, num(it.bono), num(it.retro), num(it.sac), num(it.ajuste), contratos, remunSac, num(it.totalSin), num(it.totalCon)]);
+    }
+    res.status(201).json({ ok: true, id: cid, cantidad: items.length });
+  } catch (e) { next(e); }
+});
+router.get('/corridas', async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT c.id, c.anio, c.mes, c.quincena, c.empresa, c.nota, c.total_sin, c.total_con, c.usuario,
+              to_char(c.creada,'YYYY-MM-DD HH24:MI') AS creada, count(i.id)::int AS cantidad
+         FROM prod_corrida c LEFT JOIN prod_corrida_item i ON i.corrida_id=c.id
+        GROUP BY c.id ORDER BY c.creada DESC LIMIT 200`);
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+router.get('/corridas/:id', async (req, res, next) => {
+  try {
+    const cab = (await query('SELECT * FROM prod_corrida WHERE id=$1', [Number(req.params.id)])).rows[0];
+    if (!cab) return res.status(404).json({ error: 'Corrida no encontrada.' });
+    const items = (await query('SELECT * FROM prod_corrida_item WHERE corrida_id=$1 ORDER BY nom', [cab.id])).rows;
+    res.json({ ...cab, items });
+  } catch (e) { next(e); }
+});
+router.delete('/corridas/:id', async (req, res, next) => {
+  try { await query('DELETE FROM prod_corrida WHERE id=$1', [Number(req.params.id)]); res.json({ ok: true }); }
+  catch (e) { next(e); }
 });
 
 export default router;
