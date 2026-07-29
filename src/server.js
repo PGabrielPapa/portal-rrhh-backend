@@ -73,6 +73,15 @@ try {
   console.error('[boot] migración escala UOCRA:', e.message);
 }
 
+// Escala IDEE (UECARA / fuera de convenio) — roles BIM con niveles. Siembra el convenio 'IDEE-BIM'.
+try {
+  const { migrarIdeeBim } = await import('./db/migrateIdeeBim.js');
+  const r = await migrarIdeeBim();
+  if (!r.skip) console.log(`[boot] escala IDEE-BIM sembrada ✓ (${r.cats} categorías)`);
+} catch (e) {
+  console.error('[boot] migración IDEE-BIM:', e.message);
+}
+
 // Producción: valor hora ahora es POR EMPLEADO. Migra la tabla si quedó con el esquema viejo (por categoría).
 try {
   const { migrarProdValorHora } = await import('./db/migrateProdValorHora.js');

@@ -12,6 +12,7 @@ import { novedadesOpts } from './novedades.routes.js';
 import { esSinGoce } from '../lib/licenciasReglas.js';
 import { valoresLegalesVigentes, verificarValoresLegales, autoActualizarValores } from './valoresLegales.routes.js';
 import { autoActualizarEscalas } from '../lib/escalasAuto.js';
+import { calcUecara } from '../lib/uecaraMensual.js';
 import { logAudit } from '../lib/audit.js';
 import { paramsParaFecha } from './parametros.routes.js';
 import { cargarAux } from './valoresAux.routes.js';
@@ -230,6 +231,60 @@ async function armarReciboJornalUocra(emp, anio, mes, tipo, extra = {}) {
 }
 const r2j = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+// ── MENSUAL UECARA / fuera de convenio (escala IDEE-BIM) ─────────────────────
+function esUecaraMensual(emp) { return !!(emp?.data?.liqUecara); }
+// Básico de una tabla de convenio por 'titulo||cat' (para cualquier código, ej. UECARA o IDEE-BIM).
+function lookupConvBasico(m, code, sel) {
+  code = String(code || '').toUpperCase();
+  if (!code || !sel || !m[code]) return 0;
+  const [titulo, cat] = String(sel).split('||');
+  for (const t of m[code]) if (String(t.titulo) === titulo) for (const c of (t.cats || [])) if (String(c.cat) === cat) return Number(c.basico) || 0;
+  return 0;
+}
+// Arma el recibo mensual UECARA con la MISMA estructura (art. 140 LCT).
+async function armarReciboUecara(emp, anio, mes, tipo, extra = {}) {
+  const m = await convMap();
+  const tipoLiq = emp.data.liqUecara;                    // uecara_bim | fuera_bim | solo_convenio | fijo
+  const basicoConvenio = lookupConvBasico(m, emp.data.cod_convenio, emp.data.categoria_convenio);
+  const escalaBim = lookupConvBasico(m, 'IDEE-BIM', emp.data.escalaBimObjetivo);
+  const anios = aniosAntigMat(emp.ingreso || emp.data?.fecha_ingreso, anio, mes);
+  const num = (v, d) => (v === undefined || v === null || v === '' ? d : Number(v));
+  const r = calcUecara({
+    tipoLiq,
+    basicoConvenio: num(extra.basicoConvenio, basicoConvenio),
+    escalaBim: num(extra.escalaBim, escalaBim),
+    montoFijo: num(extra.montoFijo, emp.data.montoFijoUecara),
+    aniosAntiguedad: num(extra.aniosAntiguedad, anios),
+    titulo: extra.titulo || emp.data.tituloNivel || null,
+    snr: num(extra.snr, emp.data.snrUecara != null ? emp.data.snrUecara : 67100),
+    plusFeriado: num(extra.plusFeriado, 0),
+  });
+  const byC = (frag) => r2j((r.descuentos.find((d) => d.concepto.toLowerCase().includes(frag)) || {}).monto || 0);
+  const ed = emp.empresaData || {};
+  const dom = [[ed.dir, ed.nro].filter(Boolean).join(' '), ed.loc, ed.prov, ed.cp ? '(CP ' + ed.cp + ')' : ''].filter(Boolean).join(', ') || null;
+  const etiq = { uecara_bim: 'UECARA (escala IDEE)', fuera_bim: 'Fuera de convenio (escala IDEE)', solo_convenio: 'UECARA (convenio)', fijo: 'Fuera de convenio (monto fijo)' }[tipoLiq] || 'UECARA';
+  return {
+    empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, cuil: emp.cuil, cat: emp.cat || null, ingreso: emp.ingreso || null },
+    empleador: { razonSocial: emp.empresa, cuit: emp.empresaCuit || null, domicilio: dom },
+    periodo: { anio, mes, tipo, tipoLabel: `Mensual — ${etiq}`, fechaPago: extra.fechaPago || null },
+    haberes: r.haberes, descuentos: r.descuentos, ganancias: null,
+    detalle: { modo: 'uecara-mensual', tipoLiq, ...r.detalle },
+    totales: r.totales,
+    composicion: {
+      remun: r.totales.totalRemun, noRem: r.totales.totalNoRem, exento: 0, descuentos: r.totales.totalDescuentos, neto: r.totales.neto,
+      cargas: {
+        seguridadSocial: { empleador: 0, trabajador: byC('jubil') },
+        obraSocial: { empleador: 0, trabajador: r2j(byC('obra social') + byC('s/no rem')) },
+        inssjp: { empleador: 0, trabajador: byC('19.032') },
+        sindical: { empleador: 0, trabajador: r2j(byC('art.37 i') + byC('art.37 ii')) },
+        art: { empleador: 0, trabajador: 0 }, scvo: { empleador: 0, trabajador: 0 },
+      },
+      costoTotal: r.totales.totalHaberes,
+    },
+    nota: 'Mensual UECARA / fuera de convenio (CCT 660/13, escala IDEE). El monto de escala incluye básico + presentismo; el bono no remunerativo va aparte.',
+  };
+}
+
 async function getParams() { const pr = await query('SELECT data FROM parametros_liq WHERE id = 1'); return pr.rows[0]?.data || {}; }
 // Antes de cada cálculo se superponen los VALORES LEGALES vigentes del período (tope SIPA, SMVM, SCVO, FFEP).
 async function getParamsConValores(anio, mes) {
@@ -445,6 +500,10 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     if (esJornalUocra(emp) && (t === 'quincenal_1' || t === 'quincenal_2')) {
       return res.json(await armarReciboJornalUocra(emp, Number(anio), Number(mes), t, extra));
     }
+    // Mensual UECARA / fuera de convenio (escala IDEE-BIM).
+    if (esUecaraMensual(emp) && t === 'mensual') {
+      return res.json(await armarReciboUecara(emp, Number(anio), Number(mes), t, extra));
+    }
     const cuotas = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
     const acumGan = await acumGananciasDe(empleadoId, anio, mes);
     try { await autoActualizarGanancias(anio, mes); } catch (e) { /* no bloquea */ }
@@ -489,6 +548,25 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
         await cli.query('COMMIT');
       } catch (e) { await cli.query('ROLLBACK'); throw e; } finally { cli.release(); }
       return res.json({ ok: true, id: idJ, recibo: reciboJ });
+    }
+    // Mensual UECARA / fuera de convenio (escala IDEE-BIM).
+    if (esUecaraMensual(emp) && tipo === 'mensual') {
+      const reciboU = await armarReciboUecara(emp, Number(anio), Number(mes), tipo, extra);
+      const cli = await pool.connect();
+      let idU;
+      try {
+        await cli.query('BEGIN');
+        const insU = await cli.query(
+          `INSERT INTO recibos (empleado_id, anio, mes, tipo, correlativo, neto, data, created_by, publicado)
+           VALUES ($1,$2,$3,$4,1,$5,$6,$7,true)
+           ON CONFLICT (empleado_id, anio, mes, tipo, correlativo)
+           DO UPDATE SET neto=EXCLUDED.neto, data=EXCLUDED.data, created_by=EXCLUDED.created_by, publicado=true, created_at=now()
+           RETURNING id`,
+          [empleadoId, Number(anio), Number(mes), tipo, reciboU.totales.neto, JSON.stringify(reciboU), req.user.dni]);
+        idU = insU.rows[0].id;
+        await cli.query('COMMIT');
+      } catch (e) { await cli.query('ROLLBACK'); throw e; } finally { cli.release(); }
+      return res.json({ ok: true, id: idU, recibo: reciboU });
     }
     // Chequeo OBLIGATORIO: SMVM y topes SIPA actualizados para el período (auto-actualiza desde el calendario y bloquea si faltan o están vencidos).
     try { await autoActualizarValores(); } catch (e) { /* si falla la auto-actualización, igual valida lo cargado */ }
@@ -664,6 +742,8 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
         }
         const recibo = (esJornalUocra(emp) && (tipo === 'quincenal_1' || tipo === 'quincenal_2'))
           ? await armarReciboJornalUocra(emp, Number(anio), Number(mes), tipo, { fechaPago })
+          : (esUecaraMensual(emp) && tipo === 'mensual')
+          ? await armarReciboUecara(emp, Number(anio), Number(mes), tipo, { fechaPago })
           : calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilSet.has(id), fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
         totalNeto += recibo.totales.neto; cant++;
         const rr = await db(

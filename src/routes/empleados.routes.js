@@ -499,6 +499,17 @@ router.post('/actualizar-convenios', requireRole('rrhh', 'admin'), async (req, r
         cod_sindicato: (val(r, 'Sindicato', 'cod_sindicato') || conv).toUpperCase(),
         zona: val(r, 'Zona', 'zona') || 'A',
       };
+      // Campos opcionales para UECARA / escala IDEE-BIM (solo se setean si vienen en la fila).
+      const liqU = val(r, 'TipoLiq', 'liqUecara', 'Liquidacion');
+      if (liqU) patch.liqUecara = liqU;
+      const escBim = val(r, 'EscalaBim', 'escalaBimObjetivo', 'Escala BIM');
+      if (escBim) patch.escalaBimObjetivo = escBim;
+      const titN = val(r, 'Titulo', 'tituloNivel', 'Título');
+      if (titN) patch.tituloNivel = titN.toLowerCase();
+      const mFijo = val(r, 'MontoFijo', 'montoFijoUecara');
+      if (mFijo) patch.montoFijoUecara = Number(String(mFijo).replace(/[^\d.,-]/g, '').replace(/\./g, '').replace(',', '.')) || Number(mFijo) || 0;
+      const snrU = val(r, 'SNR', 'snrUecara');
+      if (snrU) patch.snrUecara = Number(snrU) || 0;
       await client.query('UPDATE empleados SET data = data || $1::jsonb WHERE id=$2', [JSON.stringify(patch), id]);
       actualizados++;
     }
