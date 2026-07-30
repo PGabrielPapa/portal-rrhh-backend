@@ -22,7 +22,28 @@ export async function ganTablaParaFecha(fechaISO) {
 // Cada entrada: { periodo:'AAAA-Sn', vigenciaDesde:'AAAA-MM-01', rg, mniAnual, dedEspAnual,
 //   dedEsp2Anual, cargaConyugeAnual, cargaHijoAnual, cargaHijoIncAnual, escala:[{desde,hasta,fijo,alicuota}] }
 export const GAN_PUBLICADOS = [
-  // 2026-S2 (jul-dic): pendiente de publicacion oficial de ARCA (INDEC publica el IPC de junio ~14/07).
+  {
+    periodo: '2026-S2',
+    vigenciaDesde: '2026-07-01',
+    rg: 'RG ARCA \u2014 Ganancias 4ta cat., 2\u00b0 semestre 2026 (jul-dic) (art. 30 y art. 94)',
+    mniAnual: 6019671.36,
+    dedEspAnual: 28894422.56,
+    dedEsp2Anual: 0,
+    cargaConyugeAnual: 5669323.06,
+    cargaHijoAnual: 2859060.30,
+    cargaHijoIncAnual: 5718120.61,
+    escala: [
+      { desde: 0, hasta: 2336953.69, fijo: 0, alicuota: 5 },
+      { desde: 2336953.69, hasta: 4673907.37, fijo: 116847.68, alicuota: 9 },
+      { desde: 4673907.37, hasta: 7010861.06, fijo: 327173.51, alicuota: 12 },
+      { desde: 7010861.06, hasta: 10516291.59, fijo: 607607.96, alicuota: 15 },
+      { desde: 10516291.59, hasta: 21032583.19, fijo: 1133422.53, alicuota: 19 },
+      { desde: 21032583.19, hasta: 31548874.78, fijo: 3131517.94, alicuota: 23 },
+      { desde: 31548874.78, hasta: 47323312.17, fijo: 5550265.01, alicuota: 27 },
+      { desde: 47323312.17, hasta: 70984968.27, fijo: 9809363.11, alicuota: 31 },
+      { desde: 70984968.27, hasta: null, fijo: 17144476.49, alicuota: 35 },
+    ],
+  },
 ];
 
 async function insertGanOficial(pub) {
