@@ -194,6 +194,28 @@ router.post('/registrar', requireRole('rrhh', 'admin'), async (req, res, next) =
   } catch (e) { next(e); }
 });
 
+// PUT /api/licencias/:id — RR.HH. (o gerente de su equipo) corrige una licencia ya cargada
+// (tipo, fechas, motivo). Recalcula los días. No cambia el estado ni el comprobante.
+router.put('/:id', async (req, res, next) => {
+  try {
+    const cur = (await query('SELECT empleado_id FROM licencias WHERE id=$1', [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'Licencia no encontrada' });
+    const esRRHH = ['rrhh', 'admin'].includes(req.user.role);
+    if (!esRRHH) {
+      if (req.user.role !== 'manager') return res.status(403).json({ error: 'No autorizado' });
+      const ids = await idsEquipoDe(req.user.id);
+      if (!ids.has(cur.empleado_id)) return res.status(403).json({ error: 'Esa licencia no es de tu equipo.' });
+    }
+    const { tipo, desde, hasta, motivo } = req.body || {};
+    if (!tipo || !desde || !hasta) return res.status(400).json({ error: 'tipo, desde y hasta son obligatorios' });
+    if (hasta < desde) return res.status(400).json({ error: 'La fecha hasta debe ser posterior a desde' });
+    const dias = diasEntre(desde, hasta);
+    await query('UPDATE licencias SET tipo=$1, desde=$2, hasta=$3, dias=$4, motivo=$5 WHERE id=$6',
+      [tipo, desde, hasta, dias, motivo || null, req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 // POST /api/licencias/justificar — el empleado informa Y justifica (con comprobante) una
 // licencia imprevisible que NO fue solicitada antes (enfermedad, fallecimiento, etc.).
 router.post('/justificar', async (req, res, next) => {

@@ -61,9 +61,10 @@ export function calcReciboJornal(inp) {
   const horasTrab = r2(vh * (inp.horasNormales || 0));                  // 50 Horas trabajadas
   const premio = (inp.injustificadas || 0) === 0 ? r2(horasTrab * 0.20) : 0; // 110 Premio asistencia
   const feriado = r2((inp.feriadosNoTrab || 0) * vh * jorHs * 30 / 25); // 121 Horas feriado
+  const licencia = r2((inp.diasLicencia || 0) * vh * jorHs);            // días de licencia paga (valor día)
   const extra50 = r2(vh * 1.5 * (inp.hsExtra50 || 0));
   const extra100 = r2(vh * 2 * (inp.hsExtra100 || 0));
-  const totalRem = r2(horasTrab + premio + feriado + extra50 + extra100);
+  const totalRem = r2(horasTrab + premio + feriado + licencia + extra50 + extra100);
 
   const jub = r2(totalRem * 0.11);
   const pami = r2(totalRem * 0.03);
@@ -74,7 +75,14 @@ export function calcReciboJornal(inp) {
   const bonoNR = r2((inp.snr || 0) * (inp.quincena ? 0.5 : 1));          // SNR por mitades por quincena
   const osNR = r2(bonoNR * 0.03);                                        // Obra social s/ no remunerativo
 
-  const totalDeduc = r2(jub + pami + os + sind + osNR);
+  // Embargos / cuota alimentaria (informados en el panel Embargos). El % de alimentos se
+  // calcula sobre el neto antes de estas retenciones.
+  const netoBase = r2(totalRem + bonoNR - r2(jub + pami + os + sind + osNR));
+  const embAlim = r2(netoBase * (Number(inp.embargoAlimentosPct) || 0) / 100);
+  const cuotaAlim = r2(Number(inp.cuotaAlimentaria) || 0);
+  const embJud = r2(Number(inp.embargo) || 0);
+
+  const totalDeduc = r2(jub + pami + os + sind + osNR + embAlim + cuotaAlim + embJud);
   const neto = r2(totalRem + bonoNR - totalDeduc);
 
   // Mismas claves que el motor mensual: haberes {concepto, tipo, monto}; descuentos {concepto, monto}.
@@ -84,6 +92,7 @@ export function calcReciboJornal(inp) {
   ];
   if (premio > 0) haberes.push({ concepto: 'Premio asistencia (20%)', tipo: 'rem', monto: premio });
   if (feriado > 0) haberes.push({ concepto: `Horas feriado (${inp.feriadosNoTrab})`, tipo: 'rem', monto: feriado });
+  if (licencia > 0) haberes.push({ concepto: `Licencia (${inp.diasLicencia} día/s × ${jorHs} hs)`, tipo: 'rem', monto: licencia });
   if (extra50 > 0) haberes.push({ concepto: `Horas extra 50% (${inp.hsExtra50} hs)`, tipo: 'rem', monto: extra50 });
   if (extra100 > 0) haberes.push({ concepto: `Horas extra 100% (${inp.hsExtra100} hs)`, tipo: 'rem', monto: extra100 });
   if (bonoNR > 0) haberes.push({ concepto: 'Bono no remunerativo (acuerdo UOCRA)', tipo: 'norem', monto: bonoNR });
@@ -95,6 +104,9 @@ export function calcReciboJornal(inp) {
     { concepto: sindLabel, monto: sind },
   ];
   if (osNR > 0) descuentos.push({ concepto: 'Obra Social s/ No Remunerativo', monto: osNR });
+  if (embAlim > 0) descuentos.push({ concepto: `Cuota alimentaria (${inp.embargoAlimentosPct}% del neto)`, monto: embAlim });
+  if (cuotaAlim > 0) descuentos.push({ concepto: 'Cuota alimentaria', monto: cuotaAlim });
+  if (embJud > 0) descuentos.push({ concepto: 'Embargo judicial', monto: embJud });
 
   return {
     modo: 'jornal-uocra', valorHora: vh,

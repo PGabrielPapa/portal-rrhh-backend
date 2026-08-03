@@ -28,15 +28,27 @@ async function login() {
   if (!cookie) throw new Error('Pro-Soft: el login no devolvió cookie de sesión.');
 }
 
-// fetch con cookie; si expira (401) reintenta una vez tras re-login.
+// fetch con cookie; si la sesión cae reintenta una vez tras re-login. Pro-Soft
+// la reporta a veces como 401 y otras como HTTP 200 con {"mensaje":"Denied"}.
 async function api(path, opts = {}, _retry = false) {
   if (!cookie) await login();
   const r = await fetch(`${config.prosoft.base}${path}`, {
     ...opts,
     headers: { 'Content-Type': 'application/json', Cookie: cookie, ...(opts.headers || {}) },
   });
-  if (r.status === 401 && !_retry) { cookie = null; return api(path, opts, true); }
+  if (!_retry && (r.status === 401 || await sesionRechazada(r))) {
+    cookie = null;
+    return api(path, opts, true);
+  }
   return r;
+}
+
+// Sesión caída camuflada como 200 con cuerpo {"mensaje":"Denied"}. Lee un CLON
+// para no consumir el cuerpo que necesita quien llamó a api().
+async function sesionRechazada(r) {
+  if (r.status !== 200) return false;
+  try { return /"mensaje"\s*:\s*"denied"/i.test(await r.clone().text()); }
+  catch { return false; }
 }
 
 // Trae el resumen (una fila por empleado/día con marcas y horas) entre dos fechas YYYY-MM-DD.
