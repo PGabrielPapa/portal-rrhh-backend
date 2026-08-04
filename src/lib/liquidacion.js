@@ -190,9 +190,17 @@ export function calcularRecibo(emp, params, opts) {
   const presentismo = (esFC || pierdePresentismo) ? 0 : basePres * pctPres / 100;
   // Adicional presentismo individual (tilde del legajo): lleva el presentismo hasta el 10%; solo si la diferencia es > 0.
   const adicPres = (esFC || pierdePresentismo || !d.adicionalPresentismo) ? 0 : Math.max(0, basePres * (10 - pctPres) / 100);
-  const complemento = num(d.complemento);
   const noRem = num(d.norem);
-  const regularRemun = basico + antiguedad + presentismo + tituloAdic + adicPres + complemento;
+  const aCuentaMonto = num(d.aCuenta);
+  // Complemento función hacia la ESCALA UNIFICADA (LEITEN/SINIS/BARTON): si el empleado tiene un
+  // objetivo de escala, el complemento puentea básico + presentismo + No Rem + A Cuenta hasta ese
+  // monto, con piso en 0 (si el convenio ya lo supera, cobra el convenio; "el mejor de las dos").
+  // La ANTIGÜEDAD queda AFUERA del objetivo. Si no hay objetivo, usa el complemento cargado a mano.
+  const objetivoEscala = num(opts?.escalaObjetivo) || num(d.escalaObjetivo);
+  const complemento = objetivoEscala > 0
+    ? Math.max(0, objetivoEscala - (basico + presentismo + noRem + aCuentaMonto))
+    : num(d.complemento);
+  const regularRemun = basico + antiguedad + presentismo + tituloAdic + adicPres + complemento + aCuentaMonto;
   const mejorRem = num(opts?.mejorRem) || (regularRemun + noRem);
   const fechaPago = opts?.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-01`;
   const G = opts?.ganTabla || ganParaFecha(fechaPago);
@@ -350,8 +358,20 @@ export function calcularRecibo(emp, params, opts) {
     if (presentismo > 0) haberes.push({ concepto: 'Presentismo' + suf, tipo: 'rem', monto: round2(presentismo * f) });
     if (tituloAdic > 0) haberes.push({ concepto: 'Adicional por título' + suf, tipo: 'rem', monto: round2(tituloAdic * f) });
     if (adicPres > 0) haberes.push({ concepto: 'Adicional presentismo (al 10%)' + suf, tipo: 'rem', monto: round2(adicPres * f) });
-    if (complemento > 0) haberes.push({ concepto: 'Complemento variable' + suf, tipo: 'rem', monto: round2(complemento * f) });
+    if (aCuentaMonto > 0) haberes.push({ concepto: 'A cuenta futuros aumentos' + suf, tipo: 'rem', monto: round2(aCuentaMonto * f) });
+    if (complemento > 0) haberes.push({ concepto: (objetivoEscala > 0 ? 'Complemento función' : 'Complemento variable') + suf, tipo: 'rem', monto: round2(complemento * f) });
     if (noRem > 0) haberes.push({ concepto: 'Asignación no remunerativa' + suf, tipo: 'norem', monto: round2(noRem * f) });
+    // Antigüedad y presentismo SOBRE el No Rem: algunos convenios lo contemplan (Comercio/SEC sí;
+    // UECARA, UOM, ASIMRA, fuera de convenio NO). Van como No Rem, POR FUERA de la escala (igual que
+    // la antigüedad sobre el básico). El flag viene del sindicato (data.noRemConAntigPres); default: Comercio.
+    const codSindU = String(d.cod_sindicato || '').toUpperCase();
+    const nrConAntigPres = (opts?.noRemConAntigPres ?? (sind && sind.noRemConAntigPres)) ?? (codSindU === 'SEC' || codSindU === 'COMERCIO');
+    if (noRem > 0 && !esFC && nrConAntigPres) {
+      const antigNoRem = anios > 0 ? noRem * anios * pctAntig / 100 : 0;
+      if (antigNoRem > 0) haberes.push({ concepto: `Antigüedad s/No Rem (${anios} año${anios !== 1 ? 's' : ''})` + suf, tipo: 'norem', monto: round2(antigNoRem * f) });
+      const presNoRem = pierdePresentismo ? 0 : (noRem + antigNoRem) * pctPres / 100;
+      if (presNoRem > 0) haberes.push({ concepto: 'Presentismo s/No Rem' + suf, tipo: 'norem', monto: round2(presNoRem * f) });
+    }
     // Horas extra (valor hora normal = básico / 200)
     const vHora = basico / 200;
     const he50 = num(opts?.horasExtra50), he100 = num(opts?.horasExtra100);
@@ -363,6 +383,24 @@ export function calcularRecibo(emp, params, opts) {
     // Feriados trabajados: un jornal adicional por feriado (Art. 166/168 LCT)
     const ferT = num(opts?.feriadosTrabajados);
     if (ferT > 0) haberes.push({ concepto: `Feriados trabajados (${ferT})`, tipo: 'rem', monto: round2((basico / 30) * ferT) });
+    // Plus LCT (Grupo LEITEN): feriados NO trabajados y licencias CON goce (vacaciones/examen/LCT) se
+    // pagan a mes/25 por día, restando lo que ya venía en el sueldo (mes/30) → plus neto = mes/150 × días.
+    // Queda FUERA de la escala. Feriado: base = básico + antigüedad. Licencia: base = básico + antig + complemento.
+    if (objetivoEscala > 0) {
+      const ferNT = num(opts?.feriadosNoTrab);
+      if (ferNT > 0) {
+        const mesFer = basico + antiguedad;
+        haberes.push({ concepto: `Feriado (${ferNT})`, tipo: 'rem', monto: round2((mesFer / 25) * ferNT) });
+        haberes.push({ concepto: `Reducción feriado (${ferNT})`, tipo: 'rem', monto: -round2((mesFer / 30) * ferNT) });
+      }
+      const dLic = num(opts?.diasLicenciaConGoce);
+      if (dLic > 0) {
+        const mesLic = basico + antiguedad + complemento;
+        const etq = opts?.licenciaConGoceLabel || 'Licencia con goce (Art. 158 LCT)';
+        haberes.push({ concepto: `${etq} (${dLic} días)`, tipo: 'rem', monto: round2((mesLic / 25) * dLic) });
+        haberes.push({ concepto: `Reduc. licencias (${dLic} días)`, tipo: 'rem', monto: -round2((mesLic / 30) * dLic) });
+      }
+    }
     // Horas extra exentas de Ganancias (Art. 82 LIG) — remunerativas para aportes
     const heEx = num(opts?.hsExtrasExentas);
     if (heEx > 0) haberes.push({ concepto: `Horas extra exentas Ganancias (${heEx} hs)`, tipo: 'rem', monto: round2((basico / 200) * 1.5 * heEx) });
