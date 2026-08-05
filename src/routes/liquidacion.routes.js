@@ -68,7 +68,7 @@ async function presBaseMap() {
 }
 const presBaseDe = (m, emp) => m[String(emp?.data?.cod_sindicato || '').toUpperCase()] || 'basico';
 async function sindMap() {
-  try { const { rows } = await query('SELECT codigo, pres_base, pct_presentismo, pct_antig_por_anio, titulo_secundario, titulo_universitario, pct_empleado, pct_patronal, COALESCE(no_rem_con_antig_pres,false) AS no_rem_con_antig_pres FROM sindicatos'); const m = {}; for (const r of rows) m[String(r.codigo).toUpperCase()] = { presBase: r.pres_base, pctPresentismo: Number(r.pct_presentismo) || 0, pctAntigPorAnio: Number(r.pct_antig_por_anio) || 0, tituloSecundario: Number(r.titulo_secundario) || 0, tituloUniversitario: Number(r.titulo_universitario) || 0, pctEmpleado: Number(r.pct_empleado) || 0, pctPatronal: Number(r.pct_patronal) || 0, noRemConAntigPres: r.no_rem_con_antig_pres === true }; return m; } catch { return {}; }
+  try { const { rows } = await query('SELECT codigo, pres_base, pct_presentismo, pct_antig_por_anio, titulo_secundario, titulo_universitario, pct_empleado, pct_patronal, COALESCE(no_rem_con_antig_pres,false) AS no_rem_con_antig_pres, COALESCE(pct_solidario,0) AS pct_solidario FROM sindicatos'); const m = {}; for (const r of rows) m[String(r.codigo).toUpperCase()] = { presBase: r.pres_base, pctPresentismo: Number(r.pct_presentismo) || 0, pctAntigPorAnio: Number(r.pct_antig_por_anio) || 0, tituloSecundario: Number(r.titulo_secundario) || 0, tituloUniversitario: Number(r.titulo_universitario) || 0, pctEmpleado: Number(r.pct_empleado) || 0, pctPatronal: Number(r.pct_patronal) || 0, noRemConAntigPres: r.no_rem_con_antig_pres === true, pctSolidario: Number(r.pct_solidario) || 0 }; return m; } catch { return {}; }
 }
 const sindDe = (m, emp) => m[String(emp?.data?.cod_sindicato || '').toUpperCase()] || null;
 
@@ -104,7 +104,7 @@ async function plusLCTOpts(empleadoId, anio, mes) {
   const iniMes = `${anio}-${String(mes).padStart(2, '0')}-01`;
   const finMes = `${anio}-${String(mes).padStart(2, '0')}-${new Date(anio, mes, 0).getDate()}`;
   let feriadosNoTrab = 0;
-  try { feriadosNoTrab = (await getFeriadosSet(iniMes, finMes)).size; } catch { /* sin feriados */ }
+  try { feriadosNoTrab = (await getFeriadosSet(iniMes, finMes, { soloLiquidables: true })).size; } catch { /* sin feriados */ }
   const lic = (await query("SELECT tipo, dias FROM licencias WHERE estado='aprobada' AND empleado_id=$1 AND desde<=$2 AND hasta>=$3", [empleadoId, finMes, iniMes])).rows;
   let diasLicenciaConGoce = 0; let licenciaConGoceLabel = null;
   for (const l of lic) { if (!esSinGoce(l.tipo)) { diasLicenciaConGoce += Number(l.dias) || 0; if (!licenciaConGoceLabel) licenciaConGoceLabel = `Licencia ${l.tipo}`; } }
@@ -237,7 +237,7 @@ async function armarReciboJornalUocra(emp, anio, mes, tipo, extra = {}) {
   const cubiertoPorLicencia = (fecha) => licQ.some((l) => l.desde <= fecha && fecha <= l.hasta);
   const injustificadas = diasQ.filter((d) => d.estado === 'injustificado' && !cubiertoPorLicencia(d.fecha)).length;
   // Feriados NO trabajados de la quincena (los trabajados ya cuentan como extra 100 %).
-  const feriadosSet = await getFeriadosSet(desde, hasta);
+  const feriadosSet = await getFeriadosSet(desde, hasta, { soloLiquidables: true });
   const trabajados = new Set(diasQ.filter((d) => (d.hsNetasMin || 0) > 0).map((d) => d.fecha));
   let feriadosNoTrab = 0; for (const f of feriadosSet) if (!trabajados.has(f)) feriadosNoTrab++;
   // Días de licencia PAGA en la quincena: días laborables (lun–vie, no feriado) cubiertos por una

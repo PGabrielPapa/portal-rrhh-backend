@@ -431,6 +431,11 @@ export function calcularRecibo(emp, params, opts) {
     const _afiliadoSind = (opts?.afiliadoSindical === true || opts?.afiliadoSindical === 'si')
       || (opts?.afiliadoSindical == null && (d.afiliadoSindical === true || d.afiliadoSindical === 'si' || d.afiliadoSindical === 'sí'));
     const _ctxF = { basico, sueldo: num(d.sueldo), complemento, norem: noRem, noRem, antiguedad_monto: antiguedad,
+      presentismo, aCuenta: aCuentaMonto, titulo: tituloAdic, adicPresentismo: adicPres,
+      // Remuneración mensual FIJA = básico + antigüedad + complemento + a cuenta + título + otros
+      // adicionales mensuales fijos. NO incluye presentismo, comisiones, vacaciones ni licencias.
+      // Base recomendada para el descuento por ausencia injustificada: remunFija / 30 × días.
+      remunFija: (basico + antiguedad + complemento + aCuentaMonto + tituloAdic + adicPres),
       bruto: num(emp.bruto), anios, remun: regularRemun, dias: num(opts?.diasTrabajados) || 30,
       // Decreto 612/2026: base de aportes/contribuciones SOLIDARIAS = remuneración mensual,
       // habitual y permanente (= regularRemun; excluye HE, SAC, vacaciones, gratificaciones, no rem.).
@@ -440,6 +445,12 @@ export function calcularRecibo(emp, params, opts) {
       // noAfiliado=1 solo si está dentro de convenio y NO afiliado (los aportes solidarios
       // alcanzan a los no afiliados). Usá noAfiliado en la condición del concepto solidario.
       afiliado: _afiliadoSind ? 1 : 0, noAfiliado: (!esFC && !_afiliadoSind) ? 1 : 0,
+      // Porcentajes de aportes según parámetros y sindicato del empleado. Sirven para escribir
+      // fórmulas que NO dependan de un número fijo (ej. solidario/cuota sobre No Rem por convenio):
+      //   pctObraSocial, pctAnssal (de parámetros) · pctCuotaSindical (sind.pctEmpleado) · pctSolidario (sind).
+      pctObraSocial: num(p.pctObraSocial), pctAnssal: num(p.pctAnssal),
+      pctCuotaSindical: (sind && Number(sind.pctEmpleado) > 0) ? Number(sind.pctEmpleado) : num(p.pctSindicatoEmp),
+      pctSolidario: sind ? (Number(sind.pctSolidario) || 0) : 0,
       he50: num(opts?.horasExtra50), he100: num(opts?.horasExtra100), ausencias: num(opts?.ausenciasInjustificadas),
       feriados: num(opts?.feriadosTrabajados), smvm: num(p.smvmMensual || p.smvm), topeSipa: num(p.topeAportesMax), ..._cx };
     _ctxF.__aux = opts?.auxFormulas || {};
@@ -495,12 +506,25 @@ export function calcularRecibo(emp, params, opts) {
   const baseAportesOs = Math.min(Math.max(remOs, topeMin), topeMax);
   const ap = (pct) => round2(baseAportes * num(pct) / 100);
   const apOs = (pct) => round2(baseAportesOs * num(pct) / 100);
-  const aJub = ap(p.pctJubilacion), aOS = apOs(p.pctObraSocial), aAnssal = apOs(p.pctAnssal), aPami = ap(p.pctPamiEmp), aSind = esFC ? 0 : ap((sind && Number(sind.pctEmpleado) > 0) ? Number(sind.pctEmpleado) : num(p.pctSindicatoEmp));
+  const aJub = ap(p.pctJubilacion), aOS = apOs(p.pctObraSocial), aAnssal = apOs(p.pctAnssal), aPami = ap(p.pctPamiEmp);
   if (aJub > 0) descuentos.push({ concepto: 'Jubilación', monto: aJub });
   if (aOS > 0) descuentos.push({ concepto: 'Obra Social', monto: aOS });
   if (aAnssal > 0) descuentos.push({ concepto: 'ANSSAL', monto: aAnssal });
   if (aPami > 0) descuentos.push({ concepto: 'INSSJP (PAMI)', monto: aPami });
-  if (aSind > 0) descuentos.push({ concepto: 'Cuota sindical', monto: aSind });
+  // Aporte sindical del trabajador. AFILIADO → cuota sindical (pctEmpleado). NO afiliado dentro de
+  // convenio → APORTE SOLIDARIO (pctSolidario) si el CCT lo define (ej. Plásticos 1,4%). Si el
+  // convenio no define solidario, se mantiene la cuota sindical (comportamiento anterior).
+  const _afiliadoSindApo = (opts?.afiliadoSindical === true || opts?.afiliadoSindical === 'si')
+    || (opts?.afiliadoSindical == null && (d.afiliadoSindical === true || d.afiliadoSindical === 'si' || d.afiliadoSindical === 'sí'));
+  let aSind = 0, _sindLabel = 'Cuota sindical';
+  if (!esFC) {
+    const pctCuota = (sind && Number(sind.pctEmpleado) > 0) ? Number(sind.pctEmpleado) : num(p.pctSindicatoEmp);
+    const pctSolid = sind && Number(sind.pctSolidario) > 0 ? Number(sind.pctSolidario) : 0;
+    if (_afiliadoSindApo) { aSind = ap(pctCuota); _sindLabel = 'Cuota sindical'; }
+    else if (pctSolid > 0) { aSind = ap(pctSolid); _sindLabel = 'Aporte solidario'; }
+    else { aSind = ap(pctCuota); _sindLabel = 'Cuota sindical'; }
+  }
+  if (aSind > 0) descuentos.push({ concepto: _sindLabel, monto: aSind });
   const totalAportes = descuentos.reduce((s, x) => s + x.monto, 0);
   const netoAntesGan = totalHaberes - totalAportes;
 
@@ -563,8 +587,10 @@ export function calcularRecibo(emp, params, opts) {
     const valorDia = (basico + presentismo + antiguedad + complemento) / 30;
     const dSusp = num(opts?.diasSuspension);
     if (dSusp > 0) descuentos.push({ concepto: `Suspensión disciplinaria (${dSusp} días)`, monto: round2(valorDia * dSusp) });
-    const dAus = num(opts?.ausenciasInjustificadas);
-    if (dAus > 0) descuentos.push({ concepto: `Ausencias injustificadas (${dAus} días)`, monto: round2(valorDia * dAus) });
+    // NOTA: el descuento del DÍA por ausencia injustificada NO se hace acá (se sacó el automático).
+    // Las ausencias injustificadas solo hacen perder el presentismo (ver `pierdePresentismo`); el
+    // descuento del día se maneja como CONCEPTO configurable (base a elección de RR.HH.), para no
+    // duplicarlo ni forzar una base fija. Así, si el concepto está desactivado, no se descuenta nada.
     // Licencia SIN goce de haberes (p. ej. enfermedad de familiar a cargo, art. 78 CCT 130/75).
     // NO hace perder el presentismo (es licencia convencional), por eso va aparte de las ausencias.
     const dSG = num(opts?.diasLicenciaSinGoce);

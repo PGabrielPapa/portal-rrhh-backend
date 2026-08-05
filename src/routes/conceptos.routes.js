@@ -89,8 +89,14 @@ const VARIABLES_FORMULA = [
   ['feriados', 'Feriados trabajados'],
   ['smvm', 'Salario Mínimo Vital y Móvil'],
   ['topeSipa', 'Tope máximo SIPA'],
+  ['afiliado', 'Afiliado al sindicato (1/0)'],
+  ['noAfiliado', 'Dentro de convenio y NO afiliado (1/0)'],
+  ['pctObraSocial', '% obra social (parámetros)'],
+  ['pctAnssal', '% ANSSAL (parámetros)'],
+  ['pctCuotaSindical', '% cuota sindical del sindicato (afiliado)'],
+  ['pctSolidario', '% aporte solidario del sindicato (no afiliado)'],
 ];
-const SAMPLE_CTX = { basico: 500000, sueldo: 500000, complemento: 0, norem: 0, antiguedad_monto: 25000, bruto: 600000, anios: 5, remun: 600000, noRem: 0, dias: 30, he50: 0, he100: 0, ausencias: 0, feriados: 0, smvm: 372400, topeSipa: 4509567.41 };
+const SAMPLE_CTX = { basico: 500000, sueldo: 500000, complemento: 0, norem: 85000, antiguedad_monto: 25000, bruto: 600000, anios: 5, remun: 600000, noRem: 85000, dias: 30, he50: 0, he100: 0, ausencias: 0, feriados: 0, smvm: 372400, topeSipa: 4509567.41, afiliado: 0, noAfiliado: 1, pctObraSocial: 2.55, pctAnssal: 0.45, pctCuotaSindical: 2, pctSolidario: 1.4 };
 
 // GET /api/conceptos/variables — catálogo para el editor de fórmulas.
 router.get('/variables', requireRole('rrhh', 'admin'), (req, res) => {
