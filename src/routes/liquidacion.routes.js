@@ -111,6 +111,24 @@ async function plusLCTOpts(empleadoId, anio, mes) {
   return { feriadosNoTrab, diasLicenciaConGoce, licenciaConGoceLabel };
 }
 
+// Ausencias injustificadas del MES desde las fichadas (mismo criterio que el jornal: un día
+// "injustificado" cubierto luego por una licencia aprobada NO cuenta). Sirve para que la corrida
+// use el mismo dato que la liquidación individual (que lo recibe desde la UI) → hacen perder el
+// presentismo y disparan el concepto de descuento por ausencia. Devuelve 0 si no hay fichadas.
+async function ausenciasInjustMensualDe(empleadoId, anio, mes) {
+  const mm = String(mes).padStart(2, '0');
+  const desde = `${anio}-${mm}-01`;
+  const hasta = `${anio}-${mm}-${String(new Date(anio, mes, 0).getDate()).padStart(2, '0')}`;
+  const fp = (await query('SELECT data FROM fichadas_periodo WHERE empleado_id=$1 AND anio=$2 AND mes=$3', [empleadoId, anio, mes])).rows[0];
+  const dias = ((fp?.data?.dias) || []).filter((d) => d.fecha >= desde && d.fecha <= hasta);
+  if (!dias.length) return 0;
+  const licQ = (await query(
+    `SELECT to_char(desde,'YYYY-MM-DD') AS desde, to_char(hasta,'YYYY-MM-DD') AS hasta FROM licencias WHERE estado='aprobada' AND empleado_id=$1 AND desde<=$2 AND hasta>=$3`,
+    [empleadoId, hasta, desde])).rows;
+  const cubierto = (f) => licQ.some((l) => l.desde <= f && f <= l.hasta);
+  return dias.filter((d) => d.estado === 'injustificado' && !cubierto(d.fecha)).length;
+}
+
 // Matriz de antigüedad: fija el básico por tramos de años. 0 si no hay matriz aplicable.
 async function matrizAntigActivas() {
   try { const { rows } = await query('SELECT convenio, categoria, tramos FROM matriz_antiguedad WHERE activo=true'); return rows; }
@@ -564,6 +582,7 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
     const _cMapC = await convMap(); const convBasico = convBasicoDe(_cMapC, emp); const escalaObjetivo = escalaUnifDe(_cMapC, emp);
     const plusLct = (escalaObjetivo > 0 && _esMensual(t)) ? await plusLCTOpts(empleadoId, anio, mes) : {};
+    const _ausInjC = t === 'mensual' ? await ausenciasInjustMensualDe(empleadoId, anio, mes) : 0;
     const basicoAnt = basicoAntiguedadDe(await matrizAntigActivas(), emp, anio, mes);
     const emb = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
     const nov = _esMensual(t) ? { ...await novedadesOpts(empleadoId, anio, mes), ...await licenciasSinGoceOpts(empleadoId, anio, mes) } : {};
@@ -573,7 +592,46 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const cForm = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, t));
     const auxF = cForm.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const _afil = await afiliadoEnFecha(empleadoId, anio, mes);
-    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, afiliadoSindical: _afil, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ...plusLct, ...nov, ...varProm, ...emb, ...extra }));
+    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, afiliadoSindical: _afil, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ausenciasInjustificadas: _ausInjC, ...plusLct, ...nov, ...varProm, ...emb, ...extra }));
+  } catch (e) { next(e); }
+});
+
+// ── Diagnóstico: qué "ve" el motor para un empleado en un período. ──
+// Sirve para comparar LOCAL vs PRODUCCIÓN y detectar qué dato/config difiere.
+// Uso: GET /api/liquidacion/diagnostico/:id?anio=2026&mes=7
+router.get('/diagnostico/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const anio = Number(req.query.anio) || new Date().getFullYear();
+    const mes = Number(req.query.mes) || (new Date().getMonth() + 1);
+    const emp = await getEmp(id);
+    if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
+    const d = emp.data || {};
+    const sMap = await sindMap();
+    const sind = sindDe(sMap, emp);
+    const cMap = await convMap();
+    const convBasico = convBasicoDe(cMap, emp);
+    const escalaObjetivo = escalaUnifDe(cMap, emp);
+    const ausencias = await ausenciasInjustMensualDe(id, anio, mes);
+    const plus = escalaObjetivo > 0 ? await plusLCTOpts(id, anio, mes) : {};
+    const conceptos = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes)
+      .filter((c) => aplicaEnTipo(c, 'mensual'))
+      .map((c) => ({ codigo: c.codigo, descripcion: c.descripcion, base: c.base, formula: c.formula || null, cantidad: c.cantidad || null, valorUnit: c.valorUnit || null, condicion: c.condicion || null }));
+    const fp = (await query('SELECT 1 FROM fichadas_periodo WHERE empleado_id=$1 AND anio=$2 AND mes=$3', [id, anio, mes])).rowCount > 0;
+    res.json({
+      build: 'diag-1 · complemento-fijo + ausencias-corrida + presentismo-por-convenio',
+      periodo: { anio, mes },
+      empleado: { id, nom: emp.nom, legNum: emp.legNum, empresa: emp.empresa, ingreso: emp.ingreso },
+      dataLegajo: { basico: d.basico, sueldo: d.sueldo, cod_convenio: d.cod_convenio, cod_sindicato: d.cod_sindicato, categoria_convenio: d.categoria_convenio, escalaUnifCat: d.escalaUnifCat, norem: d.norem, aCuenta: d.aCuenta, complemento: d.complemento },
+      sindicatoResuelto: sind,          // null = el código de sindicato no existe en el catálogo (cae a defaults)
+      convBasico,                       // básico según convenio (0 si no matchea)
+      escalaObjetivo,                   // monto de escala unificada (0 = no encontró la categoría/tramo)
+      escalaUnifSembrada: escalaObjetivo > 0,
+      ausenciasInjustMes: ausencias,
+      tieneFichadasCargadas: fp,
+      plusLCT: plus,
+      conceptosActivos: conceptos,
+    });
   } catch (e) { next(e); }
 });
 
@@ -784,6 +842,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       const acumGan = await acumGananciasDe(id, anio, mes);
       const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp); const _escUnif = escalaUnifDe(cMap, emp);
       const _plusLct = (_escUnif > 0 && _esMensual(tipo)) ? await plusLCTOpts(id, anio, mes) : {};
+      const _ausInj = tipo === 'mensual' ? await ausenciasInjustMensualDe(id, anio, mes) : 0;
       const _emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(id, fechaPago) : {};
       const _nov = _esMensual(tipo) ? { ...await novedadesOpts(id, anio, mes), ...await licenciasSinGoceOpts(id, anio, mes) } : {};
       const _varProm = (tipo === 'vacaciones' || _esMensual(tipo)) ? await promedioVariablesMes(id, anio, mes) : {};
@@ -803,7 +862,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
         ? await armarReciboJornalUocra(emp, Number(anio), Number(mes), tipo, { fechaPago, ...ovJ })
         : (esUecaraMensual(emp) && tipo === 'mensual')
         ? await armarReciboUecara(emp, Number(anio), Number(mes), tipo, { fechaPago })
-        : calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilSet.has(id), fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, escalaObjetivo: _escUnif, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._plusLct, ..._nov, ..._varProm, ..._emb, ..._extra, ...ovM });
+        : calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilSet.has(id), fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, escalaObjetivo: _escUnif, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ausenciasInjustificadas: (num(ov.ausenciasInjustificadas) ?? _ausInj), ..._plusLct, ..._nov, ..._varProm, ..._emb, ..._extra, ...ovM });
       const h = recibo.detalle?.horas || {};
       const item = {
         empleadoId: id, nom: emp.nom, legNum: emp.legNum, empresa: emp.empresa, esJornal: _esJornal, neto: recibo.totales.neto,

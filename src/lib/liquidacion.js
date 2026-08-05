@@ -187,7 +187,11 @@ export function calcularRecibo(emp, params, opts) {
   if (presBase.includes('titulo')) basePres += tituloAdic;
   if (presBase.includes('acuenta')) basePres += num(d.aCuenta);
   const pctPres = (sind && Number(sind.pctPresentismo) > 0) ? Number(sind.pctPresentismo) : num(p.pctPresentismo);
-  const presentismo = (esFC || pierdePresentismo) ? 0 : basePres * pctPres / 100;
+  // Presentismo PLENO = el que corresponde sin castigos (base × %). El complemento función se calcula
+  // sobre este valor para que quede FIJO: así, si el empleado pierde el presentismo por ausencias
+  // injustificadas, el sueldo baja de verdad (el complemento no crece para taparlo).
+  const presentismoPleno = esFC ? 0 : basePres * pctPres / 100;
+  const presentismo = (esFC || pierdePresentismo) ? 0 : presentismoPleno;
   // Adicional presentismo individual (tilde del legajo): lleva el presentismo hasta el 10%; solo si la diferencia es > 0.
   const adicPres = (esFC || pierdePresentismo || !d.adicionalPresentismo) ? 0 : Math.max(0, basePres * (10 - pctPres) / 100);
   const noRem = num(d.norem);
@@ -198,7 +202,7 @@ export function calcularRecibo(emp, params, opts) {
   // La ANTIGÜEDAD queda AFUERA del objetivo. Si no hay objetivo, usa el complemento cargado a mano.
   const objetivoEscala = num(opts?.escalaObjetivo) || num(d.escalaObjetivo);
   const complemento = objetivoEscala > 0
-    ? Math.max(0, objetivoEscala - (basico + presentismo + noRem + aCuentaMonto))
+    ? Math.max(0, objetivoEscala - (basico + presentismoPleno + noRem + aCuentaMonto))
     : num(d.complemento);
   const regularRemun = basico + antiguedad + presentismo + tituloAdic + adicPres + complemento + aCuentaMonto;
   const mejorRem = num(opts?.mejorRem) || (regularRemun + noRem);
