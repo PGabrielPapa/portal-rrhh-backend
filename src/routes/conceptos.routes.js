@@ -95,6 +95,22 @@ const VARIABLES_FORMULA = [
   ['pctAnssal', '% ANSSAL (parámetros)'],
   ['pctCuotaSindical', '% cuota sindical del sindicato (afiliado)'],
   ['pctSolidario', '% aporte solidario del sindicato (no afiliado)'],
+  ['sacBase', 'Base del SAC (mejor remuneración del semestre)'],
+  ['baseAportes', 'Base de aportes SIPA (con tope)'],
+  ['baseAportesOs', 'Base de aportes de obra social (con tope/jornada)'],
+  ['pctJubilacion', '% jubilación (parámetros)'],
+  ['pctPami', '% INSSJP/PAMI empleado (parámetros)'],
+  ['feriados', 'Feriados trabajados (cantidad)'],
+  ['feriadosNoTrab', 'Feriados NO trabajados (plus LCT)'],
+  ['diasLicenciaConGoce', 'Días de licencia con goce — total (plus LCT)'],
+  ['diasVacaciones', 'Días de vacaciones del período'],
+  ['diasExamen', 'Días de examen/estudio del período'],
+  ['diasLicOtras', 'Días de otras licencias con goce'],
+  ['pctAntigPorAnio', '% antigüedad por año (sindicato)'],
+  ['pctPresentismo', '% presentismo (sindicato)'],
+  ['basePres', 'Base de cálculo del presentismo'],
+  ['presentismoPleno', 'Presentismo pleno (sin castigo)'],
+  ['escalaObjetivo', 'Monto objetivo de la escala unificada'],
 ];
 const SAMPLE_CTX = { basico: 500000, sueldo: 500000, complemento: 0, norem: 85000, antiguedad_monto: 25000, bruto: 600000, anios: 5, remun: 600000, noRem: 85000, dias: 30, he50: 0, he100: 0, ausencias: 0, feriados: 0, smvm: 372400, topeSipa: 4509567.41, afiliado: 0, noAfiliado: 1, pctObraSocial: 2.55, pctAnssal: 0.45, pctCuotaSindical: 2, pctSolidario: 1.4 };
 

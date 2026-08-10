@@ -167,15 +167,59 @@ export function calcularRecibo(emp, params, opts) {
   const { anio, mes, tipo = 'mensual' } = opts || {};
   const p = params || {};
   const d = emp.data || {};
-  const esFC = !d.cod_sindicato || String(d.cod_sindicato).toUpperCase() === 'FC';
+  // Fuera de convenio: por sindicato FC/vacío, por convenio FC, o por tipo de liquidación IDEE
+  // 'fuera_bim' / 'fijo' (socio). No cobra antigüedad, presentismo, adicional por título ni cuota
+  // sindical (son beneficios de convenio). UECARA con convenio ('uecara_bim'/'solo_convenio') SÍ.
+  const esFC = !d.cod_sindicato || String(d.cod_sindicato).toUpperCase() === 'FC'
+    || String(d.cod_convenio || '').toUpperCase() === 'FC'
+    || ['fuera_bim', 'fijo'].includes(String(d.liqUecara || '').toLowerCase());
 
   // Si el empleado tiene categoría de convenio que define básico, ese tiene prioridad (luego básico cargado / escala).
   // Prioridad del básico: matriz de antigüedad > convenio/categoría > básico del legajo > sueldo > bruto.
   const basico = num(opts?.basicoPorAntiguedad) || num(opts?.convBasico) || num(d.basico) || num(d.sueldo) || num(emp.bruto);
   const anios = aniosAntiguedad(emp.ingreso, anio, mes);
   const sind = opts?.sind || null;
+
+  // ── Migración a conceptos editables (por FASES, con red de seguridad) ──
+  // Cada cálculo nativo puede reemplazarse por un concepto con `rol`. Si hay un concepto ACTIVO con
+  // ese rol, el motor usa su fórmula (y para los haberes que ALIMENTAN otros cálculos —antigüedad,
+  // presentismo, complemento— realimenta el valor al motor). Si no hay concepto o la fórmula falla,
+  // corre el nativo → nunca se rompe un recibo.
+  const _conceptosForm = Array.isArray(opts?.conceptosFormula) ? opts.conceptosFormula : [];
+  const _rolesConcepto = new Set(_conceptosForm.map((c) => c && c.rol).filter(Boolean));
+  const _rolActivo = (rol) => _rolesConcepto.has(rol);
+  const _rolesAporte = ['jubilacion', 'obra_social', 'anssal', 'pami', 'sindical', 'art37_1', 'art37_2', 'os_comp'];
+  // Roles "valor interno": antigüedad/presentismo/complemento ALIMENTAN otros cálculos y se muestran
+  // en su línea nativa (con etiqueta y proporción de quincena). El concepto solo define su VALOR
+  // (se realimenta arriba); la pasada de fórmulas NO empuja una línea aparte para estos roles.
+  const _rolesValorInterno = ['antiguedad', 'presentismo', 'complemento'];
+  // Modo JORNAL (UOCRA): el motor no arma los haberes mensuales (sueldo, antigüedad, etc.); los
+  // construyen íntegramente los conceptos del jornal (horas × valor hora, premio, feriado, aportes).
+  const _modoJornal = opts?.modoJornal === true;
+  const _macrosEarly = opts?.macrosFormulas || null;
+  // Preferencia por ALCANCE: si para un rol hay conceptos con alcance (convenio/empresa/legajo), esos
+  // le ganan al genérico (así una regla UECARA reemplaza a la general sin romperla para el resto).
+  const _esScoped = (c) => !!(c && (c.alcanceConvenio || c.alcanceEmpresa || (Array.isArray(c.soloLegajos) && c.soloLegajos.length)));
+  const _hayScoped = (rol) => !!rol && _conceptosForm.some((c) => c.rol === rol && _esScoped(c));
+  const _conceptosDeRol = (rol) => { const cs = _conceptosForm.filter((c) => c.rol === rol); const e = cs.filter(_esScoped); return e.length ? e : cs; };
+  // Evalúa el/los concepto(s) con rol `rol` (el más específico gana) usando el contexto dado; si
+  // ninguno aplica o falla, devuelve el valor nativo. Redondea a 2 decimales.
+  const _valRol = (rol, nativo, ctx) => {
+    for (const cf of _conceptosDeRol(rol)) {
+      if (!cf.formula) continue;
+      try {
+        if (cf.condicion && String(cf.condicion).trim() && evaluarFormula(cf.condicion, ctx, { macros: _macrosEarly }) === 0) continue;
+        const v = round2(evaluarFormula(cf.formula, ctx, { macros: _macrosEarly }));
+        if (Number.isFinite(v)) return v;
+      } catch { /* probar siguiente */ }
+    }
+    return nativo;
+  };
+
   const pctAntig = (sind && Number(sind.pctAntigPorAnio) > 0) ? Number(sind.pctAntigPorAnio) : num(p.pctAntiguedadPorAnio);
-  const antiguedad = esFC ? 0 : basico * anios * pctAntig / 100;
+  // ANTIGÜEDAD (rol 'antiguedad'). Alimenta presentismo (según base), complemento y regularRemun.
+  let antiguedad = (esFC || _modoJornal) ? 0 : basico * anios * pctAntig / 100;
+  if (!esFC && !_modoJornal && _rolActivo('antiguedad')) antiguedad = _valRol('antiguedad', antiguedad, { basico, anios, sueldo: num(d.sueldo), bruto: num(emp.bruto), pctAntigPorAnio: pctAntig, montoAntigPorAnio: num(sind?.montoAntigPorAnio), __aux: opts?.auxFormulas || {} });
   const pierdePresentismo = num(opts?.diasSuspension) > 0 || num(opts?.ausenciasInjustificadas) > 0;
   // Adicional por título según el nivel del empleado (data.nivelTitulo) y los montos del CCT (sindicato).
   const nivelTit = String(d.nivelTitulo || '').toLowerCase();
@@ -190,7 +234,8 @@ export function calcularRecibo(emp, params, opts) {
   // Presentismo PLENO = el que corresponde sin castigos (base × %). El complemento función se calcula
   // sobre este valor para que quede FIJO: así, si el empleado pierde el presentismo por ausencias
   // injustificadas, el sueldo baja de verdad (el complemento no crece para taparlo).
-  const presentismoPleno = esFC ? 0 : basePres * pctPres / 100;
+  let presentismoPleno = (esFC || _modoJornal) ? 0 : basePres * pctPres / 100;
+  if (!esFC && !_modoJornal && _rolActivo('presentismo')) presentismoPleno = _valRol('presentismo', presentismoPleno, { basico, antiguedad_monto: antiguedad, basePres, pctPresentismo: pctPres, titulo: tituloAdic, __aux: opts?.auxFormulas || {} });
   const presentismo = (esFC || pierdePresentismo) ? 0 : presentismoPleno;
   // Adicional presentismo individual (tilde del legajo): lleva el presentismo hasta el 10%; solo si la diferencia es > 0.
   const adicPres = (esFC || pierdePresentismo || !d.adicionalPresentismo) ? 0 : Math.max(0, basePres * (10 - pctPres) / 100);
@@ -201,9 +246,10 @@ export function calcularRecibo(emp, params, opts) {
   // monto, con piso en 0 (si el convenio ya lo supera, cobra el convenio; "el mejor de las dos").
   // La ANTIGÜEDAD queda AFUERA del objetivo. Si no hay objetivo, usa el complemento cargado a mano.
   const objetivoEscala = num(opts?.escalaObjetivo) || num(d.escalaObjetivo);
-  const complemento = objetivoEscala > 0
+  let complemento = _modoJornal ? 0 : (objetivoEscala > 0
     ? Math.max(0, objetivoEscala - (basico + presentismoPleno + noRem + aCuentaMonto))
-    : num(d.complemento);
+    : num(d.complemento));
+  if (!_modoJornal && _rolActivo('complemento')) complemento = _valRol('complemento', complemento,{ basico, antiguedad_monto: antiguedad, presentismoPleno, norem: noRem, noRem, aCuenta: aCuentaMonto, escalaObjetivo: objetivoEscala, complementoSinNoRem: sind?.complementoSinNoRem ? 1 : 0, __aux: opts?.auxFormulas || {} });
   const regularRemun = basico + antiguedad + presentismo + tituloAdic + adicPres + complemento + aCuentaMonto;
   const mejorRem = num(opts?.mejorRem) || (regularRemun + noRem);
   const fechaPago = opts?.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-01`;
@@ -231,7 +277,9 @@ export function calcularRecibo(emp, params, opts) {
     // Si la corrida aporta la mejor remuneración del semestre se usa esa; si no, la del mes en curso.
     const baseSac = num(opts?.mejorRemSAC) > 0 ? num(opts.mejorRemSAC) : regularRemun;
     const sac = baseSac * 0.5;
-    haberes.push({ concepto: `SAC ${tipo === 'sac1' ? '1°' : '2°'} semestre (50% mejor remuneración)`, tipo: 'rem', monto: round2(sac) });
+    // MIGRADO A CONCEPTO (rol='sac'): si hay un concepto activo con rol 'sac', lo produce el
+    // motor de fórmulas (variable sacBase disponible). Si no, se usa el cálculo nativo.
+    if (!_rolActivo('sac')) haberes.push({ concepto: `SAC ${tipo === 'sac1' ? '1°' : '2°'} semestre (50% mejor remuneración)`, tipo: 'rem', monto: round2(sac) });
     detalle.sac = { mejorRemSemestre: round2(baseSac), monto: round2(sac) };
   } else if (esVacaciones) {
     const diasCorr = anios < 5 ? 14 : anios < 10 ? 21 : anios < 20 ? 28 : 35;
@@ -350,7 +398,7 @@ export function calcularRecibo(emp, params, opts) {
     const concepto = (opts?.conceptoAjuste && String(opts.conceptoAjuste).trim()) || 'Extraordinaria no remunerativa';
     haberes.push({ concepto, tipo: 'norem', monto: round2(monto) });
     detalle.extraNoRem = { concepto, monto: round2(monto) };
-  } else {
+  } else if (!_modoJornal) {
     // mensual / quincenal
     const diasBase = esQuincenal ? 15 : 30;
     const diasTrab = num(opts?.diasTrabajados) > 0 ? Math.min(num(opts.diasTrabajados), diasBase) : diasBase;
@@ -384,21 +432,22 @@ export function calcularRecibo(emp, params, opts) {
     // Otros conceptos manuales
     if (num(opts?.otrosRemun) > 0) haberes.push({ concepto: opts?.otrosRemunLabel || 'Otros haberes remunerativos', tipo: 'rem', monto: round2(num(opts.otrosRemun)) });
     if (num(opts?.otrosNoRem) > 0) haberes.push({ concepto: opts?.otrosNoRemLabel || 'Otros haberes no remunerativos', tipo: 'norem', monto: round2(num(opts.otrosNoRem)) });
-    // Feriados trabajados: un jornal adicional por feriado (Art. 166/168 LCT)
+    // Feriados trabajados: un jornal adicional por feriado (Art. 166/168 LCT). MIGRADO → rol 'feriado_trab'.
     const ferT = num(opts?.feriadosTrabajados);
-    if (ferT > 0) haberes.push({ concepto: `Feriados trabajados (${ferT})`, tipo: 'rem', monto: round2((basico / 30) * ferT) });
+    if (ferT > 0 && !_rolActivo('feriado_trab')) haberes.push({ concepto: `Feriados trabajados (${ferT})`, tipo: 'rem', monto: round2((basico / 30) * ferT) });
     // Plus LCT (Grupo LEITEN): feriados NO trabajados y licencias CON goce (vacaciones/examen/LCT) se
     // pagan a mes/25 por día, restando lo que ya venía en el sueldo (mes/30) → plus neto = mes/150 × días.
     // Queda FUERA de la escala. Feriado: base = básico + antigüedad. Licencia: base = básico + antig + complemento.
+    // MIGRADO → roles 'feriado_no_trab' y 'licencia_goce' (variables feriadosNoTrab, diasLicenciaConGoce).
     if (objetivoEscala > 0) {
       const ferNT = num(opts?.feriadosNoTrab);
-      if (ferNT > 0) {
+      if (ferNT > 0 && !_rolActivo('feriado_no_trab')) {
         const mesFer = basico + antiguedad;
         haberes.push({ concepto: `Feriado (${ferNT})`, tipo: 'rem', monto: round2((mesFer / 25) * ferNT) });
         haberes.push({ concepto: `Reducción feriado (${ferNT})`, tipo: 'rem', monto: -round2((mesFer / 30) * ferNT) });
       }
       const dLic = num(opts?.diasLicenciaConGoce);
-      if (dLic > 0) {
+      if (dLic > 0 && !_rolActivo('licencia_goce')) {
         const mesLic = basico + antiguedad + complemento;
         const etq = opts?.licenciaConGoceLabel || 'Licencia con goce (Art. 158 LCT)';
         haberes.push({ concepto: `${etq} (${dLic} días)`, tipo: 'rem', monto: round2((mesLic / 25) * dLic) });
@@ -421,9 +470,9 @@ export function calcularRecibo(emp, params, opts) {
   }
 
   // ── Conceptos por FÓRMULA (motor de fórmulas). Aditivo: solo actúan si se pasan
-  //    conceptos activos con fórmula. Con lista vacía, el recibo es idéntico al actual. ──
+  //    conceptos activos con fórmula. Con lista vacía, el recibo es idéntico al actual.
+  //    (_conceptosForm / _rolesConcepto se declararon arriba para poder saltear nativos.) ──
   const _formDesc = [];
-  const _conceptosForm = Array.isArray(opts?.conceptosFormula) ? opts.conceptosFormula : [];
   if (_conceptosForm.length) {
     const _cx = {}; for (const [k, v] of Object.entries(d)) if (k.startsWith('cx_')) _cx[k] = num(v);
     // Afiliación resuelta por histórico (opts.afiliadoSindical, calculada por la ruta según la
@@ -451,14 +500,33 @@ export function calcularRecibo(emp, params, opts) {
       pctObraSocial: num(p.pctObraSocial), pctAnssal: num(p.pctAnssal),
       pctCuotaSindical: (sind && Number(sind.pctEmpleado) > 0) ? Number(sind.pctEmpleado) : num(p.pctSindicatoEmp),
       pctSolidario: sind ? (Number(sind.pctSolidario) || 0) : 0,
+      pctPremio: sind ? (Number(sind.pctPremio) || 0) : 0,
+      // Variables del JORNAL (UOCRA): valor hora, horas y jornada, SNR. Sirven para los conceptos del
+      // jornal en el motor único. Quedan en 0 si no es una liquidación por jornal.
+      valorHora: num(opts?.valorHora), horasNormales: num(opts?.horasNormales),
+      jornadaHoras: num(opts?.jornadaHoras) || 9, snrJornal: num(opts?.snrJornal), esQuincena: esQuincenal ? 1 : 0,
+      // Base del SAC: mejor remuneración del semestre (o la del mes si la corrida no la aporta).
+      sacBase: num(opts?.mejorRemSAC) > 0 ? num(opts.mejorRemSAC) : regularRemun,
       he50: num(opts?.horasExtra50), he100: num(opts?.horasExtra100), ausencias: num(opts?.ausenciasInjustificadas),
-      feriados: num(opts?.feriadosTrabajados), smvm: num(p.smvmMensual || p.smvm), topeSipa: num(p.topeAportesMax), ..._cx };
+      feriados: num(opts?.feriadosTrabajados),
+      // Plus LCT (escala unificada): feriados NO trabajados y días de licencia con goce del período,
+      // discriminados por tipo para detallar cada licencia en el recibo.
+      feriadosNoTrab: num(opts?.feriadosNoTrab), diasLicenciaConGoce: num(opts?.diasLicenciaConGoce),
+      diasVacaciones: num(opts?.diasVacaciones), diasExamen: num(opts?.diasExamen), diasLicOtras: num(opts?.diasLicOtras),
+      smvm: num(p.smvmMensual || p.smvm), topeSipa: num(p.topeAportesMax), ..._cx };
     _ctxF.__aux = opts?.auxFormulas || {};
     const _macrosF = opts?.macrosFormulas || null;
     detalle.conceptosFormula = [];
     const _motivoEg = opts?.motivoBaja || null;
     for (const cf of _conceptosForm) {
       try {
+        // Los conceptos con rol de APORTE se evalúan en la 2ª pasada (necesitan la base con tope). Saltear acá.
+        if (_rolesAporte.includes(cf.rol)) continue;
+        // Los roles "valor interno" (antigüedad/presentismo/complemento) ya se realimentaron al motor
+        // y se muestran en su línea nativa; no empujar una línea aparte.
+        if (_rolesValorInterno.includes(cf.rol)) continue;
+        // Si para este rol hay un concepto específico (alcance), el genérico no se aplica.
+        if (_hayScoped(cf.rol) && !_esScoped(cf)) continue;
         // Conceptos asociados a motivos de egreso: solo se aplican en la liquidación final y si el motivo coincide.
         if (Array.isArray(cf.motivosEgreso) && cf.motivosEgreso.length && (tipo !== 'final' || !cf.motivosEgreso.includes(_motivoEg))) continue;
         if (cf.condicion && String(cf.condicion).trim() && evaluarFormula(cf.condicion, _ctxF, { macros: _macrosF }) === 0) continue;
@@ -507,15 +575,65 @@ export function calcularRecibo(emp, params, opts) {
   const ap = (pct) => round2(baseAportes * num(pct) / 100);
   const apOs = (pct) => round2(baseAportesOs * num(pct) / 100);
   const aJub = ap(p.pctJubilacion), aOS = apOs(p.pctObraSocial), aAnssal = apOs(p.pctAnssal), aPami = ap(p.pctPamiEmp);
-  if (aJub > 0) descuentos.push({ concepto: 'Jubilación', monto: aJub });
-  if (aOS > 0) descuentos.push({ concepto: 'Obra Social', monto: aOS });
-  if (aAnssal > 0) descuentos.push({ concepto: 'ANSSAL', monto: aAnssal });
-  if (aPami > 0) descuentos.push({ concepto: 'INSSJP (PAMI)', monto: aPami });
-  // Aporte sindical del trabajador. AFILIADO → cuota sindical (pctEmpleado). NO afiliado dentro de
-  // convenio → APORTE SOLIDARIO (pctSolidario) si el CCT lo define (ej. Plásticos 1,4%). Si el
-  // convenio no define solidario, se mantiene la cuota sindical (comportamiento anterior).
+  // Afiliación (para cuota sindical vs aporte solidario).
   const _afiliadoSindApo = (opts?.afiliadoSindical === true || opts?.afiliadoSindical === 'si')
     || (opts?.afiliadoSindical == null && (d.afiliadoSindical === true || d.afiliadoSindical === 'si' || d.afiliadoSindical === 'sí'));
+
+  // ── Migración FASE APORTES (2ª pasada) ──
+  // Los aportes dependen de la base ya calculada (con tope SIPA), por eso se evalúan acá y no en la
+  // 1ª pasada de fórmulas. Si un concepto con rol de aporte produce un valor, reemplaza al nativo
+  // (se anota en _rolesProducidos). Si falla o no existe, corre el nativo → red de seguridad.
+  const _rolesProducidos = new Set();
+  // Socios / autónomos: no tributan aportes de seguridad social (solo Ganancias). Flag en el legajo.
+  const _sinAportes = d.sinAportes === true || d.sinAportes === 'si' || d.sinAportes === '1';
+  // "Aportes propios del convenio": si hay al menos un aporte con ALCANCE (ej. UECARA/FC), ese convenio
+  // define TODA su estructura de aportes por conceptos. Se apagan los aportes nativos Y los conceptos
+  // de aporte genéricos (sin alcance), para que no se cuele ANSSAL/cuota que ese convenio no tiene.
+  const _aportesPorConcepto = _conceptosForm.some((c) => _rolesAporte.includes(c.rol) && _esScoped(c));
+  if (!_sinAportes && _conceptosForm.some((c) => _rolesAporte.includes(c.rol))) {
+    const _cxAp = {}; for (const [k, v] of Object.entries(d)) if (k.startsWith('cx_')) _cxAp[k] = num(v);
+    const ctxAp = {
+      basico, complemento, norem: noRem, noRem, antiguedad_monto: antiguedad, remun: regularRemun,
+      totalRemun, totalNoRem, totalHaberes, baseAportes, baseAportesOs,
+      pctJubilacion: num(p.pctJubilacion), pctPami: num(p.pctPamiEmp),
+      pctObraSocial: num(p.pctObraSocial), pctAnssal: num(p.pctAnssal),
+      pctCuotaSindical: (sind && Number(sind.pctEmpleado) > 0) ? Number(sind.pctEmpleado) : num(p.pctSindicatoEmp),
+      pctSolidario: sind ? (Number(sind.pctSolidario) || 0) : 0,
+      pctArt37_1: sind ? (Number(sind.pctArt37_1) || 0) : 0, pctArt37_2: sind ? (Number(sind.pctArt37_2) || 0) : 0,
+      esParcial: esParcial ? 1 : 0,
+      afiliado: _afiliadoSindApo ? 1 : 0, noAfiliado: (!esFC && !_afiliadoSindApo) ? 1 : 0,
+      smvm: num(p.smvmMensual || p.smvm), topeSipa: num(p.topeAportesMax), ..._cxAp, __aux: opts?.auxFormulas || {},
+    };
+    const _macrosAp = opts?.macrosFormulas || null;
+    for (const cf of _conceptosForm) {
+      if (!_rolesAporte.includes(cf.rol)) continue;
+      // Convenio con aportes propios: solo se aplican sus conceptos con alcance (los genéricos, no).
+      if (_aportesPorConcepto && !_esScoped(cf)) continue;
+      // Preferencia por alcance: si hay un aporte específico para este rol, el genérico no aplica.
+      if (_hayScoped(cf.rol) && !_esScoped(cf)) continue;
+      try {
+        if (cf.condicion && String(cf.condicion).trim() && evaluarFormula(cf.condicion, ctxAp, { macros: _macrosAp }) === 0) continue;
+        let val;
+        if (cf.cantidad && String(cf.cantidad).trim() && cf.valorUnit && String(cf.valorUnit).trim()) {
+          val = round2(round2(evaluarFormula(cf.cantidad, ctxAp, { macros: _macrosAp })) * round2(evaluarFormula(cf.valorUnit, ctxAp, { macros: _macrosAp })));
+        } else { val = round2(evaluarFormula(cf.formula, ctxAp, { macros: _macrosAp })); }
+        if (!val) continue;
+        descuentos.push({ concepto: cf.descripcion || cf.codigo || 'Aporte', monto: val });
+        _rolesProducidos.add(cf.rol);
+        detalle.conceptosFormula = detalle.conceptosFormula || [];
+        detalle.conceptosFormula.push({ codigo: cf.codigo || null, descripcion: cf.descripcion || null, base: 'descuento', rol: cf.rol, monto: val });
+      } catch (e) { /* fórmula inválida: cae al nativo */ }
+    }
+  }
+
+  // Aportes nativos: solo si el empleado tributa aportes, el convenio NO tiene aportes propios, y el
+  // concepto con ese rol NO produjo la línea (red de seguridad).
+  if (aJub > 0 && !_sinAportes && !_aportesPorConcepto && !_rolesProducidos.has('jubilacion')) descuentos.push({ concepto: 'Jubilación', monto: aJub });
+  if (aOS > 0 && !_sinAportes && !_aportesPorConcepto && !_rolesProducidos.has('obra_social')) descuentos.push({ concepto: 'Obra Social', monto: aOS });
+  if (aAnssal > 0 && !_sinAportes && !_aportesPorConcepto && !_rolesProducidos.has('anssal')) descuentos.push({ concepto: 'ANSSAL', monto: aAnssal });
+  if (aPami > 0 && !_sinAportes && !_aportesPorConcepto && !_rolesProducidos.has('pami')) descuentos.push({ concepto: 'INSSJP (PAMI)', monto: aPami });
+  // Aporte sindical del trabajador. AFILIADO → cuota sindical (pctEmpleado). NO afiliado dentro de
+  // convenio → APORTE SOLIDARIO (pctSolidario) si el CCT lo define (ej. Plásticos 1,4%).
   let aSind = 0, _sindLabel = 'Cuota sindical';
   if (!esFC) {
     const pctCuota = (sind && Number(sind.pctEmpleado) > 0) ? Number(sind.pctEmpleado) : num(p.pctSindicatoEmp);
@@ -524,7 +642,7 @@ export function calcularRecibo(emp, params, opts) {
     else if (pctSolid > 0) { aSind = ap(pctSolid); _sindLabel = 'Aporte solidario'; }
     else { aSind = ap(pctCuota); _sindLabel = 'Cuota sindical'; }
   }
-  if (aSind > 0) descuentos.push({ concepto: _sindLabel, monto: aSind });
+  if (aSind > 0 && !_sinAportes && !_aportesPorConcepto && !_rolesProducidos.has('sindical')) descuentos.push({ concepto: _sindLabel, monto: aSind });
   const totalAportes = descuentos.reduce((s, x) => s + x.monto, 0);
   const netoAntesGan = totalHaberes - totalAportes;
 

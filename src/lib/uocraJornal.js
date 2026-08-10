@@ -58,22 +58,30 @@ export function horasJornalDesdeFichadas(dias, jornadaMin = JORNADA_JORNAL_HS * 
 export function calcReciboJornal(inp) {
   const vh = Number(inp.valorHora) || 0;
   const jorHs = inp.jornadaHoras || JORNADA_JORNAL_HS;
+  // Porcentajes/factores editables (se pasan desde la config; si no vienen, quedan los del CCT).
+  const n = (x, def) => (x === undefined || x === null || x === '' || isNaN(Number(x)) ? def : Number(x));
+  const pctPremio = n(inp.pctPremio, 20);       // premio asistencia %
+  const factorFer = n(inp.factorFeriado, 30 / 25); // factor de la hora feriado (30/25)
+  const pctJub = n(inp.pctJub, 11), pctPami = n(inp.pctPami, 3), pctOS = n(inp.pctOS, 3);
+  const pctCuota = n(inp.pctCuota, 2.5), pctSolid = n(inp.pctSolidario, 2); // afiliado / no afiliado
+  const pctOsNR = n(inp.pctOsNR, 3);
+
   const horasTrab = r2(vh * (inp.horasNormales || 0));                  // 50 Horas trabajadas
-  const premio = (inp.injustificadas || 0) === 0 ? r2(horasTrab * 0.20) : 0; // 110 Premio asistencia
-  const feriado = r2((inp.feriadosNoTrab || 0) * vh * jorHs * 30 / 25); // 121 Horas feriado
+  const premio = (inp.injustificadas || 0) === 0 ? r2(horasTrab * pctPremio / 100) : 0; // 110 Premio asistencia
+  const feriado = r2((inp.feriadosNoTrab || 0) * vh * jorHs * factorFer); // 121 Horas feriado
   const licencia = r2((inp.diasLicencia || 0) * vh * jorHs);            // días de licencia paga (valor día)
   const extra50 = r2(vh * 1.5 * (inp.hsExtra50 || 0));
   const extra100 = r2(vh * 2 * (inp.hsExtra100 || 0));
   const totalRem = r2(horasTrab + premio + feriado + licencia + extra50 + extra100);
 
-  const jub = r2(totalRem * 0.11);
-  const pami = r2(totalRem * 0.03);
-  const os = r2(totalRem * 0.03);
-  const sind = inp.afiliado ? r2(totalRem * 0.025) : r2(totalRem * 0.02); // afiliado 2,5 % / no afiliado 2 %
-  const sindLabel = inp.afiliado ? 'Cuota sindical UOCRA 2,5%' : 'Aporte solidario UOCRA 2%';
+  const jub = r2(totalRem * pctJub / 100);
+  const pami = r2(totalRem * pctPami / 100);
+  const os = r2(totalRem * pctOS / 100);
+  const sind = inp.afiliado ? r2(totalRem * pctCuota / 100) : r2(totalRem * pctSolid / 100);
+  const sindLabel = inp.afiliado ? `Cuota sindical UOCRA ${pctCuota}%` : `Aporte solidario UOCRA ${pctSolid}%`;
 
   const bonoNR = r2((inp.snr || 0) * (inp.quincena ? 0.5 : 1));          // SNR por mitades por quincena
-  const osNR = r2(bonoNR * 0.03);                                        // Obra social s/ no remunerativo
+  const osNR = r2(bonoNR * pctOsNR / 100);                               // Obra social s/ no remunerativo
 
   // Embargos / cuota alimentaria (informados en el panel Embargos). El % de alimentos se
   // calcula sobre el neto antes de estas retenciones.

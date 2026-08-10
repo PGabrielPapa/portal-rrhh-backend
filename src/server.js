@@ -100,6 +100,15 @@ try {
   console.error('[boot] migración presentismo/convenio:', e.message);
 }
 
+// Migración a conceptos ejecutables por fórmula (proyecto por fases). Fase 1: SAC.
+try {
+  const { migrarConceptosFormula } = await import('./db/migrateConceptosFormula.js');
+  const r = await migrarConceptosFormula();
+  if (!r.skip) console.log(`[boot] conceptos por fórmula verificados ✓ (${r.tocados})`);
+} catch (e) {
+  console.error('[boot] migración conceptos por fórmula:', e.message);
+}
+
 // Producción: valor hora ahora es POR EMPLEADO. Migra la tabla si quedó con el esquema viejo (por categoría).
 try {
   const { migrarProdValorHora } = await import('./db/migrateProdValorHora.js');

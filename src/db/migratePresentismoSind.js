@@ -1,41 +1,51 @@
-// Presentismo por convenio + flag de antigüedad/presentismo sobre el No Rem.
-// Los empleados del Grupo LEITEN usan los códigos de sindicato SEC, PLASTICO, UOM, ASIMRA
-// (y FC = fuera de convenio). El catálogo original tenía 'COMERCIO' y 'UOYEP', que NO matcheaban,
-// por eso el presentismo caía al 5% por defecto y la antigüedad al 1%. Esta migración garantiza que
-// existan las filas con los códigos reales y sus valores correctos, y marca qué convenios calculan
-// antigüedad + presentismo sobre la asignación no remunerativa (Comercio sí; el resto no).
-//   - SEC (Comercio):  presentismo 8,33% · antig 1%/año · base básico+antig · SÍ antig/pres s/No Rem.
-//   - PLASTICO:        presentismo 10%   · antig 2%/año · base básico       · NO.
-//   - UOM:             presentismo 10%   · antig 1%/año · base básico+antig · NO.
-//   - ASIMRA:          presentismo 0%    · antig 1%/año · base básico+antig · NO.
+// Configuración de aportes/adicionales POR CONVENIO (fuente única de las fórmulas del motor).
+// Los empleados usan códigos SEC, PLASTICO, UOM, ASIMRA, UECARA (y FC = fuera de convenio).
+// Esta migración garantiza que existan las filas con los códigos reales y sus valores, y agrega
+// los campos nuevos que las fórmulas leen desde Sindicatos:
+//   - monto_antig_por_anio: antigüedad como MONTO fijo por año (UECARA $13.332); si es 0, se usa el %.
+//   - complemento_sin_norem: el complemento función NO resta el No Rem (UECARA).
+//   - pct_art37_1 / pct_art37_2: aportes especiales Art. 37 I y II (UECARA), en vez de ANSSAL/cuota.
+//   - titulo_secundario / titulo_universitario: adicional por título (monto fijo).
 // Idempotente (upsert por codigo): fija los valores esperados en cada arranque.
 import { query } from '../db.js';
 
-// [codigo, nombre, pctPres, pctAntig, presBase, tituloAdic, pctEmpleado, pctPatronal, nota, noRemAntigPres, pctSolidario]
-// pctSolidario = aporte solidario del trabajador NO afiliado (0 = no aplica; cobra cuota sindical).
+// Config por convenio. pctSolidario = aporte solidario del NO afiliado (0 = cobra cuota).
 const CFG = [
-  ['SEC', 'Empleados de Comercio (SEC/FAECYS)', 8.33, 1, 'basico+antig+titulo', true, 2.5, 0.5, 'Cuota sindical 2% + FAECYS 0,5%', true, 0],
-  ['PLASTICO', 'Unión Obreros y Emp. Plásticos', 10, 2, 'basico', false, 2, 1.5, 'Aporte UOYEP', false, 1.4],
-  ['UOM', 'Unión Obrera Metalúrgica', 10, 1, 'basico+antig', true, 2.5, 1.5, 'Cuota sindical + FONDO', false, 0],
-  ['ASIMRA', 'Sup. Industria Metalmecánica', 0, 1, 'basico+antig', true, 3, 1.5, 'Cuota sindical + fondo cultura', false, 0],
+  { cod: 'SEC', nom: 'Empleados de Comercio (SEC/FAECYS)', pctPres: 8.33, pctAntig: 1, presBase: 'basico+antig+titulo', titAdic: true, pEmp: 2.5, pPat: 0.5, nota: 'Cuota sindical 2% + FAECYS 0,5%', nrAP: true, pSolid: 0, montoAntig: 0, compSinNR: false, art1: 0, art2: 0, titSec: 0, titUni: 0 },
+  { cod: 'PLASTICO', nom: 'Unión Obreros y Emp. Plásticos', pctPres: 10, pctAntig: 2, presBase: 'basico', titAdic: false, pEmp: 2, pPat: 1.5, nota: 'Aporte UOYEP', nrAP: false, pSolid: 1.4, montoAntig: 0, compSinNR: false, art1: 0, art2: 0, titSec: 0, titUni: 0 },
+  { cod: 'UOM', nom: 'Unión Obrera Metalúrgica', pctPres: 10, pctAntig: 1, presBase: 'basico+antig', titAdic: true, pEmp: 2.5, pPat: 1.5, nota: 'Cuota sindical + FONDO', nrAP: false, pSolid: 0, montoAntig: 0, compSinNR: false, art1: 0, art2: 0, titSec: 0, titUni: 0 },
+  { cod: 'ASIMRA', nom: 'Sup. Industria Metalmecánica', pctPres: 0, pctAntig: 1, presBase: 'basico+antig', titAdic: true, pEmp: 3, pPat: 1.5, nota: 'Cuota sindical + fondo cultura', nrAP: false, pSolid: 0, montoAntig: 0, compSinNR: false, art1: 0, art2: 0, titSec: 0, titUni: 0 },
+  // UECARA (CCT 660/13): antigüedad FIJA $13.332/año, presentismo 10% s/básico, complemento SIN No Rem,
+  // aportes especiales Art. 37 I 1,5% y II 1% (no ANSSAL ni cuota), adicional título 49.820 / 72.944.
+  { cod: 'UECARA', nom: 'Empl. de Conducción (UECARA)', pctPres: 10, pctAntig: 0, presBase: 'basico', titAdic: true, pEmp: 0, pPat: 0, nota: 'Antig. fija $/año · Art.37 I/II · complemento sin No Rem', nrAP: false, pSolid: 0, montoAntig: 13332, compSinNR: true, art1: 1.5, art2: 1, titSec: 49820, titUni: 72944, premio: 0 },
+  // UOCRA (jornal, CCT 76/75): cuota afiliado 2,5% · aporte solidario no afiliado 2% · premio asistencia 20%.
+  { cod: 'UOCRA', nom: 'Unión Obrera de la Construcción (UOCRA)', pctPres: 0, pctAntig: 1, presBase: 'basico', titAdic: false, pEmp: 2.5, pPat: 2, nota: 'Jornal · premio 20% · cuota 2,5% / solidario 2%', nrAP: false, pSolid: 2, montoAntig: 0, compSinNR: false, art1: 0, art2: 0, titSec: 0, titUni: 0, premio: 20 },
 ];
 
 export async function migrarPresentismoSind() {
   await query(`ALTER TABLE sindicatos ADD COLUMN IF NOT EXISTS pct_presentismo NUMERIC(6,2) NOT NULL DEFAULT 0`);
   await query(`ALTER TABLE sindicatos ADD COLUMN IF NOT EXISTS no_rem_con_antig_pres BOOLEAN NOT NULL DEFAULT false`);
   await query(`ALTER TABLE sindicatos ADD COLUMN IF NOT EXISTS pct_solidario NUMERIC(6,2) NOT NULL DEFAULT 0`);
+  await query(`ALTER TABLE sindicatos ADD COLUMN IF NOT EXISTS monto_antig_por_anio NUMERIC(14,2) NOT NULL DEFAULT 0`);
+  await query(`ALTER TABLE sindicatos ADD COLUMN IF NOT EXISTS complemento_sin_norem BOOLEAN NOT NULL DEFAULT false`);
+  await query(`ALTER TABLE sindicatos ADD COLUMN IF NOT EXISTS pct_art37_1 NUMERIC(6,2) NOT NULL DEFAULT 0`);
+  await query(`ALTER TABLE sindicatos ADD COLUMN IF NOT EXISTS pct_art37_2 NUMERIC(6,2) NOT NULL DEFAULT 0`);
+  await query(`ALTER TABLE sindicatos ADD COLUMN IF NOT EXISTS pct_premio NUMERIC(6,2) NOT NULL DEFAULT 0`);
   let tocadas = 0;
-  for (const [cod, nom, pctPres, pctAntig, presBase, titAdic, pEmp, pPat, nota, nrAP, pSolid] of CFG) {
+  for (const c of CFG) {
     const r = await query(
-      `INSERT INTO sindicatos (codigo, nombre, pct_empleado, pct_patronal, pct_antig_por_anio, nota, tiene_adicional_titulo, pres_base, pct_presentismo, no_rem_con_antig_pres, pct_solidario)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      `INSERT INTO sindicatos (codigo, nombre, pct_empleado, pct_patronal, pct_antig_por_anio, nota, tiene_adicional_titulo, pres_base, pct_presentismo, no_rem_con_antig_pres, pct_solidario, monto_antig_por_anio, complemento_sin_norem, pct_art37_1, pct_art37_2, titulo_secundario, titulo_universitario, pct_premio)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        ON CONFLICT (codigo) DO UPDATE SET
          nombre=EXCLUDED.nombre, pct_empleado=EXCLUDED.pct_empleado, pct_patronal=EXCLUDED.pct_patronal,
          pct_antig_por_anio=EXCLUDED.pct_antig_por_anio, nota=EXCLUDED.nota,
          tiene_adicional_titulo=EXCLUDED.tiene_adicional_titulo, pres_base=EXCLUDED.pres_base,
          pct_presentismo=EXCLUDED.pct_presentismo, no_rem_con_antig_pres=EXCLUDED.no_rem_con_antig_pres,
-         pct_solidario=EXCLUDED.pct_solidario`,
-      [cod, nom, pEmp, pPat, pctAntig, nota, titAdic, presBase, pctPres, nrAP, pSolid]);
+         pct_solidario=EXCLUDED.pct_solidario, monto_antig_por_anio=EXCLUDED.monto_antig_por_anio,
+         complemento_sin_norem=EXCLUDED.complemento_sin_norem, pct_art37_1=EXCLUDED.pct_art37_1,
+         pct_art37_2=EXCLUDED.pct_art37_2, titulo_secundario=EXCLUDED.titulo_secundario,
+         titulo_universitario=EXCLUDED.titulo_universitario, pct_premio=EXCLUDED.pct_premio`,
+      [c.cod, c.nom, c.pEmp, c.pPat, c.pctAntig, c.nota, c.titAdic, c.presBase, c.pctPres, c.nrAP, c.pSolid, c.montoAntig, c.compSinNR, c.art1, c.art2, c.titSec, c.titUni, c.premio || 0]);
     tocadas += r.rowCount;
   }
   return { skip: false, tocadas };
