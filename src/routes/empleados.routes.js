@@ -493,6 +493,15 @@ router.post('/actualizar-convenios', requireRole('rrhh', 'admin'), async (req, r
   if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'No se recibieron filas.' });
   const norm = (s) => String(s || '').replace(/\D/g, '');
   const val = (r, ...keys) => { for (const k of keys) if (r[k] != null && String(r[k]).trim() !== '') return String(r[k]).trim(); return ''; };
+  // Parseo robusto de montos: el Excel guarda números con punto decimal (4652985.42) pero también
+  // puede venir en formato AR (1.234.567,89). Detecta el formato en vez de asumir que el punto = miles.
+  const parseMonto = (v) => {
+    if (typeof v === 'number') return v;
+    let s = String(v).trim().replace(/[^\d.,-]/g, '');
+    if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');           // AR: punto=miles, coma=decimal
+    else if ((s.match(/\./g) || []).length > 1) s = s.replace(/\./g, '');       // varios puntos = miles
+    return Number(s) || 0;                                                       // un solo punto = decimal
+  };
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -519,9 +528,18 @@ router.post('/actualizar-convenios', requireRole('rrhh', 'admin'), async (req, r
       const titN = val(r, 'Titulo', 'tituloNivel', 'Título');
       if (titN) patch.tituloNivel = titN.toLowerCase();
       const mFijo = val(r, 'MontoFijo', 'montoFijoUecara');
-      if (mFijo) patch.montoFijoUecara = Number(String(mFijo).replace(/[^\d.,-]/g, '').replace(/\./g, '').replace(',', '.')) || Number(mFijo) || 0;
+      if (mFijo) patch.montoFijoUecara = parseMonto(mFijo);
       const snrU = val(r, 'SNR', 'snrUecara');
       if (snrU) patch.snrUecara = Number(snrU) || 0;
+      // Escala unificada (Grupo LEITEN): categoría/tramo, A Cuenta y No Rem por empleado.
+      const escU = val(r, 'EscalaUnif', 'escalaUnifCat', 'CategTramo');
+      if (escU) patch.escalaUnifCat = escU.toUpperCase();
+      const aCta = val(r, 'ACuenta', 'aCuenta', 'A Cuenta');
+      if (aCta) patch.aCuenta = parseMonto(aCta);
+      const nrem = val(r, 'NoRem', 'norem', 'NOREM');
+      if (nrem !== '') patch.norem = parseMonto(nrem);
+      const bas = val(r, 'Basico', 'basico', 'BASICO');
+      if (bas) patch.basico = parseMonto(bas);
       await client.query('UPDATE empleados SET data = data || $1::jsonb WHERE id=$2', [JSON.stringify(patch), id]);
       actualizados++;
     }

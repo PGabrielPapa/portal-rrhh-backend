@@ -793,6 +793,15 @@ CREATE TABLE IF NOT EXISTS fichadas_ajuste_intermedio (
   PRIMARY KEY (empleado_id, fecha)
 );
 
+-- Marca "no liquidar horas extra" por empleado y período (RR.HH. la setea en el control de fichadas).
+-- Persiste entre reimportaciones. Si existe, la liquidación no paga las horas extra de esa persona.
+CREATE TABLE IF NOT EXISTS fichadas_no_extra (
+  empleado_id INTEGER NOT NULL,
+  anio        INTEGER NOT NULL,
+  mes         INTEGER NOT NULL,
+  PRIMARY KEY (empleado_id, anio, mes)
+);
+
 -- Reglas por turno (el turno viene de Pro-Soft; los horarios se cargan acá).
 --   jornada_min  = jornada diaria en minutos (540 = 9 h, 600 = 10 h).
 --   inicio       = horario de ingreso fijado 'HH:MM' (para turnos restringidos).

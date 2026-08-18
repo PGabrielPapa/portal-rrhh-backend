@@ -197,8 +197,11 @@ router.post('/desde-fichadas', requireRole('rrhh', 'admin'), async (req, res, ne
       // borra solo las novedades de horas extra generadas antes desde fichadas
       await query("DELETE FROM novedades WHERE anio=$1 AND mes=$2 AND origen='fichadas'", [anio, mes]);
     }
+    // Empleados marcados "no liquidar horas extra" en el control de fichadas: se saltean.
+    const noExtraSet = new Set((await query('SELECT empleado_id FROM fichadas_no_extra WHERE anio=$1 AND mes=$2', [anio, mes])).rows.map((x) => x.empleado_id));
     let creadas = 0, conExtra = 0;
     for (const r of rows) {
+      if (noExtraSet.has(r.empleado_id)) continue;
       const d = r.data || {};
       // Extra ya calculado por el parser (banco compensatorio corrido), separado
       // en 50 % (hábil + sábado) y 100 % (domingo/feriado).

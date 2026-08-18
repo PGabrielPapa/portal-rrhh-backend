@@ -296,6 +296,19 @@ router.patch('/:id/dia-intermedio', requireRole('rrhh', 'admin'), async (req, re
   } catch (e) { next(e); }
 });
 
+// PATCH /api/fichadas/:id/no-extra { valor } — marca/desmarca "no liquidar horas extra" de esa
+// persona en el período. No cambia las fichadas; la liquidación no paga sus horas extra.
+router.patch('/:id/no-extra', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const cur = (await query('SELECT empleado_id, anio, mes FROM fichadas_periodo WHERE id=$1', [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'Período no encontrado.' });
+    const valor = !!(req.body || {}).valor;
+    if (valor) await query('INSERT INTO fichadas_no_extra (empleado_id, anio, mes) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [cur.empleado_id, cur.anio, cur.mes]);
+    else await query('DELETE FROM fichadas_no_extra WHERE empleado_id=$1 AND anio=$2 AND mes=$3', [cur.empleado_id, cur.anio, cur.mes]);
+    res.json({ ok: true, noExtra: valor });
+  } catch (e) { next(e); }
+});
+
 // PATCH /api/fichadas/:id/aprobacion  { etapa:'rrhh'|'gerencia', accion:'aprobar'|'rechazar', obs? }
 router.patch('/:id/aprobacion', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
   try {
@@ -436,10 +449,12 @@ router.get('/:anio/:mes', requireRole('rrhh', 'admin'), async (req, res, next) =
     const { rows } = await query(
       `SELECT f.id, f.empleado_id, e.leg_num, e.nom, e.cat, e.data AS edata, em.nombre AS empresa,
               f.data, f.importado_por, f.updated_at, f.estado,
-              f.rrhh_por, f.rrhh_at, f.rrhh_obs, f.ger_por, f.ger_at, f.ger_obs
+              f.rrhh_por, f.rrhh_at, f.rrhh_obs, f.ger_por, f.ger_at, f.ger_obs,
+              (nx.empleado_id IS NOT NULL) AS no_extra
          FROM fichadas_periodo f
          JOIN empleados e ON e.id = f.empleado_id
          JOIN empresas em ON em.id = e.empresa_id
+         LEFT JOIN fichadas_no_extra nx ON nx.empleado_id=f.empleado_id AND nx.anio=f.anio AND nx.mes=f.mes
         WHERE f.anio = $1 AND f.mes = $2
         ORDER BY e.nom`,
       [anio, mes]

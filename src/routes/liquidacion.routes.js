@@ -18,6 +18,7 @@ import { paramsParaFecha } from './parametros.routes.js';
 import { cargarAux } from './valoresAux.routes.js';
 import { escalaUOCRA, rangoQuincena, horasJornalDesdeFichadas, calcReciboJornal, JORNADA_JORNAL_HS } from '../lib/uocraJornal.js';
 import { getFeriadosSet } from '../lib/fichadasProcesar.js';
+import { recomputarTotales } from '../lib/fichadasProsoft.js';
 const router = Router();
 router.use(requireAuth);
 
@@ -67,7 +68,7 @@ async function presBaseMap() {
 }
 const presBaseDe = (m, emp) => m[String(emp?.data?.cod_sindicato || '').toUpperCase()] || 'basico';
 async function sindMap() {
-  try { const { rows } = await query('SELECT codigo, pres_base, pct_presentismo, pct_antig_por_anio, titulo_secundario, titulo_universitario, pct_empleado, pct_patronal FROM sindicatos'); const m = {}; for (const r of rows) m[String(r.codigo).toUpperCase()] = { presBase: r.pres_base, pctPresentismo: Number(r.pct_presentismo) || 0, pctAntigPorAnio: Number(r.pct_antig_por_anio) || 0, tituloSecundario: Number(r.titulo_secundario) || 0, tituloUniversitario: Number(r.titulo_universitario) || 0, pctEmpleado: Number(r.pct_empleado) || 0, pctPatronal: Number(r.pct_patronal) || 0 }; return m; } catch { return {}; }
+  try { const { rows } = await query('SELECT codigo, pres_base, pct_presentismo, pct_antig_por_anio, titulo_secundario, titulo_universitario, pct_empleado, pct_patronal, COALESCE(no_rem_con_antig_pres,false) AS no_rem_con_antig_pres, COALESCE(pct_solidario,0) AS pct_solidario, COALESCE(monto_antig_por_anio,0) AS monto_antig_por_anio, COALESCE(complemento_sin_norem,false) AS complemento_sin_norem, COALESCE(pct_art37_1,0) AS pct_art37_1, COALESCE(pct_art37_2,0) AS pct_art37_2, COALESCE(pct_premio,0) AS pct_premio FROM sindicatos'); const m = {}; for (const r of rows) m[String(r.codigo).toUpperCase()] = { presBase: r.pres_base, pctPresentismo: Number(r.pct_presentismo) || 0, pctAntigPorAnio: Number(r.pct_antig_por_anio) || 0, tituloSecundario: Number(r.titulo_secundario) || 0, tituloUniversitario: Number(r.titulo_universitario) || 0, pctEmpleado: Number(r.pct_empleado) || 0, pctPatronal: Number(r.pct_patronal) || 0, noRemConAntigPres: r.no_rem_con_antig_pres === true, pctSolidario: Number(r.pct_solidario) || 0, montoAntigPorAnio: Number(r.monto_antig_por_anio) || 0, complementoSinNoRem: r.complemento_sin_norem === true, pctArt37_1: Number(r.pct_art37_1) || 0, pctArt37_2: Number(r.pct_art37_2) || 0, pctPremio: Number(r.pct_premio) || 0 }; return m; } catch { return {}; }
 }
 const sindDe = (m, emp) => m[String(emp?.data?.cod_sindicato || '').toUpperCase()] || null;
 
@@ -86,6 +87,67 @@ function convBasicoDe(m, emp) {
   const [titulo, cat] = sel.split('||');
   for (const t of m[code]) { if (String(t.titulo) === titulo) { for (const c of (t.cats || [])) { if (String(c.cat) === cat) return Number(c.basico) || 0; } } }
   return 0;
+}
+
+// Monto de la ESCALA UNIFICADA (Grupo LEITEN) para el empleado, según su categoría/tramo
+// (data.escalaUnifCat = 'CATEG TRAMO', ej. 'ASI SEMI'). 0 si no aplica (empleado sin escala unif).
+function escalaUnifDe(m, emp) {
+  const key = String(emp?.data?.escalaUnifCat || '').trim();
+  if (!key || !m['ESCALA-UNIF']) return 0;
+  for (const t of m['ESCALA-UNIF']) for (const c of (t.cats || [])) if (String(c.cat) === key) return Number(c.basico) || 0;
+  return 0;
+}
+// Escala objetivo del empleado: UECARA/IDEE (cualquier liqUecara con escala BIM) usa la escala BIM
+// por escalaBimObjetivo; el resto, la escala unificada del grupo.
+function escalaObjetivoDe(m, emp) {
+  if (esUecaraMensual(emp)) {
+    const bim = lookupConvBasico(m, 'IDEE-BIM', emp?.data?.escalaBimObjetivo);
+    if (bim > 0) return bim;
+  }
+  return escalaUnifDe(m, emp);
+}
+
+// Plus LCT del mes (para escala unificada): feriados NO trabajados + licencias CON goce (vacaciones,
+// examen, etc.). Los días de licencia salen de las licencias aprobadas del período (excluye sin goce).
+async function plusLCTOpts(empleadoId, anio, mes) {
+  const iniMes = `${anio}-${String(mes).padStart(2, '0')}-01`;
+  const finMes = `${anio}-${String(mes).padStart(2, '0')}-${new Date(anio, mes, 0).getDate()}`;
+  let feriadosNoTrab = 0;
+  try { feriadosNoTrab = (await getFeriadosSet(iniMes, finMes, { soloLiquidables: true })).size; } catch { /* sin feriados */ }
+  const lic = (await query("SELECT tipo, dias FROM licencias WHERE estado='aprobada' AND empleado_id=$1 AND desde<=$2 AND hasta>=$3", [empleadoId, finMes, iniMes])).rows;
+  // Días de licencia CON goce, discriminados por tipo para que el recibo detalle cada uno
+  // (Vacaciones, Examen y el resto agrupado en "otras"). Se exponen como variables de fórmula.
+  let diasLicenciaConGoce = 0, diasVacaciones = 0, diasExamen = 0, diasLicOtras = 0;
+  let licenciaConGoceLabel = null;
+  for (const l of lic) {
+    if (esSinGoce(l.tipo)) continue;
+    const dias = Number(l.dias) || 0;
+    diasLicenciaConGoce += dias;
+    const t = String(l.tipo || '').toLowerCase();
+    if (t.includes('vacacion')) diasVacaciones += dias;
+    else if (t.includes('examen') || t.includes('estudio')) diasExamen += dias;
+    else diasLicOtras += dias;
+    if (!licenciaConGoceLabel) licenciaConGoceLabel = `Licencia ${l.tipo}`;
+  }
+  return { feriadosNoTrab, diasLicenciaConGoce, diasVacaciones, diasExamen, diasLicOtras, licenciaConGoceLabel };
+}
+
+// Ausencias injustificadas del MES desde las fichadas (mismo criterio que el jornal: un día
+// "injustificado" cubierto luego por una licencia aprobada NO cuenta). Sirve para que la corrida
+// use el mismo dato que la liquidación individual (que lo recibe desde la UI) → hacen perder el
+// presentismo y disparan el concepto de descuento por ausencia. Devuelve 0 si no hay fichadas.
+async function ausenciasInjustMensualDe(empleadoId, anio, mes) {
+  const mm = String(mes).padStart(2, '0');
+  const desde = `${anio}-${mm}-01`;
+  const hasta = `${anio}-${mm}-${String(new Date(anio, mes, 0).getDate()).padStart(2, '0')}`;
+  const fp = (await query('SELECT data FROM fichadas_periodo WHERE empleado_id=$1 AND anio=$2 AND mes=$3', [empleadoId, anio, mes])).rows[0];
+  const dias = ((fp?.data?.dias) || []).filter((d) => d.fecha >= desde && d.fecha <= hasta);
+  if (!dias.length) return 0;
+  const licQ = (await query(
+    `SELECT to_char(desde,'YYYY-MM-DD') AS desde, to_char(hasta,'YYYY-MM-DD') AS hasta FROM licencias WHERE estado='aprobada' AND empleado_id=$1 AND desde<=$2 AND hasta>=$3`,
+    [empleadoId, hasta, desde])).rows;
+  const cubierto = (f) => licQ.some((l) => l.desde <= f && f <= l.hasta);
+  return dias.filter((d) => d.estado === 'injustificado' && !cubierto(d.fecha)).length;
 }
 
 // Matriz de antigüedad: fija el básico por tramos de años. 0 si no hay matriz aplicable.
@@ -180,30 +242,88 @@ async function armarReciboJornalUocra(emp, anio, mes, tipo, extra = {}) {
   // Fichadas del período → días de la quincena (1–15 / 16–fin).
   const fp = (await query('SELECT data FROM fichadas_periodo WHERE empleado_id=$1 AND anio=$2 AND mes=$3', [emp.id, anio, mes])).rows[0];
   const diasQ = ((fp?.data?.dias) || []).filter((d) => d.fecha >= desde && d.fecha <= hasta);
-  const { normalMin, extra50Min, extra100Min } = horasJornalDesdeFichadas(diasQ);
-  const injustificadas = diasQ.filter((d) => d.estado === 'injustificado').length;
+  // Horas extra del jornal = EXACTAMENTE las que calcula el control de relojes (misma función,
+  // con el saldo real de cada día y su turno, neteo incluido). Las horas normales = lo trabajado
+  // menos las extra. Así el jornal coincide con lo que se ve en el control.
+  const totNet = recomputarTotales(diasQ);
+  const extra50Min = totNet.horasExtra50Min || 0;
+  const extra100Min = totNet.horasExtra100Min || 0;
+  const totalTrabMin = diasQ.reduce((s, d) => s + Math.max(0, Number(d.hsNetasMin) || 0), 0);
+  const normalMin = Math.max(0, totalTrabMin - extra50Min - extra100Min);
+  // Recruce EN VIVO con licencias aprobadas: si un justificativo se cargó después de importar
+  // los relojes, un día "injustificado" ya cubierto por una licencia no cuenta como injustificado.
+  const licQ = (await query(
+    `SELECT tipo, to_char(desde,'YYYY-MM-DD') AS desde, to_char(hasta,'YYYY-MM-DD') AS hasta FROM licencias WHERE estado='aprobada' AND empleado_id=$1 AND desde<=$2 AND hasta>=$3`,
+    [emp.id, hasta, desde])).rows;
+  const cubiertoPorLicencia = (fecha) => licQ.some((l) => l.desde <= fecha && fecha <= l.hasta);
+  const injustificadas = diasQ.filter((d) => d.estado === 'injustificado' && !cubiertoPorLicencia(d.fecha)).length;
   // Feriados NO trabajados de la quincena (los trabajados ya cuentan como extra 100 %).
-  const feriadosSet = await getFeriadosSet(desde, hasta);
+  const feriadosSet = await getFeriadosSet(desde, hasta, { soloLiquidables: true });
   const trabajados = new Set(diasQ.filter((d) => (d.hsNetasMin || 0) > 0).map((d) => d.fecha));
   let feriadosNoTrab = 0; for (const f of feriadosSet) if (!trabajados.has(f)) feriadosNoTrab++;
+  // Días de licencia PAGA en la quincena: días laborables (lun–vie, no feriado) cubiertos por una
+  // licencia aprobada CON goce, que no se trabajaron. Se pagan al valor día (valor hora × jornada).
+  const licPagaCubre = (fecha) => licQ.some((l) => !esSinGoce(l.tipo) && l.desde <= fecha && fecha <= l.hasta);
+  let diasLicenciaPaga = 0;
+  for (let t = new Date(desde + 'T12:00:00'); t <= new Date(hasta + 'T12:00:00'); t.setDate(t.getDate() + 1)) {
+    const f = t.toISOString().slice(0, 10); const dow = t.getDay();
+    if (dow === 0 || dow === 6) continue;            // solo laborables lun–vie
+    if (feriadosSet.has(f)) continue;                // los feriados ya se pagan como feriado NT
+    if (trabajados.has(f)) continue;                 // si trabajó, ya cobró las horas
+    if (licPagaCubre(f)) diasLicenciaPaga++;
+  }
   const afiliado = await afiliadoEnFecha(emp.id, anio, mes);
+  const emb = await embargosOpts(emp.id, fechaRef);   // embargo / cuota alimentaria (se descuentan en el recibo)
+  const noExtra = (await query('SELECT 1 FROM fichadas_no_extra WHERE empleado_id=$1 AND anio=$2 AND mes=$3', [emp.id, anio, mes])).rowCount > 0;
 
   // Permite override manual (RR.HH. puede ajustar horas/feriados antes de liquidar).
   const num = (v, d) => (v === undefined || v === null || v === '' ? d : Number(v));
-  // Si RR.HH. FORZÓ las horas (fichadas incompletas/sin fichero), no se arrastran las
-  // ausencias injustificadas de las fichadas → el presentismo se paga, salvo que cargue
-  // explícitamente ausencias injustificadas en el campo correspondiente.
-  const forzoHoras = extra.horasNormales != null && String(extra.horasNormales).trim() !== '';
-  const r = calcReciboJornal({
-    valorHora: esc.valorHora,
-    horasNormales: num(extra.horasNormales, normalMin / 60),
-    injustificadas: num(extra.injustificadas ?? extra.ausenciasInjustificadas, forzoHoras ? 0 : injustificadas),
-    feriadosNoTrab: num(extra.feriadosNoTrab, feriadosNoTrab),
-    jornadaHoras: JORNADA_JORNAL_HS,
-    hsExtra50: num(extra.hsExtra50 ?? extra.horasExtra50, extra50Min / 60),
-    hsExtra100: num(extra.hsExtra100 ?? extra.horasExtra100, extra100Min / 60),
-    afiliado, snr: num(extra.snr, esc.snr), quincena: true,
-  });
+  // Las ausencias injustificadas de las fichadas SIEMPRE cuentan (hacen perder el premio 20%),
+  // aunque se fuercen las horas. Solo se ignoran si RR.HH. carga explícitamente otro valor de
+  // ausencias injustificadas (ej. porque las fichadas estaban incompletas y no había faltas).
+  // Horas extra efectivas (0 si RR.HH. marcó "no liquidar extra"); si no, override o lo de fichadas.
+  const hsExtra50Efec = noExtra ? 0 : num(extra.hsExtra50 ?? extra.horasExtra50, extra50Min / 60);
+  const hsExtra100Efec = noExtra ? 0 : num(extra.hsExtra100 ?? extra.horasExtra100, extra100Min / 60);
+  // Porcentajes editables del jornal, tomados de la config del sindicato UOCRA (Sindicatos):
+  // premio asistencia, cuota (afiliado) y aporte solidario (no afiliado). Si no están, quedan los del CCT.
+  const _sindU = sindDe(await sindMap(), emp) || {};
+  const _horasNorm = num(extra.horasNormales, normalMin / 60);
+  const _diasTrab = diasQ.filter((x) => (x.hsNetasMin || 0) > 0).length;
+  const _jornadaHoras = _diasTrab > 0 ? r2j(_horasNorm / _diasTrab) : JORNADA_JORNAL_HS; // jornada real promedio (feriado)
+  const _injust = num(extra.injustificadas ?? extra.ausenciasInjustificadas, injustificadas);
+  let r;
+  if (emp.data?.motorViejo === true) {
+    // Motor viejo (fallback por legajo).
+    r = calcReciboJornal({
+      valorHora: esc.valorHora, horasNormales: _horasNorm, injustificadas: _injust,
+      feriadosNoTrab: num(extra.feriadosNoTrab, feriadosNoTrab), jornadaHoras: JORNADA_JORNAL_HS,
+      hsExtra50: hsExtra50Efec, hsExtra100: hsExtra100Efec,
+      pctPremio: _sindU.pctPremio, pctCuota: _sindU.pctEmpleado, pctSolidario: _sindU.pctSolidario,
+      afiliado, snr: num(extra.snr, esc.snr), quincena: true,
+      embargo: num(extra.embargo, emb.embargo), cuotaAlimentaria: num(extra.cuotaAlimentaria, emb.cuotaAlimentaria), embargoAlimentosPct: num(extra.embargoAlimentosPct, emb.embargoAlimentosPct),
+      diasLicencia: num(extra.diasLicencia, diasLicenciaPaga),
+    });
+  } else {
+    // MOTOR ÚNICO en modo jornal: la base (horas × valor hora) y todo lo demás salen de los conceptos UOCRA.
+    const paramsJ = await getParamsConValores(anio, mes);
+    const cFormJ = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo));
+    const auxJ = cFormJ.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
+    const rc = calcularRecibo(emp, paramsJ, {
+      anio: Number(anio), mes: Number(mes), tipo, modoJornal: true, calcularGanancias: false,
+      valorHora: esc.valorHora, horasNormales: _horasNorm, jornadaHoras: _jornadaHoras,
+      horasExtra50: hsExtra50Efec, horasExtra100: hsExtra100Efec,
+      feriadosNoTrab: num(extra.feriadosNoTrab, feriadosNoTrab),
+      diasLicenciaConGoce: num(extra.diasLicencia, diasLicenciaPaga),
+      snrJornal: num(extra.snr, esc.snr),
+      ausenciasInjustificadas: _injust,
+      afiliadoSindical: afiliado, sind: _sindU, presBase: _sindU.presBase || 'basico',
+      conceptosFormula: cFormJ, auxFormulas: auxJ, macrosFormulas: auxJ.macros, fechaPago: fechaRef,
+      embargo: num(extra.embargo, emb.embargo), cuotaAlimentaria: num(extra.cuotaAlimentaria, emb.cuotaAlimentaria), embargoAlimentosPct: num(extra.embargoAlimentosPct, emb.embargoAlimentosPct),
+    });
+    const fD = (re) => (rc.descuentos.find((x) => re.test(x.concepto))?.monto) || 0;
+    r = { haberes: rc.haberes, descuentos: rc.descuentos, totales: rc.totales,
+      aportes: { jub: fD(/jubil/i), os: fD(/obra social/i), pami: fD(/19\.?032|pami|inssjp/i), sind: fD(/sindical|solidario/i), osNR: fD(/no rem/i) } };
+  }
 
   const ed = emp.empresaData || {};
   const dom = [[ed.dir, ed.nro].filter(Boolean).join(' '), ed.loc, ed.prov, ed.cp ? '(CP ' + ed.cp + ')' : ''].filter(Boolean).join(', ') || null;
@@ -213,7 +333,7 @@ async function armarReciboJornalUocra(emp, anio, mes, tipo, extra = {}) {
     periodo: { anio, mes, tipo, tipoLabel: `${quincena === 1 ? '1ª' : '2ª'} quincena — Jornal UOCRA`, fechaPago: extra.fechaPago || null },
     haberes: r.haberes, descuentos: r.descuentos, ganancias: null,
     detalle: { modo: 'jornal-uocra', categoria, zona, valorHora: esc.valorHora, quincena, desde, hasta,
-      horas: { normal: r2j(normalMin / 60), extra50: r2j(extra50Min / 60), extra100: r2j(extra100Min / 60) }, injustificadas, feriadosNoTrab },
+      horas: { normal: r2j(num(extra.horasNormales, normalMin / 60)), extra50: r2j(hsExtra50Efec), extra100: r2j(hsExtra100Efec) }, injustificadas, noExtra, feriadosNoTrab },
     totales: r.totales,
     composicion: {
       remun: r.totales.totalRemun, noRem: r.totales.totalNoRem, exento: 0, descuentos: r.totales.totalDescuentos, neto: r.totales.neto,
@@ -306,9 +426,13 @@ const _esSAC = (t) => t === 'sac1' || t === 'sac2';
 // Mejor remuneración mensual del semestre (para el SAC), tomada de los recibos guardados.
 async function mejorRemSemestre(empleadoId, anio, tipoSAC) {
   const desde = tipoSAC === 'sac2' ? 7 : 1, hasta = tipoSAC === 'sac2' ? 12 : 6;
-  const r = await query("SELECT data FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes BETWEEN $3 AND $4 AND tipo IN ('mensual','quincenal_1','quincenal_2')", [empleadoId, Number(anio), desde, hasta]);
+  const r = await query("SELECT mes, data FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes BETWEEN $3 AND $4 AND tipo IN ('mensual','quincenal_1','quincenal_2')", [empleadoId, Number(anio), desde, hasta]);
+  // Sumar las remuneraciones por MES (una 1ª + 2ª quincena forman el mes completo) y recién ahí buscar
+  // el máximo → así el jornal/quincena no toma medio mes como "mejor remuneración".
+  const porMes = {};
+  for (const x of r.rows) { const m = Number(x.mes); porMes[m] = (porMes[m] || 0) + Number(x.data?.totales?.totalRemun || 0); }
   let max = 0;
-  for (const x of r.rows) { const v = Number(x.data?.totales?.totalRemun || 0); if (v > max) max = v; }
+  for (const m of Object.keys(porMes)) if (porMes[m] > max) max = porMes[m];
   return max;
 }
 async function ajustePendiente(empleadoId, anio, mes) {
@@ -466,7 +590,7 @@ function aplicaEnTipo(c, tipo) {
 async function conceptosFormulaActivos() {
   try {
     const { rows } = await query("SELECT codigo, descripcion, formula, data FROM conceptos WHERE activo=true AND formula IS NOT NULL AND formula <> '' AND (data->>'esFormula')='true' ORDER BY COALESCE(NULLIF(data->>'orden','')::int, 0), codigo");
-    return rows.map((r) => { const d = r.data || {}; return { codigo: r.codigo, descripcion: r.descripcion, formula: r.formula, base: d.base || 'rem', condicion: d.condicion || null, alcanceEmpresa: d.alcanceEmpresa || '', alcanceConvenio: d.alcanceConvenio || '', alcanceSindicato: d.alcanceSindicato || '', desde: d.desde || '', hasta: d.hasta || '', soloLegajos: Array.isArray(d.soloLegajos) ? d.soloLegajos.map(Number).filter(Boolean) : [], tipos: Array.isArray(d.tipos) ? d.tipos : [], cantidad: d.cantidad || null, valorUnit: d.valorUnit || null, unidad: d.unidad || null, motivosEgreso: Array.isArray(d.motivosEgreso) ? d.motivosEgreso : [] }; });
+    return rows.map((r) => { const d = r.data || {}; return { codigo: r.codigo, descripcion: r.descripcion, formula: r.formula, base: d.base || 'rem', condicion: d.condicion || null, alcanceEmpresa: d.alcanceEmpresa || '', alcanceConvenio: d.alcanceConvenio || '', alcanceSindicato: d.alcanceSindicato || '', desde: d.desde || '', hasta: d.hasta || '', soloLegajos: Array.isArray(d.soloLegajos) ? d.soloLegajos.map(Number).filter(Boolean) : [], tipos: Array.isArray(d.tipos) ? d.tipos : [], cantidad: d.cantidad || null, valorUnit: d.valorUnit || null, unidad: d.unidad || null, motivosEgreso: Array.isArray(d.motivosEgreso) ? d.motivosEgreso : [], rol: d.rol || null }; });
   } catch { return []; }
 }
 async function cuotasAnticiposDe(empleadoId, anio, mes) {
@@ -500,8 +624,9 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     if (esJornalUocra(emp) && (t === 'quincenal_1' || t === 'quincenal_2')) {
       return res.json(await armarReciboJornalUocra(emp, Number(anio), Number(mes), t, extra));
     }
-    // Mensual UECARA / fuera de convenio (escala IDEE-BIM).
-    if (esUecaraMensual(emp) && t === 'mensual') {
+    // UECARA / IDEE → MOTOR ÚNICO (conceptos). El motor viejo (uecaraMensual) queda solo como escape
+    // por legajo (data.motorViejo = true), por si hace falta revertir un caso puntual.
+    if (esUecaraMensual(emp) && t === 'mensual' && emp.data?.motorViejo === true) {
       return res.json(await armarReciboUecara(emp, Number(anio), Number(mes), t, extra));
     }
     const cuotas = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await cuotasAnticiposDe(empleadoId, anio, mes) : [];
@@ -509,7 +634,9 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     try { await autoActualizarGanancias(anio, mes); } catch (e) { /* no bloquea */ }
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
-    const convBasico = convBasicoDe(await convMap(), emp);
+    const _cMapC = await convMap(); const convBasico = convBasicoDe(_cMapC, emp); const escalaObjetivo = escalaObjetivoDe(_cMapC, emp);
+    const plusLct = ((escalaObjetivo > 0 || esUecaraMensual(emp)) && _esMensual(t)) ? await plusLCTOpts(empleadoId, anio, mes) : {};
+    const _ausInjC = t === 'mensual' ? await ausenciasInjustMensualDe(empleadoId, anio, mes) : 0;
     const basicoAnt = basicoAntiguedadDe(await matrizAntigActivas(), emp, anio, mes);
     const emb = (t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
     const nov = _esMensual(t) ? { ...await novedadesOpts(empleadoId, anio, mes), ...await licenciasSinGoceOpts(empleadoId, anio, mes) } : {};
@@ -519,7 +646,46 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const cForm = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, t));
     const auxF = cForm.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const _afil = await afiliadoEnFecha(empleadoId, anio, mes);
-    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, afiliadoSindical: _afil, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ...nov, ...varProm, ...emb, ...extra }));
+    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, afiliadoSindical: _afil, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ausenciasInjustificadas: _ausInjC, ...plusLct, ...nov, ...varProm, ...emb, ...extra }));
+  } catch (e) { next(e); }
+});
+
+// ── Diagnóstico: qué "ve" el motor para un empleado en un período. ──
+// Sirve para comparar LOCAL vs PRODUCCIÓN y detectar qué dato/config difiere.
+// Uso: GET /api/liquidacion/diagnostico/:id?anio=2026&mes=7
+router.get('/diagnostico/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const anio = Number(req.query.anio) || new Date().getFullYear();
+    const mes = Number(req.query.mes) || (new Date().getMonth() + 1);
+    const emp = await getEmp(id);
+    if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
+    const d = emp.data || {};
+    const sMap = await sindMap();
+    const sind = sindDe(sMap, emp);
+    const cMap = await convMap();
+    const convBasico = convBasicoDe(cMap, emp);
+    const escalaObjetivo = escalaObjetivoDe(cMap, emp);
+    const ausencias = await ausenciasInjustMensualDe(id, anio, mes);
+    const plus = escalaObjetivo > 0 ? await plusLCTOpts(id, anio, mes) : {};
+    const conceptos = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes)
+      .filter((c) => aplicaEnTipo(c, 'mensual'))
+      .map((c) => ({ codigo: c.codigo, descripcion: c.descripcion, base: c.base, formula: c.formula || null, cantidad: c.cantidad || null, valorUnit: c.valorUnit || null, condicion: c.condicion || null }));
+    const fp = (await query('SELECT 1 FROM fichadas_periodo WHERE empleado_id=$1 AND anio=$2 AND mes=$3', [id, anio, mes])).rowCount > 0;
+    res.json({
+      build: 'diag-1 · complemento-fijo + ausencias-corrida + presentismo-por-convenio',
+      periodo: { anio, mes },
+      empleado: { id, nom: emp.nom, legNum: emp.legNum, empresa: emp.empresa, ingreso: emp.ingreso },
+      dataLegajo: { basico: d.basico, sueldo: d.sueldo, cod_convenio: d.cod_convenio, cod_sindicato: d.cod_sindicato, categoria_convenio: d.categoria_convenio, escalaUnifCat: d.escalaUnifCat, norem: d.norem, aCuenta: d.aCuenta, complemento: d.complemento },
+      sindicatoResuelto: sind,          // null = el código de sindicato no existe en el catálogo (cae a defaults)
+      convBasico,                       // básico según convenio (0 si no matchea)
+      escalaObjetivo,                   // monto de escala unificada (0 = no encontró la categoría/tramo)
+      escalaUnifSembrada: escalaObjetivo > 0,
+      ausenciasInjustMes: ausencias,
+      tieneFichadasCargadas: fp,
+      plusLCT: plus,
+      conceptosActivos: conceptos,
+    });
   } catch (e) { next(e); }
 });
 
@@ -549,8 +715,8 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
       } catch (e) { await cli.query('ROLLBACK'); throw e; } finally { cli.release(); }
       return res.json({ ok: true, id: idJ, recibo: reciboJ });
     }
-    // Mensual UECARA / fuera de convenio (escala IDEE-BIM).
-    if (esUecaraMensual(emp) && tipo === 'mensual') {
+    // UECARA / IDEE → motor único; el motor viejo solo si el legajo tiene data.motorViejo = true.
+    if (esUecaraMensual(emp) && tipo === 'mensual' && emp.data?.motorViejo === true) {
       const reciboU = await armarReciboUecara(emp, Number(anio), Number(mes), tipo, extra);
       const cli = await pool.connect();
       let idU;
@@ -577,7 +743,8 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     try { await autoActualizarGanancias(anio, mes); } catch (e) { /* no bloquea */ }
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
-    const convBasico = convBasicoDe(await convMap(), emp);
+    const _cMapG = await convMap(); const convBasico = convBasicoDe(_cMapG, emp); const escalaObjetivo = escalaObjetivoDe(_cMapG, emp);
+    const plusLct = ((escalaObjetivo > 0 || esUecaraMensual(emp)) && _esMensual(tipo)) ? await plusLCTOpts(empleadoId, anio, mes) : {};
     const basicoAnt = basicoAntiguedadDe(await matrizAntigActivas(), emp, anio, mes);
     const emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
     const nov = _esMensual(tipo) ? { ...await novedadesOpts(empleadoId, anio, mes), ...await licenciasSinGoceOpts(empleadoId, anio, mes) } : {};
@@ -588,7 +755,7 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const cFormG = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo));
     const auxFG = cFormG.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const _afilG = await afiliadoEnFecha(empleadoId, anio, mes);
-    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilG, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...nov, ...varProm, ...emb, ...extra });
+    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilG, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...plusLct, ...nov, ...varProm, ...emb, ...extra });
     let correlativoG = 1;
     if (tipo === 'complementaria' || tipo === 'extra_norem') { const _mg = await query('SELECT COALESCE(MAX(correlativo),0) AS n FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes=$3 AND tipo=$4', [empleadoId, Number(anio), Number(mes), tipo]); correlativoG = Number(_mg.rows[0].n) + 1; }
     const client = await pool.connect();
@@ -686,6 +853,8 @@ router.get('/controles', requireRole('rrhh', 'admin'), async (req, res, next) =>
 router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const { anio, mes, tipo = 'mensual', empresa, fechaPago, conceptoExtra, modoExtra, montoExtra } = req.body || {};
+    const previa = (req.body || {}).previa === true;          // true = solo calcula y devuelve (no guarda)
+    const overrides = (req.body || {}).overrides || {};       // { [empleadoId]: { horasNormales, horasExtra50, horasExtra100 } }
     if (!anio || !mes) return res.status(400).json({ error: 'anio y mes son obligatorios' });
     const esExtra = tipo === 'complementaria' || tipo === 'extra_norem';
     if (esExtra && !(Number(montoExtra) > 0)) return res.status(400).json({ error: 'Indicá el monto (o % del bruto) de la liquidación extraordinaria' });
@@ -710,6 +879,63 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const cFormTodos = await conceptosFormulaActivos();
     const mAntTodos = await matrizAntigActivas();
     const auxCorrida = cFormTodos.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
+    const empMap = await getEmpsMap(emps.map((e) => e.id));
+    const _afilSet = await afiliadosEnFecha(emps.map((e) => e.id), anio, mes);
+    const num = (v) => (v === undefined || v === null || v === '' ? undefined : Number(v));
+
+    // Arma el recibo de un empleado (homogéneo por tipo) aplicando overrides de horas.
+    async function armarUno(id, permitirEfectos) {
+      const emp = empMap.get(id);
+      if (!emp) return null;
+      const _esJornal = esJornalUocra(emp);
+      // Corrida HOMOGÉNEA: quincena = solo jornaleros UOCRA; mensual = solo mensualizados.
+      if ((tipo === 'quincenal_1' || tipo === 'quincenal_2') && !_esJornal) return null;
+      if (tipo === 'mensual' && _esJornal) return null;
+      const ov = overrides[id] || {};
+      const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
+      const acumGan = await acumGananciasDe(id, anio, mes);
+      const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp); const _escUnif = escalaObjetivoDe(cMap, emp);
+      const _plusLct = ((_escUnif > 0 || esUecaraMensual(emp)) && _esMensual(tipo)) ? await plusLCTOpts(id, anio, mes) : {};
+      const _ausInj = tipo === 'mensual' ? await ausenciasInjustMensualDe(id, anio, mes) : 0;
+      const _emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(id, fechaPago) : {};
+      const _nov = _esMensual(tipo) ? { ...await novedadesOpts(id, anio, mes), ...await licenciasSinGoceOpts(id, anio, mes) } : {};
+      const _varProm = (tipo === 'vacaciones' || _esMensual(tipo)) ? await promedioVariablesMes(id, anio, mes) : {};
+      const _sacBase = _esSAC(tipo) ? await mejorRemSemestre(id, anio, tipo) : 0;
+      let _ajPend = 0;
+      if (_esMensual(tipo)) { if (permitirEfectos) await resetAjusteNeto(id, anio, mes); _ajPend = await ajustePendiente(id, anio, mes); }
+      let _extra = {};
+      if (esExtra) {
+        const montoEmp = modoExtra === 'pctBruto' ? r2(Number(emp.bruto || 0) * Number(montoExtra) / 100) : r2(Number(montoExtra));
+        if (!(montoEmp > 0)) return null;
+        _extra = { montoAjuste: montoEmp, conceptoAjuste: (conceptoExtra && String(conceptoExtra).trim()) || (tipo === 'extra_norem' ? 'Extraordinaria no remunerativa' : 'Extraordinaria remunerativa') };
+      }
+      // Overrides: jornal usa horasNormales/hsExtra50/hsExtra100; mensual usa horasExtra50/100.
+      const ovJ = {}; if (num(ov.horasNormales) !== undefined) ovJ.horasNormales = num(ov.horasNormales); if (num(ov.horasExtra50) !== undefined) ovJ.hsExtra50 = num(ov.horasExtra50); if (num(ov.horasExtra100) !== undefined) ovJ.hsExtra100 = num(ov.horasExtra100);
+      const ovM = {}; if (num(ov.horasExtra50) !== undefined) ovM.horasExtra50 = num(ov.horasExtra50); if (num(ov.horasExtra100) !== undefined) ovM.horasExtra100 = num(ov.horasExtra100);
+      const recibo = (_esJornal && (tipo === 'quincenal_1' || tipo === 'quincenal_2'))
+        ? await armarReciboJornalUocra(emp, Number(anio), Number(mes), tipo, { fechaPago, ...ovJ })
+        : (esUecaraMensual(emp) && tipo === 'mensual' && emp.data?.motorViejo === true)
+        ? await armarReciboUecara(emp, Number(anio), Number(mes), tipo, { fechaPago })
+        : calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilSet.has(id), fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, escalaObjetivo: _escUnif, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ausenciasInjustificadas: (num(ov.ausenciasInjustificadas) ?? _ausInj), ..._plusLct, ..._nov, ..._varProm, ..._emb, ..._extra, ...ovM });
+      const h = recibo.detalle?.horas || {};
+      const item = {
+        empleadoId: id, nom: emp.nom, legNum: emp.legNum, empresa: emp.empresa, esJornal: _esJornal, neto: recibo.totales.neto,
+        horasNormales: _esJornal ? (num(ov.horasNormales) ?? (h.normal || 0)) : null,
+        extra50: _esJornal ? (num(ov.horasExtra50) ?? (h.extra50 || 0)) : (num(ov.horasExtra50) ?? (Number(_nov.horasExtra50) || 0)),
+        extra100: _esJornal ? (num(ov.horasExtra100) ?? (h.extra100 || 0)) : (num(ov.horasExtra100) ?? (Number(_nov.horasExtra100) || 0)),
+      };
+      return { emp, recibo, cuotas, item };
+    }
+
+    // ── PREVIA: solo calcula y devuelve la grilla editable (no guarda) ──
+    if (previa) {
+      const items = []; let total = 0;
+      for (const { id } of emps) { const r = await armarUno(id, false); if (!r) continue; items.push(r.item); total += r.recibo.totales.neto; }
+      if (!items.length) return res.status(400).json({ error: `No hay empleados de ese tipo para liquidar (${(tipo === 'mensual') ? 'mensualizados' : (tipo.startsWith('quincenal') ? 'jornaleros' : tipo)}${empresa ? ' en ' + empresa : ''}).` });
+      return res.json({ periodo: { anio, mes, tipo }, cantidad: items.length, totalNeto: r2(total), items, avisoValores: verVal.desactualizado ? verVal.mensaje : null });
+    }
+
+    // ── GUARDAR: crea la corrida y persiste los recibos (borrador) ──
     const client = await pool.connect();
     let corridaId, totalNeto = 0, cant = 0;
     try {
@@ -720,31 +946,10 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
         [Number(anio), Number(mes), tipo, empresa || null, req.user.dni, correlativo]
       );
       corridaId = cr.rows[0].id;
-      const empMap = await getEmpsMap(emps.map((e) => e.id));
-      const _afilSet = await afiliadosEnFecha(emps.map((e) => e.id), anio, mes);
       for (const { id } of emps) {
-        const emp = empMap.get(id);
-        if (!emp) continue;
-        const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
-        const acumGan = await acumGananciasDe(id, anio, mes);
-        const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp);
-        const _emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(id, fechaPago) : {};
-        const _nov = _esMensual(tipo) ? { ...await novedadesOpts(id, anio, mes), ...await licenciasSinGoceOpts(id, anio, mes) } : {};
-        const _varProm = (tipo === 'vacaciones' || _esMensual(tipo)) ? await promedioVariablesMes(id, anio, mes) : {};
-        const _sacBase = _esSAC(tipo) ? await mejorRemSemestre(id, anio, tipo) : 0;
-        let _ajPend = 0;
-        if (_esMensual(tipo)) { await resetAjusteNeto(id, anio, mes); _ajPend = await ajustePendiente(id, anio, mes); }
-        let _extra = {};
-        if (esExtra) {
-          const montoEmp = modoExtra === 'pctBruto' ? r2(Number(emp.bruto || 0) * Number(montoExtra) / 100) : r2(Number(montoExtra));
-          if (!(montoEmp > 0)) continue; // sin base (p. ej. % sobre bruto 0): no se genera recibo
-          _extra = { montoAjuste: montoEmp, conceptoAjuste: (conceptoExtra && String(conceptoExtra).trim()) || (tipo === 'extra_norem' ? 'Extraordinaria no remunerativa' : 'Extraordinaria remunerativa') };
-        }
-        const recibo = (esJornalUocra(emp) && (tipo === 'quincenal_1' || tipo === 'quincenal_2'))
-          ? await armarReciboJornalUocra(emp, Number(anio), Number(mes), tipo, { fechaPago })
-          : (esUecaraMensual(emp) && tipo === 'mensual')
-          ? await armarReciboUecara(emp, Number(anio), Number(mes), tipo, { fechaPago })
-          : calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilSet.has(id), fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ..._nov, ..._varProm, ..._emb, ..._extra });
+        const r = await armarUno(id, true);
+        if (!r) continue;
+        const { recibo, cuotas } = r;
         totalNeto += recibo.totales.neto; cant++;
         const rr = await db(
           `INSERT INTO recibos (empleado_id, anio, mes, tipo, correlativo, neto, data, created_by, corrida_id, publicado)
@@ -757,6 +962,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
         await registrarCuotas(cuotas, anio, mes, rr.rows[0].id, corridaId, db);
         if (_esMensual(tipo)) await commitAjusteNeto(id, anio, mes, recibo, db);
       }
+      if (cant === 0) { const e = new Error(`No hay empleados de ese tipo para liquidar (${(tipo === 'mensual') ? 'mensualizados' : (tipo.startsWith('quincenal') ? 'jornaleros' : tipo)}${empresa ? ' en ' + empresa : ''}).`); e.status = 400; throw e; }
       await db('UPDATE corridas SET total_neto=$1, cant=$2 WHERE id=$3', [totalNeto, cant, corridaId]);
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
@@ -1144,6 +1350,62 @@ router.post('/simular-final-masivo', requireRole('rrhh', 'admin'), async (req, r
     });
     Object.keys(tot).forEach((k) => { tot[k] = r2n(tot[k]); });
     res.json({ supuestos: lista, cant: items.length, items, totales: tot });
+  } catch (e) { next(e); }
+});
+
+// GET /api/liquidacion/previa?anio=&mes=&empresa=  — Previa de liquidación: junta por empleado
+// TODO lo que va a entrar al recibo (novedades variables, licencias aprobadas del mes, cuotas de
+// adelantos, embargos y horas extra/injustificados de las fichadas), para revisar antes de liquidar.
+router.get('/previa', requireRole('rrhh', 'admin'), async (req, res, next) => {
+  try {
+    const anio = Number(req.query.anio), mes = Number(req.query.mes);
+    if (!anio || !mes) return res.status(400).json({ error: 'anio y mes son obligatorios.' });
+    const empresa = req.query.empresa || '';
+    const iniMes = `${anio}-${String(mes).padStart(2, '0')}-01`;
+    const finMes = `${anio}-${String(mes).padStart(2, '0')}-${new Date(anio, mes, 0).getDate()}`;
+    const fechaRef = `${anio}-${String(mes).padStart(2, '0')}-15`;
+
+    // Empleados activos (opcional por empresa)
+    const p = []; const cond = ['e.activo = true'];
+    if (empresa) { p.push(empresa); cond.push(`em.nombre=$${p.length}`); }
+    const emps = (await query(`SELECT e.id, e.nom, e.leg_num, e.cat, e.data, em.nombre AS empresa FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')} ORDER BY e.nom`, p)).rows;
+    const empById = new Map(emps.map((e) => [e.id, e]));
+    const ids = emps.map((e) => e.id);
+    if (!ids.length) return res.json({ periodo: { anio, mes }, items: [] });
+
+    // Batches del período
+    const nov = (await query('SELECT id, empleado_id, tipo, cantidad, monto, detalle FROM novedades WHERE anio=$1 AND mes=$2 AND empleado_id = ANY($3::int[])', [anio, mes, ids])).rows;
+    const lic = (await query(`SELECT empleado_id, tipo, to_char(desde,'YYYY-MM-DD') AS desde, to_char(hasta,'YYYY-MM-DD') AS hasta, dias
+                                FROM licencias WHERE estado='aprobada' AND empleado_id = ANY($1::int[]) AND desde<=$2 AND hasta>=$3`, [ids, finMes, iniMes])).rows;
+    const fic = (await query('SELECT empleado_id, data FROM fichadas_periodo WHERE anio=$1 AND mes=$2 AND empleado_id = ANY($3::int[])', [anio, mes, ids])).rows;
+    const antEmp = (await query("SELECT DISTINCT empleado_id FROM anticipos WHERE estado='aprobado' AND cuotas>0 AND empleado_id = ANY($1::int[])", [ids])).rows.map((r) => r.empleado_id);
+    const embEmp = (await query('SELECT DISTINCT empleado_id FROM embargos WHERE activo=true AND (desde IS NULL OR desde<=$1) AND (hasta IS NULL OR hasta>=$1) AND empleado_id = ANY($2::int[])', [fechaRef, ids])).rows.map((r) => r.empleado_id);
+
+    const byEmp = new Map();
+    const get = (id) => { if (!byEmp.has(id)) byEmp.set(id, { novedades: [], licencias: [], anticipos: [], embargos: null, fichadas: null }); return byEmp.get(id); };
+    for (const n of nov) get(n.empleado_id).novedades.push({ id: n.id, tipo: n.tipo, cantidad: Number(n.cantidad) || 0, monto: Number(n.monto) || 0, detalle: n.detalle || '' });
+    for (const l of lic) get(l.empleado_id).licencias.push({ tipo: l.tipo, desde: l.desde, hasta: l.hasta, dias: l.dias });
+    for (const f of fic) {
+      const d = f.data || {};
+      const e50 = Math.round(((d.horasExtra50Min || 0) / 60) * 100) / 100;
+      const e100 = Math.round(((d.horasExtra100Min || 0) / 60) * 100) / 100;
+      const inj = d.diasInjustificados || 0;
+      const rev = Array.isArray(d.diasARevisar) ? d.diasARevisar.length : (d.diasARevisar || 0);
+      if (e50 || e100 || inj || rev) get(f.empleado_id).fichadas = { extra50: e50, extra100: e100, injustificados: inj, aRevisar: rev };
+    }
+    for (const id of antEmp) { const c = await cuotasAnticiposDe(id, anio, mes); if (c.length) get(id).anticipos = c.map((x) => ({ nro: x.nro, cuotas: x.cuotas, monto: x.monto, motivo: x.motivo })); }
+    for (const id of embEmp) { const e = await embargosOpts(id, fechaRef); if (e.embargo || e.cuotaAlimentaria || e.embargoAlimentosPct) get(id).embargos = { embargo: e.embargo, cuotaAlimentaria: e.cuotaAlimentaria, embargoAlimentosPct: e.embargoAlimentosPct }; }
+
+    const items = [];
+    for (const [id, det] of byEmp) {
+      const tiene = det.novedades.length || det.licencias.length || det.anticipos.length || det.embargos || det.fichadas;
+      if (!tiene) continue;
+      const e = empById.get(id); if (!e) continue;
+      const tipo = esJornalUocra({ data: e.data, cat: e.cat }) ? 'jornal' : 'mensual';
+      items.push({ empleado: { id, nom: e.nom, legNum: e.leg_num, empresa: e.empresa, tipo }, ...det });
+    }
+    items.sort((a, b) => String(a.empleado.nom).localeCompare(String(b.empleado.nom)));
+    res.json({ periodo: { anio, mes }, cantidad: items.length, items });
   } catch (e) { next(e); }
 });
 

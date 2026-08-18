@@ -7,10 +7,15 @@ import { normLegajo, minToHhmm, normTurno, recomputarTotales, aplicarIntermedioD
 
 // Feriados (YYYY-MM-DD) dentro de un rango, como Set. Se pasan a parseExtendido
 // para no exigir jornada ni marcar injustificado en días feriados.
-export async function getFeriadosSet(desde, hasta) {
+// soloLiquidables=true → SOLO feriados reales (nacional/provincial/puente/empresa) que generan
+// el plus de feriado en la liquidación. EXCLUYE los "no laborables" (tipo 'turistico'/'no_laborable'),
+// que se pagan como día normal y NO deben computarse como feriado. Para el pipeline de fichadas
+// (default false) se incluyen todos, así un día no laborable tampoco se marca injustificado.
+export async function getFeriadosSet(desde, hasta, { soloLiquidables = false } = {}) {
   if (!desde || !hasta) return new Set();
+  const cond = soloLiquidables ? " AND COALESCE(tipo,'nacional') NOT IN ('turistico','no_laborable')" : '';
   const { rows } = await query(
-    `SELECT to_char(fecha, 'YYYY-MM-DD') AS d FROM feriados WHERE fecha BETWEEN $1 AND $2`,
+    `SELECT to_char(fecha, 'YYYY-MM-DD') AS d FROM feriados WHERE fecha BETWEEN $1 AND $2${cond}`,
     [desde, hasta]);
   return new Set(rows.map((r) => r.d));
 }

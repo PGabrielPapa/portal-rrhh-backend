@@ -17,6 +17,11 @@ const ESCALA = [
 ];
 
 export async function migrarIdeeBim() {
+  // Registrar en el CATÁLOGO de convenios para que aparezcan como pestaña en Escalas/convenios
+  // (las pestañas salen de la tabla `convenios`). Idempotente; corre siempre, aunque ya existan las versiones.
+  await query(`INSERT INTO convenios (codigo, nombre, cct, data) VALUES ('IDEE-BIM','Escala interna IDEE (roles BIM)','Escala interna por rol/seniority','{}'::jsonb) ON CONFLICT (codigo) DO NOTHING`);
+  await query(`INSERT INTO convenios (codigo, nombre, cct, data) VALUES ('UECARA','Empleados de la Construcción y Afines (UECARA)','CCT 660/13','{}'::jsonb) ON CONFLICT (codigo) DO NOTHING`);
+
   const existe = await query("SELECT 1 FROM convenio_versiones WHERE codigo='IDEE-BIM' AND vigencia='2026-07-01'");
   if (existe.rowCount > 0) return { skip: true };
   const data = {

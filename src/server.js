@@ -82,6 +82,33 @@ try {
   console.error('[boot] migración IDEE-BIM:', e.message);
 }
 
+// Escala unificada de Grupo LEITEN (LEITEN/SINIS/BARTON): siembra el convenio 'ESCALA-UNIF'.
+try {
+  const { migrarEscalaUnif } = await import('./db/migrateEscalaUnif.js');
+  const r = await migrarEscalaUnif();
+  if (!r.skip) console.log(`[boot] escala unificada sembrada ✓ (${r.cats} categorías)`);
+} catch (e) {
+  console.error('[boot] migración escala unificada:', e.message);
+}
+
+// Presentismo por convenio (Comercio 8,33%, UOM/Plásticos 10%...) + flag de antig./pres. sobre el No Rem.
+try {
+  const { migrarPresentismoSind } = await import('./db/migratePresentismoSind.js');
+  const r = await migrarPresentismoSind();
+  if (!r.skip) console.log(`[boot] presentismo por convenio verificado ✓ (${r.tocadas} sindicatos)`);
+} catch (e) {
+  console.error('[boot] migración presentismo/convenio:', e.message);
+}
+
+// Migración a conceptos ejecutables por fórmula (proyecto por fases). Fase 1: SAC.
+try {
+  const { migrarConceptosFormula } = await import('./db/migrateConceptosFormula.js');
+  const r = await migrarConceptosFormula();
+  if (!r.skip) console.log(`[boot] conceptos por fórmula verificados ✓ (${r.tocados})`);
+} catch (e) {
+  console.error('[boot] migración conceptos por fórmula:', e.message);
+}
+
 // Producción: valor hora ahora es POR EMPLEADO. Migra la tabla si quedó con el esquema viejo (por categoría).
 try {
   const { migrarProdValorHora } = await import('./db/migrateProdValorHora.js');
