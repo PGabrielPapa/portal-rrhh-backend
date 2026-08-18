@@ -30,14 +30,37 @@ npm start                 # API en :4000
 
 ## Autenticación
 
-- **Login:** `POST /api/auth/login` con `{ dni, password }`. La contraseña
-  inicial de cada empleado es su **DNI**, con cambio forzado en el primer login
-  (`mustChangePassword: true` en la respuesta).
+- **Login:** `POST /api/auth/login` con `{ dni, password }` (y `token` si el
+  usuario tiene 2FA). La contraseña inicial de cada empleado es su **DNI**, con
+  cambio obligatorio en el primer ingreso (`mustChangePassword: true`).
 - **Cambiar contraseña:** `POST /api/auth/change-password` (Bearer token) con
-  `{ currentPassword, newPassword }`.
+  `{ currentPassword, newPassword }`. Al cambiarla se **cierran todas las
+  sesiones** de ese usuario, así que hay que volver a ingresar.
+- **Cerrar sesión:** `POST /api/auth/logout` (Bearer token). Invalida el token en
+  el servidor, en todos los dispositivos.
 - **Perfil:** `GET /api/auth/me` (Bearer token).
-- Contraseñas hasheadas con **bcrypt** (`BCRYPT_ROUNDS=10`). JWT en
-  `Authorization: Bearer <token>`.
+- Contraseñas hasheadas con **bcrypt** (`BCRYPT_ROUNDS`, mínimo forzado 12). JWT
+  en `Authorization: Bearer <token>`, con vigencia `JWT_EXPIRES_IN` (def. 2 h).
+
+### Ciclo de vida de la sesión
+
+El JWT lleva firmada la `token_version` del usuario y `requireAuth` la contrasta
+contra la base en cada pedido. Cualquier cambio sensible —contraseña, rol,
+desactivación, baja, cese, logout— incrementa esa versión e **invalida al
+instante todos los tokens ya emitidos**. El rol efectivo se lee siempre de la
+base, nunca del token, así que una degradación de permisos tiene efecto inmediato.
+
+- Mientras un usuario tenga el cambio de contraseña pendiente, el resto del portal
+  le queda **bloqueado** (solo `/auth/me`, `/auth/logout`, `/auth/2fa/*` y el
+  propio cambio).
+- La cuenta se bloquea `LOGIN_BLOQUEO_MIN` minutos tras `LOGIN_MAX_INTENTOS`
+  intentos fallidos.
+- Los ingresos (exitosos y fallidos) quedan en `login_audit`, consultables por un
+  admin en `GET /api/admin/accesos`.
+
+> Ver **[Auditoria_Seguridad_2026-08.md](Auditoria_Seguridad_2026-08.md)** para el
+> detalle de las defensas, las tres medidas que quedaron sin desplegar y cómo
+> activarlas.
 
 ## Empleados (`/api/empleados`, requiere auth)
 
@@ -66,11 +89,13 @@ backend/
     config.js            # variables de entorno
     db.js                # pool de Postgres
     app.js / server.js   # Express
-    middleware/          # auth (JWT/roles) + manejo de errores
+    middleware/          # auth (JWT/roles/estado de sesión), rateLimit, errores
     routes/              # auth.routes.js, empleados.routes.js
-    db/                  # schema.sql, migrate.js, seed.js
+    db/                  # schema.sql, migrate.js, seed.js, backup.js (cifrado)
     data/                # seeds (empleados/empresas) generados del vanilla
     lib/identity.js      # slug / uid / dni-desde-cuil
+    lib/sesion.js        # estado vivo de la sesión + revocación de tokens
+    lib/password.js      # política de contraseñas y clave temporal
   Dockerfile
 ```
 
@@ -87,7 +112,7 @@ Dos caminos habituales:
    - `DATABASE_URL` = (la de la Managed DB, con `?sslmode=require`)
    - `JWT_SECRET` = (un secreto largo y aleatorio)
    - `CORS_ORIGIN` = (URL pública del frontend)
-   - `BCRYPT_ROUNDS` = `10`
+   - `BCRYPT_ROUNDS` = `12` (mínimo forzado)
 4. La primera vez, correr migraciones/seed: `npm run migrate` y (opcional) `npm run seed`
    como *Job* de App Platform, o vía consola.
 
@@ -97,5 +122,12 @@ Dos caminos habituales:
    (levanta Postgres + API). Para producción, usar una DB gestionada en vez del
    contenedor `db`, y un reverse proxy (Caddy/Nginx) con HTTPS delante de la API.
 
-> Seguridad: nunca commitear `.env`. `JWT_SECRET` fuerte. Postgres no expuesto a
+> **Seguridad:** nunca commitear `.env`. En producción (`NODE_ENV=production`) el
+> backend **no arranca** si `JWT_SECRET` es débil o conocido, si `CORS_ORIGIN` es
+> `*` o falta, o si `DATABASE_URL` usa una contraseña de Postgres por defecto.
+> Definí también `BACKUP_PASSPHRASE` para que los respaldos se cifren, y guardala
+> **fuera del servidor**: sin ella no se pueden restaurar. Postgres no expuesto a
 > internet (solo accesible por la API).
+>
+> El repaso completo de seguridad, con lo corregido y lo pendiente, está en
+> [Auditoria_Seguridad_2026-08.md](Auditoria_Seguridad_2026-08.md).
