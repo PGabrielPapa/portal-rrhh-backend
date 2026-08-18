@@ -1994,3 +1994,44 @@ CREATE TABLE IF NOT EXISTS afiliaciones_sindicales (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_afiliaciones_emp ON afiliaciones_sindicales(empleado_id, desde DESC);
+
+-- ╔══════════════════════════════════════════════════════════════════╗
+-- ║  ENDURECIMIENTO DE SEGURIDAD (auditoría 08/2026)                  ║
+-- ╚══════════════════════════════════════════════════════════════════╝
+
+-- Invalidación de sesiones: cada JWT lleva la versión (tv) con la que se emitió.
+-- Al cambiar contraseña, rol, o desactivar al usuario, se incrementa y TODOS los
+-- tokens viejos dejan de valer al instante (antes seguían vivos hasta 8 h).
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE personas  ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
+
+-- Bloqueo por intentos fallidos (freno a la fuerza bruta dirigida a UNA cuenta,
+-- que el límite por IP no detiene si el atacante rota direcciones).
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS failed_logins INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS locked_until  TIMESTAMPTZ;
+ALTER TABLE personas  ADD COLUMN IF NOT EXISTS failed_logins INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE personas  ADD COLUMN IF NOT EXISTS locked_until  TIMESTAMPTZ;
+
+-- Antirreplay de TOTP: guarda el último paso de 30 s ya consumido, para que un
+-- código interceptado no pueda reutilizarse dentro de su ventana de validez.
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS totp_last_step BIGINT;
+
+-- Fecha del último cambio de contraseña (para políticas de vencimiento e informes).
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS pwd_changed_at TIMESTAMPTZ;
+ALTER TABLE personas  ADD COLUMN IF NOT EXISTS pwd_changed_at TIMESTAMPTZ;
+
+-- Registro de accesos (Ley 25.326, art. 9: trazabilidad del tratamiento de datos
+-- personales). Guarda éxitos y fallos, sin la contraseña ni el token.
+CREATE TABLE IF NOT EXISTS login_audit (
+  id          BIGSERIAL PRIMARY KEY,
+  dni         TEXT,
+  empleado_id INTEGER,
+  persona_id  INTEGER,
+  exito       BOOLEAN NOT NULL,
+  motivo      TEXT,                       -- credenciales | 2fa | bloqueado | desactivado | ok
+  ip          TEXT,
+  user_agent  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_login_audit_created ON login_audit(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_login_audit_dni     ON login_audit(dni, created_at DESC);

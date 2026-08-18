@@ -31,12 +31,19 @@ function hotp(secret, counter) {
 }
 
 // Verifica un token de 6 dígitos con ventana ±1 (tolerancia de reloj).
+//
+// NOTA: la auditoría de 08/2026 propuso además impedir la reutilización de un
+// código ya consumido (antirreplay con `empleados.totp_last_step`). Se decidió NO
+// aplicarlo para no tocar el flujo de 2FA. La columna quedó creada en el esquema,
+// así que activarlo más adelante es solo volver a pasar el último paso usado.
 export function verificarToken(secret, token, ventana = 1) {
   const t = String(token || '').replace(/\D/g, '');
   if (t.length !== 6 || !secret) return false;
+  const buf = Buffer.from(t, 'utf8');
   const counter = Math.floor(Date.now() / 1000 / 30);
   for (let w = -ventana; w <= ventana; w++) {
-    if (crypto.timingSafeEqual(Buffer.from(hotp(secret, counter + w)), Buffer.from(t))) return true;
+    const esperado = Buffer.from(hotp(secret, counter + w), 'utf8');
+    if (esperado.length === buf.length && crypto.timingSafeEqual(esperado, buf)) return true;
   }
   return false;
 }

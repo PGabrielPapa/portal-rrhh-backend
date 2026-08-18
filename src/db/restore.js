@@ -7,7 +7,8 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
-import { hacerBackup } from './backup.js';
+import os from 'node:os';
+import { hacerBackup, descifrarBackup } from './backup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, '..', '..', 'backups');
@@ -15,7 +16,7 @@ const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, '..', '..', 'b
 function listar() {
   if (!fs.existsSync(BACKUP_DIR)) return [];
   return fs.readdirSync(BACKUP_DIR)
-    .filter((f) => /^portal_rrhh_.*\.sql$/.test(f))
+    .filter((f) => /^portal_rrhh_.*\.sql(\.enc)?$/.test(f))
     .map((f) => ({ f, t: fs.statSync(path.join(BACKUP_DIR, f)).mtime }))
     .sort((a, b) => b.t - a.t);
 }
@@ -55,7 +56,21 @@ try {
   else console.log(`      ⚠ no se pudo respaldar antes (${seg.error}). ` );
 
   console.log('2/2 · Restaurando…');
-  execFileSync('psql', [config.databaseUrl, '-v', 'ON_ERROR_STOP=1', '-f', path.join(BACKUP_DIR, elegido.f)], { stdio: 'inherit' });
+  // Los respaldos cifrados (.sql.enc) se descifran a un temporal con permisos 0600
+  // que se borra SIEMPRE — incluso si psql falla — para no dejar una copia en claro
+  // de toda la base dando vueltas en el disco.
+  let origen = path.join(BACKUP_DIR, elegido.f);
+  let tmpDir = null;
+  try {
+    if (elegido.f.endsWith('.enc')) {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prh-restore-'));
+      origen = path.join(tmpDir, 'dump.sql');
+      descifrarBackup(path.join(BACKUP_DIR, elegido.f), origen);
+    }
+    execFileSync('psql', [config.databaseUrl, '-v', 'ON_ERROR_STOP=1', '-f', origen], { stdio: 'inherit' });
+  } finally {
+    if (tmpDir) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* noop */ } }
+  }
   console.log('\n✓ Restauración completada. Reiniciá el backend para tomar los datos restaurados.');
   process.exit(0);
 } catch (e) {

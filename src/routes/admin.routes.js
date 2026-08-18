@@ -4,6 +4,8 @@ import { query } from '../db.js';
 import { config } from '../config.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { empSlug } from '../lib/identity.js';
+import { generarPasswordTemporal } from '../lib/password.js';
+import { revocarTokens, olvidarSesion } from '../lib/sesion.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,11 +45,16 @@ router.patch('/usuarios/:id', async (req, res, next) => {
       if (!ROLES.includes(role)) return res.status(400).json({ error: 'Rol inválido' });
       if (id === req.user.id && role !== 'admin') return res.status(400).json({ error: 'No podés quitarte el rol admin a vos mismo' });
       await query('UPDATE empleados SET role = $1 WHERE id = $2', [role, id]);
+      // Un cambio de rol invalida los tokens vigentes: sin esto, quien acaba de ser
+      // degradado conservaba sus permisos anteriores hasta que venciera su sesión.
+      await revocarTokens({ empleadoId: id });
       await audit(req.user.dni, 'cambio_rol', `rol → ${role}`, String(id));
     }
     if (disabled !== undefined) {
       if (id === req.user.id && disabled) return res.status(400).json({ error: 'No podés desactivarte a vos mismo' });
       await query('UPDATE empleados SET disabled = $1 WHERE id = $2', [!!disabled, id]);
+      // Desactivar debe expulsar YA al usuario, no al vencer su token.
+      await revocarTokens({ empleadoId: id });
       await audit(req.user.dni, disabled ? 'usuario_desactivado' : 'usuario_activado', null, String(id));
     }
     if (req.body && req.body.comiteHys !== undefined) {
@@ -55,8 +62,9 @@ router.patch('/usuarios/:id', async (req, res, next) => {
       await audit(req.user.dni, req.body.comiteHys ? 'comite_hys_alta' : 'comite_hys_baja', 'Integrante Comité HyS', String(id));
     }
     if (req.body && Array.isArray(req.body.modulosOcultos)) {
-      const mods = req.body.modulosOcultos.map(String);
+      const mods = req.body.modulosOcultos.map(String).slice(0, 200);
       await query("UPDATE empleados SET data = data || jsonb_build_object('modulosOcultos', $1::jsonb) WHERE id = $2", [JSON.stringify(mods), id]);
+      olvidarSesion({ empleadoId: id });
       await audit(req.user.dni, 'modulos_ocultos', `${mods.length} módulo(s) ocultos`, String(id));
     }
     if (req.body && req.body.reset2fa) {
@@ -67,26 +75,64 @@ router.patch('/usuarios/:id', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// POST /api/admin/usuarios/:id/blanquear — resetea la clave al DNI (cambio forzado)
+// POST /api/admin/usuarios/:id/blanquear — resetea la clave al DNI (cambio forzado).
+//
+// La auditoría de 08/2026 marcó que dejar la clave igual al DNI es riesgoso: el DNI
+// figura en el listado de usuarios, en los recibos y en cualquier planilla, así que
+// quien sepa de un blanqueo reciente puede entrar a esa cuenta. Se decidió MANTENER
+// el blanqueo al DNI por practicidad operativa de RR.HH.
+//
+// Lo que sí se agregó, y no cambia el procedimiento: se invalidan las sesiones
+// abiertas del usuario, y `must_change_pwd` ahora bloquea de verdad el resto del
+// portal hasta que la cambie (antes el aviso era cosmético y el token servía para
+// todo). Para pasar a una clave temporal aleatoria: BLANQUEO_ALEATORIO=true.
 router.post('/usuarios/:id/blanquear', async (req, res, next) => {
   try {
-    const r = await query('SELECT dni FROM empleados WHERE id = $1', [req.params.id]);
+    const r = await query('SELECT id, dni, nom FROM empleados WHERE id = $1', [req.params.id]);
     if (!r.rows[0]) return res.status(404).json({ error: 'Usuario no encontrado' });
-    const hash = await bcrypt.hash(String(r.rows[0].dni), config.bcryptRounds);
-    await query('UPDATE empleados SET password_hash = $1, must_change_pwd = true WHERE id = $2', [hash, req.params.id]);
-    await audit(req.user.dni, 'blanqueo_password', 'clave reseteada al DNI', String(req.params.id));
-    res.json({ ok: true });
+    const aleatorio = config.password.blanqueoAleatorio;
+    const nueva = aleatorio ? generarPasswordTemporal() : String(r.rows[0].dni);
+    const hash = await bcrypt.hash(nueva, config.bcryptRounds);
+    await query(
+      'UPDATE empleados SET password_hash = $1, must_change_pwd = true, pwd_changed_at = now(), failed_logins = 0, locked_until = NULL WHERE id = $2',
+      [hash, req.params.id]);
+    await revocarTokens({ empleadoId: Number(req.params.id) });
+    await audit(req.user.dni, 'blanqueo_password',
+      aleatorio ? 'clave temporal aleatoria generada (cambio obligatorio)' : 'clave reseteada al DNI (cambio obligatorio)',
+      String(req.params.id));
+    // La clave solo se devuelve cuando es aleatoria: si es el DNI, RR.HH. ya lo tiene
+    // y no hace falta que viaje en la respuesta.
+    res.json(aleatorio
+      ? { ok: true, passwordTemporal: nueva, aviso: 'Entregá esta contraseña por un canal seguro. No vuelve a mostrarse y debe cambiarla al ingresar.' }
+      : { ok: true });
   } catch (e) { next(e); }
 });
 
-// GET /api/admin/auditoria?q=
-router.get('/auditoria', async (req, res, next) => {
+// GET /api/admin/accesos?q=&soloFallidos=1 — registro de ingresos al portal.
+// Trazabilidad exigida por la Ley 25.326 sobre el tratamiento de datos personales,
+// y la forma práctica de detectar un intento de fuerza bruta o un acceso indebido.
+router.get('/accesos', async (req, res, next) => {
   try {
-    const { q } = req.query; const cond = [], params = [];
-    if (q) { params.push(`%${String(q).toLowerCase()}%`); const i = params.length; cond.push(`(lower(accion) LIKE $${i} OR lower(coalesce(detalle,'')) LIKE $${i} OR actor_dni LIKE $${i})`); }
+    const cond = [], params = [];
+    if (req.query.soloFallidos === '1') cond.push('exito = false');
+    if (req.query.q) {
+      params.push(`%${String(req.query.q).toLowerCase()}%`);
+      cond.push(`(dni LIKE $${params.length} OR lower(coalesce(ip,'')) LIKE $${params.length} OR lower(coalesce(motivo,'')) LIKE $${params.length})`);
+    }
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
-    const { rows } = await query(`SELECT * FROM audit_log ${where} ORDER BY created_at DESC LIMIT 500`, params);
-    res.json(rows);
+    const { rows } = await query(
+      `SELECT l.id, l.dni, l.exito, l.motivo, l.ip, l.user_agent, l.created_at, e.nom, em.nombre AS empresa
+         FROM login_audit l
+         LEFT JOIN empleados e ON e.id = l.empleado_id
+         LEFT JOIN empresas em ON em.id = e.empresa_id
+         ${where} ORDER BY l.created_at DESC LIMIT 500`, params);
+    // Resumen de los últimos 7 días para ver de un vistazo si hay algo raro.
+    const resumen = (await query(
+      `SELECT count(*) FILTER (WHERE exito)::int AS ok,
+              count(*) FILTER (WHERE NOT exito)::int AS fallidos,
+              count(DISTINCT ip) FILTER (WHERE NOT exito)::int AS ips_fallidas
+         FROM login_audit WHERE created_at >= now() - INTERVAL '7 days'`)).rows[0];
+    res.json({ items: rows, resumen });
   } catch (e) { next(e); }
 });
 

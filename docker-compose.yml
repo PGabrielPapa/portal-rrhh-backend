@@ -6,9 +6,11 @@ services:
     container_name: prh_db
     environment:
       POSTGRES_USER: portal
-      POSTGRES_PASSWORD: portal
+      POSTGRES_PASSWORD: portal      # solo desarrollo local
       POSTGRES_DB: portal_rrhh
-    ports: ["5432:5432"]
+    # Puerto publicado SOLO en la interfaz local: antes quedaba abierto en todas
+    # las interfaces de la máquina, con una clave conocida.
+    ports: ["127.0.0.1:5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U portal -d portal_rrhh"]
@@ -22,11 +24,19 @@ services:
     env_file:
       - .env
     environment:
+      # El Dockerfile fija NODE_ENV=production (correcto para la imagen del servidor).
+      # Aca se pisa a development a proposito: si no, config.js aplicaria las
+      # validaciones de produccion y RECHAZARIA el secreto de dev y la clave
+      # portal de Postgres, dejando el contenedor en reinicio permanente.
+      NODE_ENV: development
       PORT: 4000
       DATABASE_URL: postgres://portal:portal@db:5432/portal_rrhh
-      JWT_SECRET: cambiar-en-produccion
-      CORS_ORIGIN: http://localhost:5173
-      BCRYPT_ROUNDS: 10
+      # Secreto de DESARROLLO. Este compose NO sirve para producción: usá
+      # docker-compose.prod.yml, que exige JWT_SECRET desde el .env y arranca con
+      # NODE_ENV=production (ahí config.js rechaza secretos y claves por defecto).
+      JWT_SECRET: ${JWT_SECRET:-dev-solo-local-no-usar-en-produccion-0000000000}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      BCRYPT_ROUNDS: 12
     ports: ["4000:4000"]
     depends_on:
       db: { condition: service_healthy }

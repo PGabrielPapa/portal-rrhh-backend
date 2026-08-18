@@ -37,10 +37,12 @@ services:
       PORT: 4000
       DATABASE_URL: postgres://${POSTGRES_USER:-portal}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-portal_rrhh}
       JWT_SECRET: ${JWT_SECRET:?definí JWT_SECRET en .env}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
-      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-2h}
+      # Sin valor por defecto: un '*' dejaba que cualquier sitio consultara la API
+      # desde el navegador de un usuario logueado. config.js lo rechaza en prod.
+      CORS_ORIGIN: ${CORS_ORIGIN:?definí CORS_ORIGIN en .env, p.ej. https://rrhh.tu-dominio.com}
       TRUST_PROXY: 2
-      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-10}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
       NODE_ENV: production
     depends_on:
       db: { condition: service_healthy }

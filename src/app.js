@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { config } from './config.js';
 import { notFound, errorHandler } from './middleware/error.js';
+import { limiteGeneral, limitePesado, limiteIA, limiteMail } from './middleware/rateLimit.js';
 import authRoutes from './routes/auth.routes.js';
 import empleadosRoutes from './routes/empleados.routes.js';
 import chsRoutes from './routes/chs.routes.js';
@@ -82,13 +83,76 @@ import encuestasRoutes from './routes/encuestas.routes.js';
 
 export function createApp() {
   const app = express();
+  // No anunciar el framework: no ayuda a nadie salvo a quien busca exploits conocidos.
+  app.disable('x-powered-by');
   // Detrás del nginx/reverse-proxy: confiar en X-Forwarded-* para IP real (rate-limit) y HTTPS.
   app.set('trust proxy', Number(process.env.TRUST_PROXY || 1));
-  app.use(helmet());
-  // CORS: si el origen es '*' no se pueden enviar credenciales (regla del navegador).
-  app.use(cors({ origin: config.corsOrigin, credentials: config.corsOrigin !== '*' }));
+
+  // ── Cabeceras de seguridad ────────────────────────────────────────────────
+  // helmet() a secas no fija CSP útil para una API ni HSTS con precarga. Acá:
+  //  - CSP restrictiva: la API solo devuelve JSON y archivos adjuntos; nada de
+  //    scripts ni marcos. Si algún día un adjunto se sirviera como HTML, no podría
+  //    ejecutar nada ni salir a buscar recursos externos.
+  //  - frameguard DENY: impide embeber el portal en un iframe (clickjacking).
+  //  - HSTS: fuerza HTTPS en el navegador durante un año.
+  //  - noSniff: el navegador respeta el Content-Type que declaramos.
+  app.use(helmet({
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        'default-src': ["'none'"],
+        'frame-ancestors': ["'none'"],
+        'base-uri': ["'none'"],
+        'form-action': ["'none'"],
+        'img-src': ["'self'", 'data:'],
+        'sandbox': ['allow-downloads'],
+      },
+    },
+    crossOriginResourcePolicy: { policy: 'same-site' },
+    crossOriginOpenerPolicy: { policy: 'same-origin' },
+    referrerPolicy: { policy: 'no-referrer' },
+    hsts: config.isProd ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
+    frameguard: { action: 'deny' },
+  }));
+  app.use((req, res, next) => {
+    // Los datos del portal son personales: que ningún proxy ni el navegador los cachee.
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+    next();
+  });
+
+  // ── CORS ──────────────────────────────────────────────────────────────────
+  // Lista blanca explícita (config.js rechaza '*' en producción). Se permiten
+  // credenciales solo cuando el origen está declarado.
+  const permitidos = config.corsOrigin;
+  app.use(cors({
+    origin: permitidos === '*' ? '*' : (origin, cb) => {
+      // Sin cabecera Origin (curl, apps móviles, health checks) se deja pasar:
+      // esas peticiones no las origina un navegador de un tercero.
+      if (!origin) return cb(null, true);
+      if (permitidos.includes(origin)) return cb(null, true);
+      return cb(null, false);   // el navegador bloquea; no se filtra por qué
+    },
+    credentials: permitidos !== '*',
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    maxAge: 600,
+  }));
+
+  // Cuerpo JSON: 5 MB alcanza para los adjuntos en base64 y corta los envíos
+  // desmedidos que buscan agotar memoria. Los endpoints de credenciales, en
+  // cambio, solo reciben un DNI y una contraseña: aceptar 5 MB ahí era regalar
+  // un vector barato de consumo de CPU y memoria SIN estar autenticado.
+  app.use('/api/auth', express.json({ limit: '16kb' }));
   app.use(express.json({ limit: '5mb' }));
-  app.use(morgan('dev'));
+  // En producción, formato de log sin colores y sin cuerpos; `dev` es para consola local.
+  app.use(morgan(config.isProd ? 'combined' : 'dev', {
+    skip: (req) => req.path === '/api/health',
+  }));
+
+  // Límite de tasa global (antes solo existía en el login).
+  app.use('/api', limiteGeneral);
 
   app.get('/api/health', (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
   app.use('/api/auth', authRoutes);
@@ -99,7 +163,7 @@ export function createApp() {
   app.use('/api/escala', escalaRoutes);
   app.use('/api/convenios', conveniosRoutes);
   app.use('/api/art', artRoutes);
-  app.use('/api/reportes', reportesRoutes);
+  app.use('/api/reportes', limitePesado, reportesRoutes);
   app.use('/api/sindicatos', sindicatosRoutes);
   app.use('/api/hys', hysRoutes);
   app.use('/api/reglamento', reglamentoRoutes);
@@ -108,8 +172,8 @@ export function createApp() {
   app.use('/api/aprobaciones', aprobacionesRoutes);
   app.use('/api/parametros', parametrosRoutes);
   app.use('/api/conceptos', conceptosRoutes);
-  app.use('/api/liquidacion', liquidacionRoutes);
-  app.use('/api/produccion', produccionRoutes);
+  app.use('/api/liquidacion', limitePesado, liquidacionRoutes);
+  app.use('/api/produccion', limitePesado, produccionRoutes);
   app.use('/api/recibos', recibosRoutes);
   app.use('/api/licencias', licenciasRoutes);
   app.use('/api/sanciones', sancionesRoutes);
@@ -137,8 +201,8 @@ export function createApp() {
   app.use('/api/firmas', firmasRoutes);
   app.use('/api/mi-formacion', miFormacionRoutes);
   app.use('/api/mi-feedback', miFeedbackRoutes);
-  app.use('/api/ia', iaRoutes);
-  app.use('/api/sicore', sicoreRoutes);
+  app.use('/api/ia', limiteIA, iaRoutes);
+  app.use('/api/sicore', limitePesado, sicoreRoutes);
   app.use('/api/matriz-antiguedad', matrizAntiguedadRoutes);
   app.use('/api/modalidades', modalidadesRoutes);
   app.use('/api/competencias', competenciasRoutes);
@@ -148,10 +212,10 @@ export function createApp() {
   app.use('/api/talento', talentoRoutes);
   app.use('/api/formacion', formacionRoutes);
   app.use('/api/encuestas', encuestasRoutes);
-  app.use('/api/arca', arcaRoutes);
+  app.use('/api/arca', limitePesado, arcaRoutes);
   app.use('/api/familiares', familiaresRoutes);
   app.use('/api/fichadas', fichadasRoutes);
-  app.use('/api/prosoft', prosoftRoutes);
+  app.use('/api/prosoft', limitePesado, prosoftRoutes);
   app.use('/api/delegaciones', delegacionesRoutes);
   app.use('/api/chs', chsRoutes);
   app.use('/api/personas', personasRoutes);
@@ -162,7 +226,7 @@ export function createApp() {
   app.use('/api/alertas', alertasRoutes);
   app.use('/api/provision', provisionRoutes);
   app.use('/api/valores-legales', valoresLegalesRoutes);
-  app.use('/api/mail', mailRoutes);
+  app.use('/api/mail', limiteMail, mailRoutes);
   app.use('/api/novedades', novedadesRoutes);
   app.use('/api/vacaciones', vacacionesRoutes);
   app.use('/api/legajo-docs', legajoRoutes);

@@ -28,14 +28,22 @@ router.post('/:id/responder', async (req, res, next) => {
     if (!enc || enc.estado !== 'abierta') return res.status(409).json({ error: 'La encuesta no está abierta' });
     const ya = (await client.query('SELECT 1 FROM encuesta_participaciones WHERE encuesta_id=$1 AND empleado_id=$2', [encId, req.user.id])).rowCount;
     if (ya) return res.status(409).json({ error: 'Ya respondiste esta encuesta' });
-    const respuestas = Array.isArray((req.body || {}).respuestas) ? req.body.respuestas : [];
+    const respuestas = Array.isArray((req.body || {}).respuestas) ? req.body.respuestas.slice(0, 500) : [];
+    // Solo se aceptan preguntas que pertenecen a ESTA encuesta. Antes el id de
+    // pregunta venía del cuerpo sin verificar, así que se podían insertar respuestas
+    // en preguntas de otra encuesta (falseando sus resultados) sin haber sido invitado.
+    const validas = new Set((await client.query('SELECT id FROM encuesta_preguntas WHERE encuesta_id=$1', [encId]))
+      .rows.map((p) => Number(p.id)));
     await client.query('BEGIN');
     for (const r of respuestas) {
+      const pid = Number(r.preguntaId);
+      if (!validas.has(pid)) continue;
       const valor = r.valor != null && r.valor !== '' ? Number(r.valor) : null;
-      const texto = r.texto ? String(r.texto) : null;
+      if (valor != null && !Number.isFinite(valor)) continue;
+      const texto = r.texto ? String(r.texto).slice(0, 4000) : null;
       if (valor == null && !texto) continue;
       await client.query('INSERT INTO encuesta_respuestas (encuesta_id, pregunta_id, empleado_id, valor, texto) VALUES ($1,$2,$3,$4,$5)',
-        [encId, r.preguntaId, enc.anonima ? null : req.user.id, valor, texto]);
+        [encId, pid, enc.anonima ? null : req.user.id, valor, texto]);
     }
     await client.query('INSERT INTO encuesta_participaciones (encuesta_id, empleado_id) VALUES ($1,$2)', [encId, req.user.id]);
     await client.query('COMMIT');

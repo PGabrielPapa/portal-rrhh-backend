@@ -213,17 +213,37 @@ router.get('/mis', async (req, res, next) => {
 });
 
 // ── Talles del empleado (guardados en empleado.data.talles) ──
+// Un gerente solo accede a los talles de SU equipo. Antes bastaba con el rol
+// 'manager' para leer (y escribir) los de cualquier empleado de cualquier empresa,
+// a diferencia del histórico de talles de acá arriba, que sí filtraba por equipo.
+async function puedeVerTalles(req, empleadoId) {
+  const id = Number(empleadoId);
+  if (!Number.isInteger(id)) return false;
+  if (id === req.user.id) return true;
+  if (['rrhh', 'admin'].includes(req.user.role)) return true;
+  if (req.user.role === 'manager') return (await idsEquipoDe(req.user.id)).has(id);
+  return false;
+}
+
 router.get('/talles/:empleadoId', async (req, res, next) => {
   try {
-    if (Number(req.params.empleadoId) !== req.user.id && !['rrhh', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'No autorizado' });
-    const r = await query('SELECT data FROM empleados WHERE id=$1', [req.params.empleadoId]);
+    if (!await puedeVerTalles(req, req.params.empleadoId)) return res.status(403).json({ error: 'No autorizado' });
+    const r = await query('SELECT data FROM empleados WHERE id=$1', [Number(req.params.empleadoId)]);
     res.json((r.rows[0]?.data || {}).talles || {});
   } catch (e) { next(e); }
 });
 router.put('/talles/:empleadoId', requireRole('rrhh', 'admin', 'manager'), async (req, res, next) => {
   try {
-    const talles = req.body || {};
-    await query('UPDATE empleados SET data = data || $1::jsonb WHERE id=$2', [JSON.stringify({ talles }), req.params.empleadoId]);
+    if (!await puedeVerTalles(req, req.params.empleadoId)) return res.status(403).json({ error: 'Ese empleado no es de tu equipo.' });
+    const b = req.body || {};
+    // Se copian solo claves escalares: el cuerpo entero iba a parar a data.talles,
+    // así que un objeto anidado grande podía inflar la fila sin control.
+    const talles = {};
+    for (const [k, v] of Object.entries(b)) {
+      if (typeof v === 'object' && v !== null) continue;
+      talles[String(k).slice(0, 40)] = v == null ? null : String(v).slice(0, 60);
+    }
+    await query('UPDATE empleados SET data = data || $1::jsonb WHERE id=$2', [JSON.stringify({ talles }), Number(req.params.empleadoId)]);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });

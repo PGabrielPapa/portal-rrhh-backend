@@ -1,3 +1,18 @@
 node_modules
 npm-debug.log
+# Secretos y respaldos: nunca deben quedar horneados en la imagen ni subidos a
+# un registro. Antes solo se excluía `.env`, así que un `backups/` con el dump
+# completo de la base o un `.env.local` se copiaban dentro del contenedor.
 .env
+.env.*
+!.env.example
+!.env.prod.example
+backups/
+# Solo dumps sueltos en la raíz: `src/db/schema.sql` SÍ tiene que entrar en la imagen.
+/*.sql
+/*.dump
+.git
+.gitignore
+test/
+scripts/
+*.md

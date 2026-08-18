@@ -5,9 +5,13 @@ import { logAudit } from '../lib/audit.js';
 import { makeUid, dniFromCuil, empSlug } from '../lib/identity.js';
 import { idsEquipoDe, idsDirectosDe } from '../lib/equipo.js';
 import { puedeVerConfidenciales, puedeGestionarConfidenciales } from '../lib/confidencial.js';
+import { revocarTokens } from '../lib/sesion.js';
 
 const router = Router();
 router.use(requireAuth);
+
+// Roles admitidos por el esquema. Cualquier otro valor se ignora.
+const ROLES_VALIDOS = ['employee', 'manager', 'rrhh', 'admin'];
 
 // Campos que el empleado puede autogestionar desde "Mis datos" (impacto directo + histórico).
 const SELF_FIELDS = { estado_civil: 'Estado civil', email_personal: 'Mail personal', tel_personal: 'Teléfono personal', contacto_nombre: 'Contacto de emergencia — nombre', contacto_tel: 'Contacto de emergencia — teléfono', contacto_vinculo: 'Contacto de emergencia — vínculo' };
@@ -269,7 +273,10 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,$12,$13) RETURNING id`,
       [empresaId, legAsignado, dni, cuil || null, String(b.nom).toUpperCase(), b.email || null,
        b.cat || null, b.tramo || null, b.ingreso || null, b.bruto || 0, b.neto || 0,
-       ((b.esAdmin && ['admin', 'rrhh'].includes(req.user.role)) ? 'admin' : (b.role || 'employee')), JSON.stringify(data)]
+       // El rol se valida contra la lista cerrada: antes cualquier cadena del cuerpo
+       // se guardaba tal cual como rol, dejando usuarios con un rol inexistente.
+       ((b.esAdmin && ['admin', 'rrhh'].includes(req.user.role)) ? 'admin'
+         : (ROLES_VALIDOS.includes(b.role) ? b.role : 'employee')), JSON.stringify(data)]
     );
     if (b.puestoId) { try { await client.query('UPDATE empleados SET puesto_id=$1 WHERE id=$2', [b.puestoId, rows[0].id]); } catch (e) { /* puesto opcional */ } }
     // Capa Personas/Períodos: ligar el empleado a una persona y abrir su período (no rompe el alta si falla).
@@ -393,7 +400,10 @@ router.patch('/:id/activo', requireRole('rrhh', 'admin'), async (req, res, next)
   try {
     const activo = !!(req.body || {}).activo;
     await query('UPDATE empleados SET activo = $1 WHERE id = $2', [activo, req.params.id]);
+    // Dar de baja debe cortar el acceso en el acto, no cuando venza su token.
+    await revocarTokens({ empleadoId: Number(req.params.id) });
     try { await query('UPDATE periodos SET vigente=$1, updated_at=now() WHERE empleado_id=$2', [activo, req.params.id]); } catch (e) { /* período opcional */ }
+    logAudit(req.user.dni, activo ? 'empleado_reactivado' : 'empleado_baja_logica', null, String(req.params.id));
     res.json({ ok: true, activo });
   } catch (e) { next(e); }
 });
@@ -409,6 +419,8 @@ router.post('/:id/baja', requireRole('rrhh', 'admin'), async (req, res, next) =>
       [req.params.id, b.fechaBaja, b.causa, b.fechaNotificacion || null, b.preavisoOverride || null,
        Number(b.gratificacion) || 0, JSON.stringify(b.gratifCuotas || []), b.observaciones || null, req.user.dni]);
     await query('UPDATE empleados SET activo = false WHERE id = $1', [req.params.id]);
+    // Cese registrado → se cierran las sesiones abiertas del empleado.
+    await revocarTokens({ empleadoId: Number(req.params.id) });
     try { await query('UPDATE periodos SET vigente=false, fecha_egreso=$1, causa_egreso=$2, updated_at=now() WHERE empleado_id=$3 AND vigente=true', [b.fechaBaja, b.causa, req.params.id]); } catch (e) { /* período opcional */ }
     res.status(201).json({ ok: true });
   } catch (e) { next(e); }
@@ -628,7 +640,10 @@ router.get('/masivo/campos', requireRole('rrhh', 'admin'), (req, res) => {
 router.post('/masivo', requireRole('rrhh', 'admin'), async (req, res, next) => {
   const b = req.body || {};
   const campo = String(b.campo || '').trim();
-  const def = MASIVO_FIELDS[campo];
+  // `Object.hasOwn` y no un acceso directo: con `campo="constructor"` o
+  // `"__proto__"` el índice devolvía algo del prototipo de Object (truthy) y el
+  // pedido seguía adelante con una definición inventada.
+  const def = Object.hasOwn(MASIVO_FIELDS, campo) ? MASIVO_FIELDS[campo] : null;
   if (!def) return res.status(400).json({ error: 'Campo no habilitado para actualización masiva.' });
   const ids = Array.isArray(b.ids) ? [...new Set(b.ids.map(Number).filter(Boolean))] : [];
   if (!ids.length) return res.status(400).json({ error: 'Elegí al menos un empleado.' });

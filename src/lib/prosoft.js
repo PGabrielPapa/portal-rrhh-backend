@@ -8,6 +8,15 @@ import { procesarParsed, getFeriadosSet, getTurnosReglas } from './fichadasProce
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Timeout de las llamadas salientes. Sin esto, un Pro-Soft caído o lento dejaba
+// la petición colgada indefinidamente, reteniendo conexiones y memoria del portal.
+const TIMEOUT_MS = Number(process.env.PROSOFT_TIMEOUT_MS || 30_000);
+function conTimeout(ms = TIMEOUT_MS) {
+  const ac = new AbortController();
+  const id = setTimeout(() => ac.abort(), ms);
+  return { signal: ac.signal, fin: () => clearTimeout(id) };
+}
+
 let cookie = null; // jar de sesión muy simple (un solo usuario de servicio)
 
 export function prosoftConfigOk() {
@@ -15,11 +24,18 @@ export function prosoftConfigOk() {
 }
 
 async function login() {
-  const r = await fetch(`${config.prosoft.base}/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ usuario: config.prosoft.user, clave: config.prosoft.pass }),
-  });
+  const to = conTimeout();
+  let r;
+  try {
+    r = await fetch(`${config.prosoft.base}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usuario: config.prosoft.user, clave: config.prosoft.pass }),
+      signal: to.signal,
+    });
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'Pro-Soft: el login superó el tiempo de espera.' : `Pro-Soft: no se pudo conectar (${e.message}).`);
+  } finally { to.fin(); }
   if (!r.ok) throw new Error(`Pro-Soft: login falló (HTTP ${r.status}). Revisá PROSOFT_USER/PROSOFT_PASS.`);
   const setCookies = typeof r.headers.getSetCookie === 'function'
     ? r.headers.getSetCookie()
@@ -31,10 +47,17 @@ async function login() {
 // fetch con cookie; si expira (401) reintenta una vez tras re-login.
 async function api(path, opts = {}, _retry = false) {
   if (!cookie) await login();
-  const r = await fetch(`${config.prosoft.base}${path}`, {
-    ...opts,
-    headers: { 'Content-Type': 'application/json', Cookie: cookie, ...(opts.headers || {}) },
-  });
+  const to = conTimeout();
+  let r;
+  try {
+    r = await fetch(`${config.prosoft.base}${path}`, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', Cookie: cookie, ...(opts.headers || {}) },
+      signal: to.signal,
+    });
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? `Pro-Soft: ${path} superó el tiempo de espera.` : `Pro-Soft: fallo de red en ${path} (${e.message}).`);
+  } finally { to.fin(); }
   if (r.status === 401 && !_retry) { cookie = null; return api(path, opts, true); }
   return r;
 }
