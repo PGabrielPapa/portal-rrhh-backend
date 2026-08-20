@@ -543,6 +543,20 @@ router.get('/dashboard', async (req, res, next) => {
     const accMin = await one("SELECT COALESCE(sum(c),0)::int n FROM (SELECT (SELECT count(*) FROM jsonb_array_elements(acciones) a WHERE a->>'estado' <> 'Cumplida') c FROM chs_minutas) t");
     out.accionesPendientes = accAud + accMin + out.ncAbiertas;
     out.cartReponer = await one("SELECT count(*)::int n FROM chs_carteleria WHERE estado_conservacion IN ('Malo','A reponer')");
+    // Habilitaciones: el estado se calcula con el mismo criterio que el panel.
+    const habEstado = `SELECT ${ESTADO_HAB_SQL} AS e FROM chs_habilitaciones h`;
+    out.habTotal = await one('SELECT count(*)::int n FROM chs_habilitaciones');
+    out.habVencidas = await one(`SELECT count(*)::int n FROM (${habEstado}) t WHERE e = 'Vencida'`);
+    out.habPorVencer = await one(`SELECT count(*)::int n FROM (${habEstado}) t WHERE e = 'Por vencer'`);
+    out.habEnTramite = await one(`SELECT count(*)::int n FROM (${habEstado}) t WHERE e IN ('En trámite','En tramite')`);
+    out.habProximas = (await query(
+      `SELECT h.establecimiento, h.tipo, h.fecha_vencimiento, ${ESTADO_HAB_SQL} AS estado,
+        (h.fecha_vencimiento - CURRENT_DATE) AS dias
+       FROM chs_habilitaciones h
+       WHERE h.fecha_vencimiento IS NOT NULL
+         AND h.estado NOT IN ('No aplica')
+         AND ${ESTADO_HAB_SQL} IN ('Vencida', 'Por vencer')
+       ORDER BY h.fecha_vencimiento ASC LIMIT 12`)).rows;
     out.evidencias = await one("SELECT count(*)::int n FROM chs_evidencias");
     out.minutas = await one("SELECT count(*)::int n FROM chs_minutas");
     res.json(out);
@@ -666,5 +680,227 @@ router.delete('/epp-entregas/:id', async (req, res, next) => {
 });
 
 router.get('/epp-entregas/:id/archivo', archivoHandler('chs_epp_entregas'));
+
+// ───────────────────────── Habilitaciones por establecimiento ─────────────────────────
+// El estado efectivo se calcula en la consulta (no se persiste): así una habilitación
+// pasa sola a "Por vencer" y a "Vencida" sin que nadie tenga que volver a guardarla.
+// 'En trámite' y 'No aplica' son decisiones manuales y se respetan tal cual.
+const ESTADO_HAB_SQL = `CASE
+    WHEN h.estado IN ('En trámite', 'En tramite', 'No aplica') THEN h.estado
+    WHEN h.fecha_vencimiento IS NULL THEN 'Vigente'
+    WHEN h.fecha_vencimiento < CURRENT_DATE THEN 'Vencida'
+    WHEN h.fecha_vencimiento <= CURRENT_DATE + (COALESCE(h.dias_alerta, 60) || ' days')::interval THEN 'Por vencer'
+    ELSE 'Vigente'
+  END`;
+const ESTADOS_HAB_MANUALES = ['Automático', 'Automatico', 'En trámite', 'En tramite', 'No aplica'];
+const estadoHabManual = (v) => (ESTADOS_HAB_MANUALES.includes(String(v || '').trim()) ? String(v).trim() : 'Automático');
+const num = (v) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
+const ent = (v) => (v === '' || v === null || v === undefined || Number.isNaN(parseInt(v, 10)) ? null : parseInt(v, 10));
+
+const mapHab = (r) => ({
+  id: r.id, establecimiento: r.establecimiento, empresa: r.empresa, tipo: r.tipo, organismo: r.organismo,
+  nroExpediente: r.nro_expediente, nroHabilitacion: r.nro_habilitacion,
+  fechaOtorgamiento: r.fecha_otorgamiento, fechaVencimiento: r.fecha_vencimiento,
+  diasAlerta: r.dias_alerta, estado: r.estado_efectivo, estadoManual: r.estado,
+  diasRestantes: r.dias_restantes === null || r.dias_restantes === undefined ? null : Number(r.dias_restantes),
+  responsable: r.responsable, tramitadoPor: r.tramitado_por,
+  costo: r.costo === null ? null : Number(r.costo),
+  superficie: r.superficie === null ? null : Number(r.superficie),
+  capacidad: r.capacidad, rubro: r.rubro, condiciones: r.condiciones, observaciones: r.observaciones,
+  cantDocs: Number(r.cant_docs) || 0, cantRenovaciones: Number(r.cant_renov) || 0,
+  createdBy: r.created_by, createdAt: r.created_at, updatedAt: r.updated_at,
+});
+
+const SELECT_HAB = `SELECT h.*, ${ESTADO_HAB_SQL} AS estado_efectivo,
+    CASE WHEN h.fecha_vencimiento IS NULL THEN NULL ELSE (h.fecha_vencimiento - CURRENT_DATE) END AS dias_restantes,
+    (SELECT count(*) FROM chs_hab_docs d WHERE d.habilitacion_id = h.id)::int AS cant_docs,
+    (SELECT count(*) FROM chs_hab_historial x WHERE x.habilitacion_id = h.id)::int AS cant_renov
+  FROM chs_habilitaciones h`;
+
+router.get('/habilitaciones', async (req, res, next) => {
+  try {
+    const { rows } = await query(`${SELECT_HAB}
+      ORDER BY CASE ${ESTADO_HAB_SQL}
+        WHEN 'Vencida' THEN 1 WHEN 'Por vencer' THEN 2 WHEN 'En trámite' THEN 3 WHEN 'En tramite' THEN 3 WHEN 'Vigente' THEN 4 ELSE 5 END,
+        h.fecha_vencimiento ASC NULLS LAST, h.establecimiento ASC, h.id DESC`);
+    res.json(rows.map(mapHab));
+  } catch (e) { next(e); }
+});
+
+// Campos del formulario -> parámetros del INSERT/UPDATE (mismo orden en ambos).
+function habParams(b) {
+  return [
+    String(b.establecimiento || '').trim(), b.empresa || null, String(b.tipo || '').trim(), b.organismo || null,
+    b.nroExpediente || null, b.nroHabilitacion || null,
+    b.fechaOtorgamiento || null, b.fechaVencimiento || null,
+    ent(b.diasAlerta) ?? 60, estadoHabManual(b.estadoManual ?? b.estado),
+    b.responsable || null, b.tramitadoPor || null,
+    num(b.costo), num(b.superficie), ent(b.capacidad),
+    b.rubro || null, b.condiciones || null, b.observaciones || null,
+  ];
+}
+
+async function guardarDocs(habId, docs, dni) {
+  for (const d of (Array.isArray(docs) ? docs : []).slice(0, 20)) {
+    if (!d || !d.data) continue;
+    await query(
+      'INSERT INTO chs_hab_docs (habilitacion_id, descripcion, archivo_nombre, archivo_mime, archivo_data, created_by) VALUES ($1,$2,$3,$4,$5,$6)',
+      [habId, d.descripcion || null, d.nombre || 'documento', d.mime || 'application/octet-stream', d.data, dni]);
+  }
+}
+
+router.post('/habilitaciones', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!String(b.establecimiento || '').trim() || !String(b.tipo || '').trim()) {
+      return res.status(400).json({ error: 'Establecimiento y tipo son obligatorios' });
+    }
+    const p = habParams(b);
+    const { rows } = await query(
+      `INSERT INTO chs_habilitaciones (establecimiento, empresa, tipo, organismo, nro_expediente, nro_habilitacion,
+        fecha_otorgamiento, fecha_vencimiento, dias_alerta, estado, responsable, tramitado_por,
+        costo, superficie, capacidad, rubro, condiciones, observaciones, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id`,
+      [...p, req.user.dni]);
+    const id = rows[0].id;
+    await guardarDocs(id, b.docs, req.user.dni);
+    res.status(201).json({ ok: true, id });
+  } catch (e) { next(e); }
+});
+
+router.put('/habilitaciones/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!String(b.establecimiento || '').trim() || !String(b.tipo || '').trim()) {
+      return res.status(400).json({ error: 'Establecimiento y tipo son obligatorios' });
+    }
+    const prev = (await query('SELECT fecha_otorgamiento, fecha_vencimiento, nro_expediente, nro_habilitacion FROM chs_habilitaciones WHERE id=$1', [req.params.id])).rows[0];
+    if (!prev) return res.status(404).json({ error: 'Habilitación no encontrada' });
+    const p = habParams(b);
+    await query(
+      `UPDATE chs_habilitaciones SET establecimiento=$1, empresa=$2, tipo=$3, organismo=$4, nro_expediente=$5,
+        nro_habilitacion=$6, fecha_otorgamiento=$7, fecha_vencimiento=$8, dias_alerta=$9, estado=$10,
+        responsable=$11, tramitado_por=$12, costo=$13, superficie=$14, capacidad=$15, rubro=$16,
+        condiciones=$17, observaciones=$18, updated_at=now() WHERE id=$19`,
+      [...p, req.params.id]);
+    // Si cambió la vigencia por edición directa, queda igual asentado en el historial:
+    // el objetivo es que ninguna renovación se pierda por sobreescritura.
+    const iso = (d) => (d ? String(d).slice(0, 10) : null);
+    const vencAnt = iso(prev.fecha_vencimiento); const vencNue = iso(b.fechaVencimiento);
+    const otorgAnt = iso(prev.fecha_otorgamiento); const otorgNue = iso(b.fechaOtorgamiento);
+    if (vencAnt !== vencNue || otorgAnt !== otorgNue) {
+      await query(
+        `INSERT INTO chs_hab_historial (habilitacion_id, otorg_anterior, otorg_nuevo, venc_anterior, venc_nuevo,
+          nro_expediente, nro_habilitacion, costo, observaciones, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [req.params.id, otorgAnt, otorgNue, vencAnt, vencNue, b.nroExpediente || null, b.nroHabilitacion || null,
+          num(b.costo), 'Actualización de vigencia desde la ficha', req.user.dni]);
+    }
+    await guardarDocs(req.params.id, b.docs, req.user.dni);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/habilitaciones/:id', async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM chs_habilitaciones WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Habilitación no encontrada' });
+    res.json({ ok: true }); // docs e historial caen por ON DELETE CASCADE
+  } catch (e) { next(e); }
+});
+
+// Renovación explícita: mueve la vigencia y deja el tramo anterior asentado.
+router.post('/habilitaciones/:id/renovar', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!b.fechaVencimiento) return res.status(400).json({ error: 'Indicá la nueva fecha de vencimiento' });
+    const prev = (await query('SELECT fecha_otorgamiento, fecha_vencimiento FROM chs_habilitaciones WHERE id=$1', [req.params.id])).rows[0];
+    if (!prev) return res.status(404).json({ error: 'Habilitación no encontrada' });
+    const iso = (d) => (d ? String(d).slice(0, 10) : null);
+    await query(
+      `INSERT INTO chs_hab_historial (habilitacion_id, otorg_anterior, otorg_nuevo, venc_anterior, venc_nuevo,
+        nro_expediente, nro_habilitacion, costo, observaciones, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [req.params.id, iso(prev.fecha_otorgamiento), b.fechaOtorgamiento || null, iso(prev.fecha_vencimiento),
+        b.fechaVencimiento, b.nroExpediente || null, b.nroHabilitacion || null, num(b.costo),
+        b.observaciones || 'Renovación registrada', req.user.dni]);
+    const sets = ['fecha_vencimiento=$1', 'estado=$2', 'updated_at=now()'];
+    const params = [b.fechaVencimiento, 'Automático'];
+    const add = (col, val) => { params.push(val); sets.push(`${col}=$${params.length}`); };
+    if (b.fechaOtorgamiento) add('fecha_otorgamiento', b.fechaOtorgamiento);
+    if (b.nroExpediente) add('nro_expediente', b.nroExpediente);
+    if (b.nroHabilitacion) add('nro_habilitacion', b.nroHabilitacion);
+    if (num(b.costo) !== null) add('costo', num(b.costo));
+    params.push(req.params.id);
+    await query(`UPDATE chs_habilitaciones SET ${sets.join(', ')} WHERE id=$${params.length}`, params);
+    await guardarDocs(req.params.id, b.docs, req.user.dni);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.get('/habilitaciones/:id/historial', async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT id, fecha_registro, otorg_anterior, otorg_nuevo, venc_anterior, venc_nuevo,
+        nro_expediente, nro_habilitacion, costo, observaciones, created_by, created_at
+       FROM chs_hab_historial WHERE habilitacion_id=$1 ORDER BY fecha_registro DESC, id DESC`, [req.params.id]);
+    res.json(rows.map((r) => ({
+      id: r.id, fechaRegistro: r.fecha_registro, otorgAnterior: r.otorg_anterior, otorgNuevo: r.otorg_nuevo,
+      vencAnterior: r.venc_anterior, vencNuevo: r.venc_nuevo, nroExpediente: r.nro_expediente,
+      nroHabilitacion: r.nro_habilitacion, costo: r.costo === null ? null : Number(r.costo),
+      observaciones: r.observaciones, createdBy: r.created_by, createdAt: r.created_at,
+    })));
+  } catch (e) { next(e); }
+});
+
+router.get('/habilitaciones/:id/docs', async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT id, descripcion, archivo_nombre, archivo_mime, octet_length(archivo_data) AS b64_len, created_by, created_at
+       FROM chs_hab_docs WHERE habilitacion_id=$1 ORDER BY id DESC`, [req.params.id]);
+    res.json(rows.map((r) => ({
+      id: r.id, descripcion: r.descripcion, nombre: r.archivo_nombre, mime: r.archivo_mime,
+      // El dato está en base64: 4 caracteres ≈ 3 bytes del archivo original.
+      bytes: r.b64_len ? Math.round((Number(r.b64_len) * 3) / 4) : 0,
+      createdBy: r.created_by, createdAt: r.created_at,
+    })));
+  } catch (e) { next(e); }
+});
+
+router.post('/habilitaciones/:id/docs', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const existe = await query('SELECT 1 FROM chs_habilitaciones WHERE id=$1', [req.params.id]);
+    if (!existe.rowCount) return res.status(404).json({ error: 'Habilitación no encontrada' });
+    const docs = Array.isArray(b.docs) ? b.docs : (b.data ? [b] : []);
+    if (!docs.length) return res.status(400).json({ error: 'Sin archivos para adjuntar' });
+    await guardarDocs(req.params.id, docs, req.user.dni);
+    res.status(201).json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// La descarga verifica que el documento pertenezca a la habilitación del path,
+// para que un id de doc suelto no habilite leer adjuntos de otro registro.
+router.get('/habilitaciones/:id/docs/:docId/archivo', async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      'SELECT archivo_nombre, archivo_mime, archivo_data FROM chs_hab_docs WHERE id=$1 AND habilitacion_id=$2',
+      [req.params.docId, req.params.id]);
+    const r = rows[0];
+    if (!r || !r.archivo_data) return res.status(404).json({ error: 'Sin archivo' });
+    res.setHeader('Content-Type', mimeSeguro(r.archivo_mime));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `attachment; filename="${String(r.archivo_nombre || 'archivo').replace(/[^\w.\-]/g, '_')}"`);
+    res.send(Buffer.from(r.archivo_data, 'base64'));
+  } catch (e) { next(e); }
+});
+
+router.delete('/habilitaciones/:id/docs/:docId', async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM chs_hab_docs WHERE id=$1 AND habilitacion_id=$2 RETURNING id', [req.params.docId, req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Documento no encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
 
 export default router;

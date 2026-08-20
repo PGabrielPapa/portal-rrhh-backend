@@ -503,6 +503,50 @@ CREATE TABLE IF NOT EXISTS chs_riesgos (
   created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ── Habilitaciones por establecimiento (municipales, bomberos, ambientales, etc.) ──
+-- `estado` guarda SOLO la decisión manual ('Automático' / 'En trámite' / 'No aplica').
+-- El estado efectivo (Vigente / Por vencer / Vencida) lo calcula la consulta a partir de
+-- fecha_vencimiento y dias_alerta: así el semáforo no depende de que alguien vuelva a
+-- guardar el registro para pasar a "Por vencer" o "Vencida".
+CREATE TABLE IF NOT EXISTS chs_habilitaciones (
+  id SERIAL PRIMARY KEY,
+  establecimiento TEXT NOT NULL, empresa TEXT, tipo TEXT NOT NULL, organismo TEXT,
+  nro_expediente TEXT, nro_habilitacion TEXT,
+  fecha_otorgamiento DATE, fecha_vencimiento DATE,
+  dias_alerta INTEGER NOT NULL DEFAULT 60,
+  estado TEXT NOT NULL DEFAULT 'Automático',
+  responsable TEXT, tramitado_por TEXT,
+  costo NUMERIC(14,2), superficie NUMERIC(12,2), capacidad INTEGER,
+  rubro TEXT, condiciones TEXT, observaciones TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chs_hab_venc ON chs_habilitaciones(fecha_vencimiento);
+CREATE INDEX IF NOT EXISTS idx_chs_hab_estab ON chs_habilitaciones(establecimiento);
+
+-- Documentos adjuntos de cada habilitación (varios por registro: plano, certificado, planilla…).
+-- Mismos nombres de columna que el resto de CHS para reutilizar el handler de descarga.
+CREATE TABLE IF NOT EXISTS chs_hab_docs (
+  id SERIAL PRIMARY KEY,
+  habilitacion_id INTEGER NOT NULL REFERENCES chs_habilitaciones(id) ON DELETE CASCADE,
+  descripcion TEXT,
+  archivo_nombre TEXT, archivo_mime TEXT, archivo_data TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chs_habdocs_hab ON chs_hab_docs(habilitacion_id);
+
+-- Historial de renovaciones: cada cambio de vigencia queda registrado en vez de sobreescribirse.
+CREATE TABLE IF NOT EXISTS chs_hab_historial (
+  id SERIAL PRIMARY KEY,
+  habilitacion_id INTEGER NOT NULL REFERENCES chs_habilitaciones(id) ON DELETE CASCADE,
+  fecha_registro DATE NOT NULL DEFAULT CURRENT_DATE,
+  otorg_anterior DATE, otorg_nuevo DATE,
+  venc_anterior DATE, venc_nuevo DATE,
+  nro_expediente TEXT, nro_habilitacion TEXT,
+  costo NUMERIC(14,2), observaciones TEXT,
+  created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chs_habhist_hab ON chs_hab_historial(habilitacion_id, fecha_registro DESC);
+
 -- ── Grupo familiar declarado por el empleado ──
 CREATE TABLE IF NOT EXISTS familiares (
   id SERIAL PRIMARY KEY,

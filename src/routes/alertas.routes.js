@@ -38,6 +38,26 @@ async function construirAlertas(dias) {
     } catch (e) { console.warn('[alertas] mediciones:', e.message); }
 
     try {
+      // Habilitaciones por establecimiento. Cada registro trae sus propios días de
+      // anticipación: se avisa si entra en su ventana o si ya está dentro del horizonte
+      // general. Las marcadas "No aplica" quedan afuera.
+      for (const h of (await query(
+        `SELECT establecimiento, empresa, tipo, organismo, fecha_vencimiento, dias_alerta, responsable
+           FROM chs_habilitaciones
+          WHERE fecha_vencimiento IS NOT NULL AND estado <> 'No aplica'
+            AND (fecha_vencimiento <= $1
+                 OR fecha_vencimiento <= CURRENT_DATE + (COALESCE(dias_alerta, 60) || ' days')::interval)`, [limite])).rows) {
+        const d = diasEntre(h.fecha_vencimiento, hoy);
+        out.push({
+          tipo: 'Habilitación',
+          titulo: `${h.tipo || 'Habilitación'} — ${h.establecimiento || ''}`.trim(),
+          detalle: `${h.organismo ? `${h.organismo}. ` : ''}${d < 0 ? 'Habilitación vencida' : 'Habilitación a renovar'}${h.responsable ? ` (resp.: ${h.responsable})` : ''}`,
+          fecha: h.fecha_vencimiento, dias: d, severidad: sev(d),
+        });
+      }
+    } catch (e) { console.warn('[alertas] habilitaciones:', e.message); }
+
+    try {
       for (const e of (await query(
         `SELECT id, nom, leg_num, ingreso FROM empleados WHERE activo=true AND ingreso IS NOT NULL
            AND (ingreso + make_interval(months => $3::int))::date <= $1 AND (ingreso + make_interval(months => $3::int))::date >= $2`, [limite, hoy, mesesPP])).rows) {
