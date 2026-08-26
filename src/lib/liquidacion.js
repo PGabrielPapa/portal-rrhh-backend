@@ -176,7 +176,7 @@ export function calcularRecibo(emp, params, opts) {
 
   // Si el empleado tiene categoría de convenio que define básico, ese tiene prioridad (luego básico cargado / escala).
   // Prioridad del básico: matriz de antigüedad > convenio/categoría > básico del legajo > sueldo > bruto.
-  const basico = num(opts?.basicoPorAntiguedad) || num(opts?.convBasico) || num(d.basico) || num(d.sueldo) || num(emp.bruto);
+  const _basicoNativo = num(opts?.basicoPorAntiguedad) || num(opts?.convBasico) || num(d.basico) || num(d.sueldo) || num(emp.bruto);
   const anios = aniosAntiguedad(emp.ingreso, anio, mes);
   const sind = opts?.sind || null;
 
@@ -192,7 +192,7 @@ export function calcularRecibo(emp, params, opts) {
   // Roles "valor interno": antigüedad/presentismo/complemento ALIMENTAN otros cálculos y se muestran
   // en su línea nativa (con etiqueta y proporción de quincena). El concepto solo define su VALOR
   // (se realimenta arriba); la pasada de fórmulas NO empuja una línea aparte para estos roles.
-  const _rolesValorInterno = ['antiguedad', 'presentismo', 'complemento'];
+  const _rolesValorInterno = ['antiguedad', 'presentismo', 'complemento', 'basico', 'norem', 'acuenta'];
   // Modo JORNAL (UOCRA): el motor no arma los haberes mensuales (sueldo, antigüedad, etc.); los
   // construyen íntegramente los conceptos del jornal (horas × valor hora, premio, feriado, aportes).
   const _modoJornal = opts?.modoJornal === true;
@@ -216,14 +216,36 @@ export function calcularRecibo(emp, params, opts) {
     return nativo;
   };
 
+  // BÁSICO (rol 'basico'). Cada fuente se expone por separado para que el CONCEPTO decida la
+  // prioridad (el concepto sembrado usa: escala del convenio y, si no matchea, el básico del legajo).
+  const _varsBasico = {
+    convBasico: num(opts?.convBasico), basicoMatriz: num(opts?.basicoPorAntiguedad),
+    basicoLegajo: num(d.basico), sueldoLegajo: num(d.sueldo), brutoLegajo: num(emp.bruto),
+  };
+  let basico = _basicoNativo;
+  if (!_modoJornal && _rolActivo('basico')) basico = _valRol('basico', basico, { anios, ..._varsBasico, __aux: opts?.auxFormulas || {} });
+
   const pctAntig = (sind && Number(sind.pctAntigPorAnio) > 0) ? Number(sind.pctAntigPorAnio) : num(p.pctAntiguedadPorAnio);
   // ANTIGÜEDAD (rol 'antiguedad'). Alimenta presentismo (según base), complemento y regularRemun.
   let antiguedad = (esFC || _modoJornal) ? 0 : basico * anios * pctAntig / 100;
   if (!esFC && !_modoJornal && _rolActivo('antiguedad')) antiguedad = _valRol('antiguedad', antiguedad, { basico, anios, sueldo: num(d.sueldo), bruto: num(emp.bruto), pctAntigPorAnio: pctAntig, montoAntigPorAnio: num(sind?.montoAntigPorAnio), __aux: opts?.auxFormulas || {} });
   const pierdePresentismo = num(opts?.diasSuspension) > 0 || num(opts?.ausenciasInjustificadas) > 0;
-  // Adicional por título según el nivel del empleado (data.nivelTitulo) y los montos del CCT (sindicato).
-  const nivelTit = String(d.nivelTitulo || '').toLowerCase();
-  const tituloAdic = (esFC || !sind) ? 0 : (nivelTit === 'universitario' ? num(sind.tituloUniversitario) : nivelTit === 'secundario' ? num(sind.tituloSecundario) : 0);
+  // Adicional por título según el nivel del empleado (data.nivelTitulo, o data.tituloNivel de cargas
+  // viejas) y los montos del CCT (sindicato). El TERCIARIO liquida con el monto de secundario/técnico.
+  // ROL 'titulo': si hay un concepto ACTIVO con ese rol, su fórmula define el VALOR (y se realimenta a
+  // la base del presentismo y a la remuneración); la LÍNEA del recibo la empuja la pasada de fórmulas.
+  const nivelTit = String(d.nivelTitulo || d.tituloNivel || '').toLowerCase();
+  const _titUni = nivelTit === 'universitario' ? 1 : 0;
+  const _titSec = nivelTit === 'secundario' ? 1 : 0;
+  const _titTer = nivelTit === 'terciario' ? 1 : 0;
+  // Variables del título expuestas a las fórmulas: montos del convenio (Sindicatos) + nivel del legajo.
+  const _varsTitulo = {
+    tituloSecundario: num(sind?.tituloSecundario), tituloUniversitario: num(sind?.tituloUniversitario),
+    esTituloUniversitario: _titUni, esTituloSecundario: _titSec, esTituloTerciario: _titTer,
+    esFueraConvenio: esFC ? 1 : 0,
+  };
+  let tituloAdic = (esFC || !sind) ? 0 : (_titUni ? num(sind.tituloUniversitario) : (_titSec || _titTer) ? num(sind.tituloSecundario) : 0);
+  if (_rolActivo('titulo')) tituloAdic = _valRol('titulo', tituloAdic, { basico, anios, ..._varsTitulo, __aux: opts?.auxFormulas || {} });
   // Base del presentismo según el CCT (pres_base): básico [+ antig] [+ título] [+ a cuenta de futuros aumentos].
   const presBase = opts?.presBase || 'basico';
   let basePres = basico;
@@ -239,8 +261,15 @@ export function calcularRecibo(emp, params, opts) {
   const presentismo = (esFC || pierdePresentismo) ? 0 : presentismoPleno;
   // Adicional presentismo individual (tilde del legajo): lleva el presentismo hasta el 10%; solo si la diferencia es > 0.
   const adicPres = (esFC || pierdePresentismo || !d.adicionalPresentismo) ? 0 : Math.max(0, basePres * (10 - pctPres) / 100);
-  const noRem = num(d.norem);
-  const aCuentaMonto = num(d.aCuenta);
+  // NO REMUNERATIVO (rol 'norem'). El concepto sembrado usa el bono del acuerdo cargado en la escala
+  // del convenio y, si el convenio no tiene ninguno vigente, el monto cargado en el legajo.
+  const _varsNoRem = { noRemConvenio: num(opts?.noRemConvenio), noRemLegajo: num(d.norem) };
+  let noRem = num(d.norem);
+  if (!_modoJornal && _rolActivo('norem')) noRem = _valRol('norem', noRem, { basico, anios, ..._varsNoRem, __aux: opts?.auxFormulas || {} });
+  // A CUENTA DE FUTUROS AUMENTOS (rol 'acuenta'): monto por empleado; si el legajo no tiene, no trae nada.
+  const _varsACuenta = { aCuentaLegajo: num(d.aCuenta) };
+  let aCuentaMonto = num(d.aCuenta);
+  if (!_modoJornal && _rolActivo('acuenta')) aCuentaMonto = _valRol('acuenta', aCuentaMonto, { basico, ..._varsACuenta, __aux: opts?.auxFormulas || {} });
   // Complemento función hacia la ESCALA UNIFICADA (LEITEN/SINIS/BARTON): si el empleado tiene un
   // objetivo de escala, el complemento puentea básico + presentismo + No Rem + A Cuenta hasta ese
   // monto, con piso en 0 (si el convenio ya lo supera, cobra el convenio; "el mejor de las dos").
@@ -408,7 +437,7 @@ export function calcularRecibo(emp, params, opts) {
     haberes.push({ concepto: 'Sueldo básico' + suf + diasTxt, tipo: 'rem', monto: round2(basico * f) });
     if (antiguedad > 0) haberes.push({ concepto: `Antigüedad (${anios} año${anios !== 1 ? 's' : ''})${suf}`, tipo: 'rem', monto: round2(antiguedad * f) });
     if (presentismo > 0) haberes.push({ concepto: 'Presentismo' + suf, tipo: 'rem', monto: round2(presentismo * f) });
-    if (tituloAdic > 0) haberes.push({ concepto: 'Adicional por título' + suf, tipo: 'rem', monto: round2(tituloAdic * f) });
+    if (tituloAdic > 0 && !_rolActivo('titulo')) haberes.push({ concepto: 'Adicional por título' + suf, tipo: 'rem', monto: round2(tituloAdic * f) });
     if (adicPres > 0) haberes.push({ concepto: 'Adicional presentismo (al 10%)' + suf, tipo: 'rem', monto: round2(adicPres * f) });
     if (aCuentaMonto > 0) haberes.push({ concepto: 'A cuenta futuros aumentos' + suf, tipo: 'rem', monto: round2(aCuentaMonto * f) });
     if (complemento > 0) haberes.push({ concepto: (objetivoEscala > 0 ? 'Complemento función' : 'Complemento variable') + suf, tipo: 'rem', monto: round2(complemento * f) });
@@ -480,7 +509,7 @@ export function calcularRecibo(emp, params, opts) {
     const _afiliadoSind = (opts?.afiliadoSindical === true || opts?.afiliadoSindical === 'si')
       || (opts?.afiliadoSindical == null && (d.afiliadoSindical === true || d.afiliadoSindical === 'si' || d.afiliadoSindical === 'sí'));
     const _ctxF = { basico, sueldo: num(d.sueldo), complemento, norem: noRem, noRem, antiguedad_monto: antiguedad,
-      presentismo, aCuenta: aCuentaMonto, titulo: tituloAdic, adicPresentismo: adicPres,
+      presentismo, aCuenta: aCuentaMonto, titulo: tituloAdic, adicPresentismo: adicPres, ..._varsTitulo, ..._varsBasico, ..._varsNoRem, ..._varsACuenta,
       // Remuneración mensual FIJA = básico + antigüedad + complemento + a cuenta + título + otros
       // adicionales mensuales fijos. NO incluye presentismo, comisiones, vacaciones ni licencias.
       // Base recomendada para el descuento por ausencia injustificada: remunFija / 30 × días.

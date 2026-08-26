@@ -76,23 +76,65 @@ const sindDe = (m, emp) => m[String(emp?.data?.cod_sindicato || '').toUpperCase(
 async function convMap() {
   try {
     const { rows } = await query('SELECT DISTINCT ON (codigo) codigo, data FROM convenio_versiones WHERE vigencia <= CURRENT_DATE ORDER BY codigo, vigencia DESC, created_at DESC');
-    const m = {}; for (const r of rows) m[String(r.codigo).toUpperCase()] = (r.data && r.data.tablas) || []; return m;
+    const m = {}; for (const r of rows) { const _c = String(r.codigo).toUpperCase(); m[_c] = (r.data && r.data.tablas) || []; m['__nr__' + _c] = (r.data && r.data.noRemunerativos) || []; } return m;
   } catch { return {}; }
 }
-// Básico del convenio según la categoría elegida (valor 'titulo||cat'). 0 si no aplica.
+// Básico del convenio según la CATEGORÍA del legajo. Se busca SOLO por categoría, en todas las
+// tablas de la versión vigente: el título de la escala cambia en cada paritaria y antes dejaba los
+// legajos apuntando a un título inexistente → básico 0 en silencio (caso legajo 005137, ago-2026).
+// Se tolera el formato viejo 'titulo||cat' quedándose con la parte de la categoría.
+const catSola = (sel) => { const t = String(sel || ''); return (t.includes('||') ? t.split('||').pop() : t).trim(); };
+// Resolución del básico en las tablas de la versión vigente, en 3 pasos:
+//   1) match EXACTO 'tabla||categoría' — es lo que guarda el legajo y lo único inequívoco cuando el
+//      convenio agrupa (Comercio y UOM repiten 'Cat. A' en varias tablas con montos DISTINTOS).
+//   2) si esa tabla ya no existe (paritaria cargada con otro nombre de tabla), match por CATEGORÍA,
+//      pero solo si es inequívoca: aparece en una sola tabla, o en varias con el MISMO monto.
+//   3) si la categoría está repetida con montos distintos, devuelve 0 A PROPÓSITO: el recibo no se
+//      publica (queda sin haberes) y hay que repuntar la categoría del legajo a mano.
+function basicoPorCat(tablas, sel) {
+  if (!Array.isArray(tablas) || !sel) return 0;
+  const s = String(sel);
+  const cat = catSola(s);
+  if (!cat) return 0;
+  const tit = s.includes('||') ? s.split('||')[0].trim() : '';
+  if (tit) {
+    for (const t of tablas) {
+      if (String(t.titulo).trim() !== tit) continue;
+      for (const c of (t.cats || [])) if (String(c.cat).trim() === cat) return Number(c.basico) || 0;
+    }
+  }
+  const montos = [];
+  for (const t of tablas) for (const c of (t.cats || [])) if (String(c.cat).trim() === cat) montos.push(Number(c.basico) || 0);
+  if (!montos.length) return 0;
+  return montos.every((m) => m === montos[0]) ? montos[0] : 0;
+}
 function convBasicoDe(m, emp) {
   const code = String(emp?.data?.cod_convenio || '').toUpperCase();
-  const sel = String(emp?.data?.categoria_convenio || '');
-  if (!code || !sel || !m[code]) return 0;
-  const [titulo, cat] = sel.split('||');
-  for (const t of m[code]) { if (String(t.titulo) === titulo) { for (const c of (t.cats || [])) { if (String(c.cat) === cat) return Number(c.basico) || 0; } } }
-  return 0;
+  if (!code || !m[code]) return 0;
+  return basicoPorCat(m[code], emp?.data?.categoria_convenio);
+}
+
+// Bono NO REMUNERATIVO del acuerdo del convenio (se carga en Escalas/convenios, bloque "NR").
+// Toma el NR activo mas reciente cuyo mes de vigencia sea <= al periodo liquidado. 0 si no hay.
+function noRemConvenioDe(m, emp, anio, mes) {
+  const code = String(emp?.data?.cod_convenio || '').toUpperCase();
+  const lista = code ? (m['__nr__' + code] || []) : [];
+  if (!Array.isArray(lista) || !lista.length) return 0;
+  const per = `${anio}-${String(mes).padStart(2, '0')}`;
+  let mejor = null;
+  for (const nr of lista) {
+    if (!nr || nr.activo === false) continue;
+    const desde = String(nr.mes || '');
+    if (desde && desde > per) continue;                 // acuerdo posterior al periodo: todavia no aplica
+    if (!mejor || String(mejor.mes || '') <= desde) mejor = nr;
+  }
+  return Number(mejor && mejor.monto) || 0;
 }
 
 // Monto de la ESCALA UNIFICADA (Grupo LEITEN) para el empleado, según su categoría/tramo
 // (data.escalaUnifCat = 'CATEG TRAMO', ej. 'ASI SEMI'). 0 si no aplica (empleado sin escala unif).
 function escalaUnifDe(m, emp) {
-  const key = String(emp?.data?.escalaUnifCat || '').trim();
+  const key = catSola(emp?.data?.escalaUnifCat);
   if (!key || !m['ESCALA-UNIF']) return 0;
   for (const t of m['ESCALA-UNIF']) for (const c of (t.cats || [])) if (String(c.cat) === key) return Number(c.basico) || 0;
   return 0;
@@ -100,10 +142,11 @@ function escalaUnifDe(m, emp) {
 // Escala objetivo del empleado: UECARA/IDEE (cualquier liqUecara con escala BIM) usa la escala BIM
 // por escalaBimObjetivo; el resto, la escala unificada del grupo.
 function escalaObjetivoDe(m, emp) {
-  if (esUecaraMensual(emp)) {
-    const bim = lookupConvBasico(m, 'IDEE-BIM', emp?.data?.escalaBimObjetivo);
-    if (bim > 0) return bim;
-  }
+  // Si el legajo tiene asignada una categoría de la escala IDEE, ESA es su escala objetivo, sin
+  // depender del tipo de liquidación UECARA. Antes se exigía que liqUecara estuviera cargado, así
+  // que asignar la escala sin ese campo no hacía nada y el complemento función quedaba en 0.
+  const bim = lookupConvBasico(m, 'IDEE-BIM', emp?.data?.escalaBimObjetivo);
+  if (bim > 0) return bim;
   return escalaUnifDe(m, emp);
 }
 
@@ -353,13 +396,12 @@ const r2j = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 // ── MENSUAL UECARA / fuera de convenio (escala IDEE-BIM) ─────────────────────
 function esUecaraMensual(emp) { return !!(emp?.data?.liqUecara); }
-// Básico de una tabla de convenio por 'titulo||cat' (para cualquier código, ej. UECARA o IDEE-BIM).
+// Básico de una tabla de convenio por CATEGORÍA (para cualquier código, ej. UECARA o IDEE-BIM).
+// Mismo criterio que convBasicoDe: el título de la escala no participa del match.
 function lookupConvBasico(m, code, sel) {
   code = String(code || '').toUpperCase();
-  if (!code || !sel || !m[code]) return 0;
-  const [titulo, cat] = String(sel).split('||');
-  for (const t of m[code]) if (String(t.titulo) === titulo) for (const c of (t.cats || [])) if (String(c.cat) === cat) return Number(c.basico) || 0;
-  return 0;
+  if (!code || !m[code]) return 0;
+  return basicoPorCat(m[code], sel);
 }
 // Arma el recibo mensual UECARA con la MISMA estructura (art. 140 LCT).
 async function armarReciboUecara(emp, anio, mes, tipo, extra = {}) {
@@ -375,7 +417,7 @@ async function armarReciboUecara(emp, anio, mes, tipo, extra = {}) {
     escalaBim: num(extra.escalaBim, escalaBim),
     montoFijo: num(extra.montoFijo, emp.data.montoFijoUecara),
     aniosAntiguedad: num(extra.aniosAntiguedad, anios),
-    titulo: extra.titulo || emp.data.tituloNivel || null,
+    titulo: extra.titulo || emp.data.nivelTitulo || emp.data.tituloNivel || null,
     snr: num(extra.snr, emp.data.snrUecara != null ? emp.data.snrUecara : 67100),
     plusFeriado: num(extra.plusFeriado, 0),
   });
@@ -634,7 +676,7 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     try { await autoActualizarGanancias(anio, mes); } catch (e) { /* no bloquea */ }
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
-    const _cMapC = await convMap(); const convBasico = convBasicoDe(_cMapC, emp); const escalaObjetivo = escalaObjetivoDe(_cMapC, emp);
+    const _cMapC = await convMap(); const convBasico = convBasicoDe(_cMapC, emp); const escalaObjetivo = escalaObjetivoDe(_cMapC, emp); const _nrConvC = noRemConvenioDe(_cMapC, emp, anio, mes);
     const plusLct = ((escalaObjetivo > 0 || esUecaraMensual(emp)) && _esMensual(t)) ? await plusLCTOpts(empleadoId, anio, mes) : {};
     const _ausInjC = t === 'mensual' ? await ausenciasInjustMensualDe(empleadoId, anio, mes) : 0;
     const basicoAnt = basicoAntiguedadDe(await matrizAntigActivas(), emp, anio, mes);
@@ -646,7 +688,7 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const cForm = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, t));
     const auxF = cForm.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const _afil = await afiliadoEnFecha(empleadoId, anio, mes);
-    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, afiliadoSindical: _afil, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ausenciasInjustificadas: _ausInjC, ...plusLct, ...nov, ...varProm, ...emb, ...extra }));
+    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, afiliadoSindical: _afil, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, noRemConvenio: _nrConvC, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ausenciasInjustificadas: _ausInjC, ...plusLct, ...nov, ...varProm, ...emb, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -679,6 +721,7 @@ router.get('/diagnostico/:id', requireRole('rrhh', 'admin'), async (req, res, ne
       dataLegajo: { basico: d.basico, sueldo: d.sueldo, cod_convenio: d.cod_convenio, cod_sindicato: d.cod_sindicato, categoria_convenio: d.categoria_convenio, escalaUnifCat: d.escalaUnifCat, norem: d.norem, aCuenta: d.aCuenta, complemento: d.complemento },
       sindicatoResuelto: sind,          // null = el código de sindicato no existe en el catálogo (cae a defaults)
       convBasico,                       // básico según convenio (0 si no matchea)
+      noRemConvenio: noRemConvenioDe(cMap, emp, anio, mes),   // bono NR del acuerdo del convenio (0 si no hay)
       escalaObjetivo,                   // monto de escala unificada (0 = no encontró la categoría/tramo)
       escalaUnifSembrada: escalaObjetivo > 0,
       ausenciasInjustMes: ausencias,
@@ -743,7 +786,7 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     try { await autoActualizarGanancias(anio, mes); } catch (e) { /* no bloquea */ }
     const ganTabla = await ganTablaParaFecha(extra.fechaPago || `${anio}-${String(mes).padStart(2, '0')}-15`);
     const sind = sindDe(await sindMap(), emp); const presBase = sind?.presBase || 'basico';
-    const _cMapG = await convMap(); const convBasico = convBasicoDe(_cMapG, emp); const escalaObjetivo = escalaObjetivoDe(_cMapG, emp);
+    const _cMapG = await convMap(); const convBasico = convBasicoDe(_cMapG, emp); const escalaObjetivo = escalaObjetivoDe(_cMapG, emp); const _nrConvG = noRemConvenioDe(_cMapG, emp, anio, mes);
     const plusLct = ((escalaObjetivo > 0 || esUecaraMensual(emp)) && _esMensual(tipo)) ? await plusLCTOpts(empleadoId, anio, mes) : {};
     const basicoAnt = basicoAntiguedadDe(await matrizAntigActivas(), emp, anio, mes);
     const emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(empleadoId, extra.fechaPago) : {};
@@ -755,7 +798,12 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const cFormG = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo));
     const auxFG = cFormG.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const _afilG = await afiliadoEnFecha(empleadoId, anio, mes);
-    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilG, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...plusLct, ...nov, ...varProm, ...emb, ...extra });
+    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilG, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, noRemConvenio: _nrConvG, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...plusLct, ...nov, ...varProm, ...emb, ...extra });
+    // No publicar un recibo mensual SIN haberes: antes salia un recibo en $0 y encima generaba un
+    // ajuste por neto negativo que se arrastraba mes a mes. Si no hay remuneracion, se corta acá.
+    if (_esMensual(tipo) && Number(recibo?.totales?.totalRemun || 0) <= 0) {
+      return res.status(409).json({ error: 'El recibo queda sin haberes remunerativos: el legajo no tiene básico por escala de convenio ni monto cargado. Revisá la categoría de convenio, la escala objetivo y el básico del legajo antes de liquidar.' });
+    }
     let correlativoG = 1;
     if (tipo === 'complementaria' || tipo === 'extra_norem') { const _mg = await query('SELECT COALESCE(MAX(correlativo),0) AS n FROM recibos WHERE empleado_id=$1 AND anio=$2 AND mes=$3 AND tipo=$4', [empleadoId, Number(anio), Number(mes), tipo]); correlativoG = Number(_mg.rows[0].n) + 1; }
     const client = await pool.connect();
@@ -894,7 +942,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
       const ov = overrides[id] || {};
       const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
       const acumGan = await acumGananciasDe(id, anio, mes);
-      const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp); const _escUnif = escalaObjetivoDe(cMap, emp);
+      const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp); const _escUnif = escalaObjetivoDe(cMap, emp); const _nrConv = noRemConvenioDe(cMap, emp, anio, mes);
       const _plusLct = ((_escUnif > 0 || esUecaraMensual(emp)) && _esMensual(tipo)) ? await plusLCTOpts(id, anio, mes) : {};
       const _ausInj = tipo === 'mensual' ? await ausenciasInjustMensualDe(id, anio, mes) : 0;
       const _emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(id, fechaPago) : {};
@@ -916,7 +964,7 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
         ? await armarReciboJornalUocra(emp, Number(anio), Number(mes), tipo, { fechaPago, ...ovJ })
         : (esUecaraMensual(emp) && tipo === 'mensual' && emp.data?.motorViejo === true)
         ? await armarReciboUecara(emp, Number(anio), Number(mes), tipo, { fechaPago })
-        : calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilSet.has(id), fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, escalaObjetivo: _escUnif, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ausenciasInjustificadas: (num(ov.ausenciasInjustificadas) ?? _ausInj), ..._plusLct, ..._nov, ..._varProm, ..._emb, ..._extra, ...ovM });
+        : calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilSet.has(id), fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, noRemConvenio: _nrConv, escalaObjetivo: _escUnif, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ausenciasInjustificadas: (num(ov.ausenciasInjustificadas) ?? _ausInj), ..._plusLct, ..._nov, ..._varProm, ..._emb, ..._extra, ...ovM });
       const h = recibo.detalle?.horas || {};
       const item = {
         empleadoId: id, nom: emp.nom, legNum: emp.legNum, empresa: emp.empresa, esJornal: _esJornal, neto: recibo.totales.neto,

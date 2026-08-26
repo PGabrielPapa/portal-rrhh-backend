@@ -4,7 +4,7 @@
 // tome el básico por 'categoria_convenio' = 'Escala IDEE Jul-2026||<ROL NIVEL>'.
 import { query } from '../db.js';
 
-const TITULO = 'Escala IDEE Jul-2026';
+const TITULO = 'Escala IDEE';
 // Validada contra la planilla: JR = Inicial×1,05 ; SSR = JR×1,10 ; SR = SSR×1,10 (Gerente JR = 0%).
 const ESCALA = [
   ['MAESTRANZA INICIAL', 1117141.47], ['MAESTRANZA JR', 1172864.81], ['MAESTRANZA SSR', 1290151.29], ['MAESTRANZA SR', 1419166.42],
@@ -38,7 +38,7 @@ export async function migrarIdeeBim() {
   const uec = await query("SELECT 1 FROM convenio_versiones WHERE codigo='UECARA' AND vigencia='2026-07-01'");
   if (uec.rowCount === 0) {
     const dataU = {
-      tablas: [{ titulo: 'UECARA Jul-2026', subtitulo: 'CCT 660/13', tipo: 'mensual', cats: [
+      tablas: [{ titulo: 'UECARA', subtitulo: 'CCT 660/13', tipo: 'mensual', cats: [
         { cat: 'ANALISTA ADM. 1° CAT', basico: 1579990, ok: true },
         { cat: 'AUXILIAR ADM. 2° CAT', basico: 1461443, ok: true },
         { cat: 'AY. TECNICO 3° CAT', basico: 1476305, ok: true },

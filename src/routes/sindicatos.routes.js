@@ -6,8 +6,8 @@ import { logCambios } from '../lib/configHist.js';
 const router = Router();
 router.use(requireAuth);
 
-const HFIELDS = [['nombre','Nombre'],['pctEmpleado','% aporte empleado'],['pctSolidario','% aporte solidario (no afiliado)'],['pctPatronal','% contribución patronal'],['pctAntigPorAnio','% antigüedad por año'],['montoAntigPorAnio','Antigüedad monto fijo por año'],['pctPresentismo','% presentismo'],['pctArt37_1','% Aporte especial Art.37 I'],['pctArt37_2','% Aporte solidario Art.37 II'],['pctPremio','% Premio asistencia (jornal)'],['complementoSinNoRem','Complemento sin No Rem'],['tituloSecundario','Adicional título secundario'],['tituloUniversitario','Adicional título universitario'],['presBase','Base presentismo'],['nota','Nota']];
-const map = (r) => ({ id: r.id, codigo: r.codigo, nombre: r.nombre, pctEmpleado: Number(r.pct_empleado), pctSolidario: Number(r.pct_solidario) || 0, pctPatronal: Number(r.pct_patronal), pctAntigPorAnio: Number(r.pct_antig_por_anio), montoAntigPorAnio: Number(r.monto_antig_por_anio) || 0, complementoSinNoRem: r.complemento_sin_norem === true, pctArt37_1: Number(r.pct_art37_1) || 0, pctArt37_2: Number(r.pct_art37_2) || 0, pctPremio: Number(r.pct_premio) || 0, nota: r.nota, tieneAdicionalTitulo: r.tiene_adicional_titulo, presBase: r.pres_base, tituloSecundario: Number(r.titulo_secundario) || 0, tituloUniversitario: Number(r.titulo_universitario) || 0, pctPresentismo: Number(r.pct_presentismo) || 0 });
+const HFIELDS = [['nombre','Nombre'],['pctEmpleado','% aporte empleado'],['pctSolidario','% aporte solidario (no afiliado)'],['pctPatronal','% contribución patronal'],['pctAntigPorAnio','% antigüedad por año'],['montoAntigPorAnio','Antigüedad monto fijo por año'],['pctPresentismo','% presentismo'],['pctArt37_1','% Aporte especial Art.37 I'],['pctArt37_2','% Aporte solidario Art.37 II'],['pctPremio','% Premio asistencia (jornal)'],['complementoSinNoRem','Complemento sin No Rem'],['tituloSecundario','Adicional título secundario'],['tituloUniversitario','Adicional título universitario'],['presBase','Base presentismo'],['noRemConAntigPres','Antig./pres. sobre No Rem'],['nota','Nota']];
+const map = (r) => ({ id: r.id, codigo: r.codigo, nombre: r.nombre, pctEmpleado: Number(r.pct_empleado), pctSolidario: Number(r.pct_solidario) || 0, pctPatronal: Number(r.pct_patronal), pctAntigPorAnio: Number(r.pct_antig_por_anio), montoAntigPorAnio: Number(r.monto_antig_por_anio) || 0, complementoSinNoRem: r.complemento_sin_norem === true, noRemConAntigPres: r.no_rem_con_antig_pres === true, pctArt37_1: Number(r.pct_art37_1) || 0, pctArt37_2: Number(r.pct_art37_2) || 0, pctPremio: Number(r.pct_premio) || 0, nota: r.nota, tieneAdicionalTitulo: r.tiene_adicional_titulo, presBase: r.pres_base, tituloSecundario: Number(r.titulo_secundario) || 0, tituloUniversitario: Number(r.titulo_universitario) || 0, pctPresentismo: Number(r.pct_presentismo) || 0 });
 
 router.get('/', async (req, res, next) => {
   try { const { rows } = await query('SELECT * FROM sindicatos ORDER BY codigo'); res.json(rows.map(map)); }
@@ -29,6 +29,8 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
        RETURNING *`,
       [String(b.codigo).toUpperCase(), b.nombre, b.pctEmpleado || 0, b.pctPatronal || 0, b.pctAntigPorAnio || 1, b.nota || null, (tSec > 0 || tUni > 0), b.presBase || 'basico', tSec, tUni, Number(b.pctPresentismo) || 0, Number(b.pctSolidario) || 0, Number(b.montoAntigPorAnio) || 0, b.complementoSinNoRem === true, Number(b.pctArt37_1) || 0, Number(b.pctArt37_2) || 0, Number(b.pctPremio) || 0, req.user.dni]
     );
+    // Antig./pres. sobre el No Rem: el motor ya lo leia, pero no habia forma de editarlo desde la pantalla.
+    if (b.noRemConAntigPres !== undefined) { const _u = await query('UPDATE sindicatos SET no_rem_con_antig_pres=$1 WHERE codigo=$2 RETURNING *', [b.noRemConAntigPres === true, _cod]); if (_u.rows[0]) ins.rows[0] = _u.rows[0]; }
     await logCambios('sindicatos', _cod, _prev ? map(_prev) : null, map(ins.rows[0]), HFIELDS, req.user.dni);
     res.status(201).json(map(ins.rows[0]));
   } catch (e) { next(e); }
@@ -44,6 +46,7 @@ router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
       [b.nombre, b.pctEmpleado || 0, b.pctPatronal || 0, b.pctAntigPorAnio || 1, b.nota || null, (tSec > 0 || tUni > 0), b.presBase || 'basico', tSec, tUni, Number(b.pctPresentismo) || 0, Number(b.pctSolidario) || 0, Number(b.montoAntigPorAnio) || 0, b.complementoSinNoRem === true, Number(b.pctArt37_1) || 0, Number(b.pctArt37_2) || 0, Number(b.pctPremio) || 0, req.user.dni, req.params.id]
     );
     if (!r.rowCount) return res.status(404).json({ error: 'No encontrado' });
+    if (b.noRemConAntigPres !== undefined) { const _u = await query('UPDATE sindicatos SET no_rem_con_antig_pres=$1 WHERE id=$2 RETURNING *', [b.noRemConAntigPres === true, req.params.id]); if (_u.rows[0]) r.rows[0] = _u.rows[0]; }
     await logCambios('sindicatos', r.rows[0].codigo, _prev ? map(_prev) : null, map(r.rows[0]), HFIELDS, req.user.dni);
     res.json(map(r.rows[0]));
   } catch (e) { next(e); }

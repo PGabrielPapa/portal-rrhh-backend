@@ -526,7 +526,7 @@ router.post('/actualizar-convenios', requireRole('rrhh', 'admin'), async (req, r
       const escBim = val(r, 'EscalaBim', 'escalaBimObjetivo', 'Escala BIM');
       if (escBim) patch.escalaBimObjetivo = escBim;
       const titN = val(r, 'Titulo', 'tituloNivel', 'Título');
-      if (titN) patch.tituloNivel = titN.toLowerCase();
+      if (titN) { patch.nivelTitulo = titN.toLowerCase(); patch.tituloNivel = titN.toLowerCase(); }
       const mFijo = val(r, 'MontoFijo', 'montoFijoUecara');
       if (mFijo) patch.montoFijoUecara = parseMonto(mFijo);
       const snrU = val(r, 'SNR', 'snrUecara');

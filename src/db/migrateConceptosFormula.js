@@ -67,6 +67,28 @@ const CONCEPTOS = [
   // Complemento: resta el No Rem salvo que el convenio lo excluya (UECARA → complementoSinNoRem).
   { codigo: '8700', descripcion: 'Complemento función', formula: 'MAXIMO(0, escalaObjetivo - (basico + presentismoPleno + aCuenta + SI(complementoSinNoRem, 0, norem)))',
     base_legal: 'Escala (mejor de convenio vs escala); UECARA sin No Rem', data: { esFormula: true, base: 'rem', rol: 'complemento', condicion: 'escalaObjetivo > 0', orden: 22 } },
+  // Adicional por título (rol 'titulo'): el importe sale de la tabla Sindicatos por convenio
+  // (titulo_secundario / titulo_universitario) según el nivel cargado en el legajo. El TERCIARIO
+  // liquida con el monto de secundario/técnico. Fuera de convenio no lo cobra (es beneficio de CCT).
+  { codigo: '8800', descripcion: 'Adicional por título', formula: 'SI(esTituloUniversitario, tituloUniversitario, SI(esTituloSecundario + esTituloTerciario > 0, tituloSecundario, 0))',
+    base_legal: 'CCT — adicional por título (monto por convenio en Sindicatos)', data: { esFormula: true, base: 'rem', rol: 'titulo', condicion: 'esFueraConvenio == 0', orden: 23 } },
+
+  // ── SUELDO BÁSICO (rol 'basico'). Sale de la ESCALA del convenio segun la categoria del legajo;
+  //    si esa categoria no matchea en la escala vigente, cae al basico cargado en el legajo.
+  //    La matriz de antiguedad queda disponible como variable (basicoMatriz) pero YA NO tiene prioridad.
+  { codigo: '1', descripcion: 'Sueldo básico', formula: 'SI(convBasico > 0, convBasico, SI(basicoLegajo > 0, basicoLegajo, SI(sueldoLegajo > 0, sueldoLegajo, brutoLegajo)))',
+    base_legal: 'Escala del convenio por categoría (Escalas/convenios)', data: { esFormula: true, base: 'rem', rol: 'basico', orden: 10 } },
+
+  // ── ASIGNACIÓN NO REMUNERATIVA (rol 'norem'). Sale del bono de acuerdo cargado en la escala del
+  //    convenio (bloque "NR" de Escalas/convenios); si el convenio no tiene ninguno vigente, usa el
+  //    monto cargado en el legajo. Se actualiza con las paritarias junto con los basicos.
+  { codigo: '58500', descripcion: 'Asignación no remunerativa (acuerdo paritario)', formula: 'SI(noRemConvenio > 0, noRemConvenio, noRemLegajo)',
+    base_legal: 'Acuerdo paritario del convenio — suma no remunerativa', data: { esFormula: true, base: 'norem', rol: 'norem', orden: 30 } },
+
+  // ── A CUENTA DE FUTUROS AUMENTOS (rol 'acuenta'). Monto por empleado, cargado en el legajo.
+  //    Si el legajo no tiene monto, el concepto no trae nada (condicion aCuentaLegajo > 0).
+  { codigo: '8810', descripcion: 'A cuenta de futuros aumentos', formula: 'aCuentaLegajo',
+    base_legal: 'Monto a cuenta acordado con el empleado', data: { esFormula: true, base: 'rem', rol: 'acuenta', condicion: 'aCuentaLegajo > 0', orden: 24 } },
 
   // ── FASE 5: UECARA (alcance UECARA). Con "aportes propios", solo estos aportes aplican (sin ANSSAL/cuota).
   //    Los % se leen de Sindicatos (pctArt37_1/2); jub y PAMI de parámetros. Plus feriado = remun/150.

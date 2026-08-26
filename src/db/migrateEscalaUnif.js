@@ -5,7 +5,7 @@
 // Se siembra como convenio 'ESCALA-UNIF' en convenio_versiones (misma mecánica que IDEE-BIM).
 import { query } from '../db.js';
 
-const TITULO = 'Escala unificada Jul-2026';
+const TITULO = 'Escala unificada';
 // Claves = CATEGUNIF + ' ' + TRAMO (INI/JUN/SEMI/SEN), como vienen en el archivo de empleados.
 const ESCALA = [
   ['OP INI', 1366190.00], ['OP JUN', 1434499.51], ['OP SEMI', 1577949.46], ['OP SEN', 1735744.40],
@@ -22,6 +22,9 @@ const ESCALA = [
 ];
 
 export async function migrarEscalaUnif() {
+  // Registrar en el CATALOGO de convenios: /api/convenios recorre la tabla `convenios`, y sin esta
+  // fila la escala unificada no aparece en ninguna pantalla. Idempotente, corre siempre.
+  await query(`INSERT INTO convenios (codigo, nombre, cct, data) VALUES ('ESCALA-UNIF','Escala unificada Grupo LEITEN','Escala interna por categoria/tramo','{}'::jsonb) ON CONFLICT (codigo) DO NOTHING`);
   const existe = await query("SELECT 1 FROM convenio_versiones WHERE codigo='ESCALA-UNIF' AND vigencia='2026-07-01'");
   if (existe.rowCount > 0) return { skip: true };
   const data = {
