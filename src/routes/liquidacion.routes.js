@@ -16,6 +16,7 @@ import { calcUecara } from '../lib/uecaraMensual.js';
 import { logAudit } from '../lib/audit.js';
 import { paramsParaFecha } from './parametros.routes.js';
 import { cargarAux } from './valoresAux.routes.js';
+import { causalDe } from './causalesBaja.routes.js';
 import { escalaUOCRA, rangoQuincena, horasJornalDesdeFichadas, calcReciboJornal, JORNADA_JORNAL_HS } from '../lib/uocraJornal.js';
 import { getFeriadosSet } from '../lib/fichadasProcesar.js';
 import { recomputarTotales } from '../lib/fichadasProsoft.js';
@@ -688,7 +689,8 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const cForm = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, t));
     const auxF = cForm.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const _afil = await afiliadoEnFecha(empleadoId, anio, mes);
-    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, afiliadoSindical: _afil, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, noRemConvenio: _nrConvC, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ausenciasInjustificadas: _ausInjC, ...plusLct, ...nov, ...varProm, ...emb, ...extra }));
+    const _czC = t === 'final' ? await causalDe(extra.motivoBaja) : null;
+    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, afiliadoSindical: _afil, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, causal: _czC, convBasico, noRemConvenio: _nrConvC, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ausenciasInjustificadas: _ausInjC, ...plusLct, ...nov, ...varProm, ...emb, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -798,7 +800,8 @@ router.post('/guardar', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const cFormG = filtrarConceptosFormula(await conceptosFormulaActivos(), emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo));
     const auxFG = cFormG.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const _afilG = await afiliadoEnFecha(empleadoId, anio, mes);
-    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilG, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, convBasico, noRemConvenio: _nrConvG, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...plusLct, ...nov, ...varProm, ...emb, ...extra });
+    const _czG = tipo === 'final' ? await causalDe(extra.motivoBaja) : null;
+    const recibo = calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilG, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, causal: _czG, convBasico, noRemConvenio: _nrConvG, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cFormG, auxFormulas: auxFG, macrosFormulas: auxFG.macros, ...plusLct, ...nov, ...varProm, ...emb, ...extra });
     // No publicar un recibo mensual SIN haberes: antes salia un recibo en $0 y encima generaba un
     // ajuste por neto negativo que se arrastraba mes a mes. Si no hay remuneracion, se corta acá.
     if (_esMensual(tipo) && Number(recibo?.totales?.totalRemun || 0) <= 0) {
@@ -1362,8 +1365,10 @@ router.post('/simular-final', requireRole('rrhh', 'admin'), async (req, res, nex
     const params = await getParams();
     const fe = new Date(fechaEgreso + 'T12:00:00');
     const indAplica = await indemnizaAplicaDe(emp);
+    const _czMap = {};
+    for (const sup of SUPUESTOS_BAJA) _czMap[sup.v] = await causalDe(sup.v);
     const escenarios = SUPUESTOS_BAJA.map((sup) => {
-      const rec = calcularRecibo(emp, params, { anio: fe.getFullYear(), mes: fe.getMonth() + 1, tipo: 'final', fechaEgreso, motivoBaja: sup.v, diasVacNoGozadas: Number(diasVacNoGozadas) || 0, indemnizaAplica: indAplica });
+      const rec = calcularRecibo(emp, params, { anio: fe.getFullYear(), mes: fe.getMonth() + 1, tipo: 'final', fechaEgreso, motivoBaja: sup.v, causal: _czMap[sup.v], diasVacNoGozadas: Number(diasVacNoGozadas) || 0, indemnizaAplica: indAplica });
       return { supuesto: sup.v, label: sup.lbl, neto: rec.totales.neto, totalHaberes: rec.totales.totalHaberes, haberes: rec.haberes, detalle: rec.detalle };
     });
     res.json({ empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, ingreso: emp.ingreso }, escenarios });
@@ -1387,11 +1392,13 @@ router.post('/simular-final-masivo', requireRole('rrhh', 'admin'), async (req, r
     const dvac = Number(diasVacNoGozadas) || 0;
     const r2n = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
     const tot = {}; lista.forEach((sp) => { tot[sp.v] = 0; });
+    const _czMapM = {};
+    for (const sp of lista) _czMapM[sp.v] = await causalDe(sp.v);
     const items = emps.map((r) => {
       const base = { legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} };
       const netos = {};
       for (const sp of lista) {
-        const rec = calcularRecibo(base, params, { anio: fe.getFullYear(), mes: fe.getMonth() + 1, tipo: 'final', fechaEgreso, motivoBaja: sp.v, diasVacNoGozadas: dvac, indemnizaAplica: indemnizaAplicaMap(modMap, base) });
+        const rec = calcularRecibo(base, params, { anio: fe.getFullYear(), mes: fe.getMonth() + 1, tipo: 'final', fechaEgreso, motivoBaja: sp.v, causal: _czMapM[sp.v], diasVacNoGozadas: dvac, indemnizaAplica: indemnizaAplicaMap(modMap, base) });
         netos[sp.v] = r2n(rec.totales.neto); tot[sp.v] += rec.totales.neto;
       }
       return { legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, ingreso: r.ingreso, netos };

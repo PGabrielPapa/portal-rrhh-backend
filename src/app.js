@@ -73,6 +73,7 @@ import iaRoutes from './routes/ia.routes.js';
 import sicoreRoutes from './routes/sicore.routes.js';
 import matrizAntiguedadRoutes from './routes/matrizAntiguedad.routes.js';
 import modalidadesRoutes from './routes/modalidades.routes.js';
+import causalesBajaRoutes from './routes/causalesBaja.routes.js';
 import competenciasRoutes from './routes/competencias.routes.js';
 import unidadesRoutes from './routes/unidades.routes.js';
 import posicionesRoutes from './routes/posiciones.routes.js';
@@ -205,6 +206,7 @@ export function createApp() {
   app.use('/api/sicore', limitePesado, sicoreRoutes);
   app.use('/api/matriz-antiguedad', matrizAntiguedadRoutes);
   app.use('/api/modalidades', modalidadesRoutes);
+  app.use('/api/causales-baja', causalesBajaRoutes);
   app.use('/api/competencias', competenciasRoutes);
   app.use('/api/unidades', unidadesRoutes);
   app.use('/api/posiciones', posicionesRoutes);

@@ -100,6 +100,15 @@ try {
   console.error('[boot] migración presentismo/convenio:', e.message);
 }
 
+// Causales de baja: tabla oficial de ARCA (motivos de egreso). Siembra las que falten.
+try {
+  const { migrarCausalesBaja } = await import('./db/migrateCausalesBaja.js');
+  const r = await migrarCausalesBaja();
+  if (r.creadas) console.log(`[boot] causales de baja sembradas ✓ (${r.creadas} nuevas de ${r.total})`);
+} catch (e) {
+  console.error('[boot] migración causales de baja:', e.message);
+}
+
 // Migración a conceptos ejecutables por fórmula (proyecto por fases). Fase 1: SAC.
 try {
   const { migrarConceptosFormula } = await import('./db/migrateConceptosFormula.js');

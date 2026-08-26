@@ -343,9 +343,18 @@ export function calcularRecibo(emp, params, opts) {
     const _indemnAplica = opts?.indemnizaAplica !== false;
     const aniosAntServicio = (parseDate(fEg) - parseDate(emp.ingreso)) / (365.25 * 86400000);
     const finContratoMedia = motivo === 'fin_contrato' && aniosAntServicio > 1; // Art. 250: plazo fijo cumplido > 1 año
-    const conIndemPlena = _indemnAplica && ['sin_causa', 'despido_indirecto', 'incapacidad_absoluta'].includes(motivo); // Art. 245 / 246 / 212 4°
-    const conMediaIndem = _indemnAplica && (['fallecimiento', 'fuerza_mayor', 'incapacidad_parcial'].includes(motivo) || finContratoMedia); // Art. 248 / 247 / 212 1°-3° / 250: 50%
-    const debePreaviso = ['sin_causa', 'fuerza_mayor', 'despido_indirecto'].includes(motivo);
+    // Tratamiento de la causal. Si la ruta lo trajo de la tabla de causales de baja (opts.causal),
+    // manda eso; si la causal no está en la tabla, corre el criterio nativo de siempre.
+    const _cz = opts?.causal || null;
+    const _esPlazoFijo = ['fin_contrato', 'vencimiento_plazo'].includes(motivo);
+    const conIndemPlena = _indemnAplica && (_cz
+      ? _cz.indemnizacion === 'plena'
+      : ['sin_causa', 'despido_indirecto', 'incapacidad_absoluta'].includes(motivo)); // Art. 245 / 246 / 212 4°
+    const conMediaIndem = _indemnAplica && (_cz
+      // Art. 250: en el plazo fijo la reducida solo corresponde si el contrato superó el año.
+      ? (_cz.indemnizacion === 'media' && (!_esPlazoFijo || aniosAntServicio > 1))
+      : (['fallecimiento', 'fuerza_mayor', 'incapacidad_parcial'].includes(motivo) || finContratoMedia)); // Art. 248 / 247 / 212 1°-3° / 250: 50%
+    const debePreaviso = _cz ? _cz.preaviso === true : ['sin_causa', 'fuerza_mayor', 'despido_indirecto'].includes(motivo);
     let pagarPreaviso = true;
     if (opts?.pagarPreaviso === true || opts?.pagarPreaviso === false) pagarPreaviso = opts.pagarPreaviso;
     else if (opts?.fechaNotificacion && fEg) {
