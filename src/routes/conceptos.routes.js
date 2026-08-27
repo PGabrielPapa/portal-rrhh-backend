@@ -6,7 +6,9 @@ import { cargarAux } from './valoresAux.routes.js';
 import { logCambios } from '../lib/configHist.js';
 
 const router = Router();
-router.use(requireAuth);
+// Configuración de liquidación: TODO el módulo es de RR.HH./admin, lecturas incluidas. Antes los
+// GET estaban abiertos a cualquier usuario autenticado y se accedía escribiendo la URL.
+router.use(requireAuth, requireRole('rrhh', 'admin'));
 
 const CHFIELDS = [['descripcion','Descripción'],['tipo','Tipo'],['formula','Fórmula'],['base_legal','Base legal'],['activo','Activo']];
 const TIPOS = ['remunerativo', 'no_remunerativo', 'descuento', 'aporte', 'contribucion'];

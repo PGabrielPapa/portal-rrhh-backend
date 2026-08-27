@@ -5,7 +5,9 @@ import { verificarEscalas, autoActualizarEscalas } from '../lib/escalasAuto.js';
 import { logAudit } from '../lib/audit.js';
 
 const router = Router();
-router.use(requireAuth);
+// Configuración de liquidación: TODO el módulo es de RR.HH./admin, lecturas incluidas. Antes los
+// GET estaban abiertos a cualquier usuario autenticado y se accedía escribiendo la URL.
+router.use(requireAuth, requireRole('rrhh', 'admin'));
 
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 

@@ -4,7 +4,9 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { DEFAULTS, TIPOS_VENTANA, TIPOS_LINEA, SECCIONES, TIPOS_RECIBO, sumarAcumulador, recibosDeVentana } from '../lib/acumuladores.js';
 
 const router = Router();
-router.use(requireAuth);
+// Configuración de liquidación: TODO el módulo es de RR.HH./admin, lecturas incluidas. Antes los
+// GET estaban abiertos a cualquier usuario autenticado y se accedía escribiendo la URL.
+router.use(requireAuth, requireRole('rrhh', 'admin'));
 const hoy = () => { const d = new Date(); return { anio: d.getFullYear(), mes: d.getMonth() + 1 }; };
 
 function mapRow(r) {

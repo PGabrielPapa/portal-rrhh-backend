@@ -12,6 +12,8 @@ router.use(requireAuth);
 
 // Roles admitidos por el esquema. Cualquier otro valor se ignora.
 const ROLES_VALIDOS = ['employee', 'manager', 'rrhh', 'admin'];
+// Solo un admin otorga o quita el rol admin: RR.HH. edita legajos, pero no reparte administradores.
+const puedeDarAdmin = (u) => u && u.role === 'admin';
 
 // Campos que el empleado puede autogestionar desde "Mis datos" (impacto directo + histórico).
 const SELF_FIELDS = { estado_civil: 'Estado civil', email_personal: 'Mail personal', tel_personal: 'Teléfono personal', contacto_nombre: 'Contacto de emergencia — nombre', contacto_tel: 'Contacto de emergencia — teléfono', contacto_vinculo: 'Contacto de emergencia — vínculo' };
@@ -275,8 +277,8 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
        b.cat || null, b.tramo || null, b.ingreso || null, b.bruto || 0, b.neto || 0,
        // El rol se valida contra la lista cerrada: antes cualquier cadena del cuerpo
        // se guardaba tal cual como rol, dejando usuarios con un rol inexistente.
-       ((b.esAdmin && ['admin', 'rrhh'].includes(req.user.role)) ? 'admin'
-         : (ROLES_VALIDOS.includes(b.role) ? b.role : 'employee')), JSON.stringify(data)]
+       ((b.esAdmin && puedeDarAdmin(req.user)) ? 'admin'
+         : ((ROLES_VALIDOS.includes(b.role) && (b.role !== 'admin' || puedeDarAdmin(req.user))) ? b.role : 'employee')), JSON.stringify(data)]
     );
     if (b.puestoId) { try { await client.query('UPDATE empleados SET puesto_id=$1 WHERE id=$2', [b.puestoId, rows[0].id]); } catch (e) { /* puesto opcional */ } }
     // Capa Personas/Períodos: ligar el empleado a una persona y abrir su período (no rompe el alta si falla).
@@ -307,10 +309,19 @@ router.put('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
     if (!puedeGestionarConfidenciales(req.user)) delete b.verConfidenciales; // solo admin/RR.HH. designan
     const before = (await query('SELECT nom, email, cuil, ingreso, bruto, neto, cat, tramo, role, activo, data FROM empleados WHERE id=$1', [req.params.id])).rows[0] || {};
     // Tilde "Administrador": marca -> role admin; desmarca -> employee solo si era admin (no pisa manager/rrhh).
-    if (b.esAdmin !== undefined && ['admin', 'rrhh'].includes(req.user.role)) {
-      if (!b.esAdmin && Number(req.params.id) === req.user.id) return res.status(400).json({ error: 'No podés quitarte el rol admin a vos mismo' });
+    if (b.esAdmin !== undefined) {
       const nuevoRol = b.esAdmin ? 'admin' : (before.role === 'admin' ? 'employee' : before.role);
-      if (nuevoRol && nuevoRol !== before.role) await query('UPDATE empleados SET role=$1 WHERE id=$2', [nuevoRol, req.params.id]);
+      // Solo se valida y se escribe si el tilde REALMENTE cambia el rol. La pantalla manda este campo
+      // en todos los guardados, así que rechazar sin comparar rompería la edición normal de legajos.
+      if (nuevoRol && nuevoRol !== before.role) {
+        // Antes RR.HH. podía marcarlo sobre su propio legajo y quedar admin salteando el panel de
+        // administración, sin auditoría y sin revocar sesiones. Ahora es exclusivo del admin.
+        if (!puedeDarAdmin(req.user)) return res.status(403).json({ error: 'Solo un administrador puede otorgar o quitar el rol de administrador.' });
+        if (!b.esAdmin && Number(req.params.id) === req.user.id) return res.status(400).json({ error: 'No podés quitarte el rol admin a vos mismo' });
+        await query('UPDATE empleados SET role=$1 WHERE id=$2', [nuevoRol, req.params.id]);
+        await revocarTokens({ empleadoId: Number(req.params.id) });   // el cambio de rol cierra las sesiones abiertas
+        await logAudit(req.user.dni, 'empleado.rol', `${before.role} → ${nuevoRol}`, `empleado:${req.params.id}`);
+      }
     }
     // Columnas núcleo editables (identidad empresa+legajo+dni NO se cambia acá).
     const fields = { nom: b.nom, email: b.email, cat: b.cat, tramo: b.tramo, cuil: b.cuil,

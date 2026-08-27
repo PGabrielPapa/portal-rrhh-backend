@@ -3,7 +3,9 @@ import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 
 const router = Router();
-router.use(requireAuth);
+// Configuración de liquidación: TODO el módulo es de RR.HH./admin, lecturas incluidas. Antes los
+// GET estaban abiertos a cualquier usuario autenticado y se accedía escribiendo la URL.
+router.use(requireAuth, requireRole('rrhh', 'admin'));
 
 // GET /api/parametros — parámetros de liquidación vigentes
 router.get('/', async (req, res, next) => {
