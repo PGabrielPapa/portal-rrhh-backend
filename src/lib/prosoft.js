@@ -17,13 +17,18 @@ function conTimeout(ms = TIMEOUT_MS) {
   return { signal: ac.signal, fin: () => clearTimeout(id) };
 }
 
-let cookie = null; // jar de sesión muy simple (un solo usuario de servicio)
+// La sesión de Pro-Soft es LOCAL a cada operación: { cookie }. Antes era una variable global
+// mutable compartida por todo el proceso, y como api() la vacía para re-loguear, una petición
+// concurrente le borraba la cookie a otra en curso (el polleo de GetStatus dura hasta minutos)
+// → Pro-Soft respondía HTTP 200 con {"mensaje":"Denied"} y la app tiraba 500.
+// NO se usa un mutex global a propósito: serializaría el polleo largo y trabaría a todos.
+const nuevaSesion = () => ({ cookie: null });
 
 export function prosoftConfigOk() {
   return !!(config.prosoft.user && config.prosoft.pass && config.prosoft.base);
 }
 
-async function login() {
+async function login(ses) {
   const to = conTimeout();
   let r;
   try {
@@ -40,28 +45,28 @@ async function login() {
   const setCookies = typeof r.headers.getSetCookie === 'function'
     ? r.headers.getSetCookie()
     : [r.headers.get('set-cookie')].filter(Boolean);
-  cookie = setCookies.map((c) => String(c).split(';')[0]).join('; ');
-  if (!cookie) throw new Error('Pro-Soft: el login no devolvió cookie de sesión.');
+  ses.cookie = setCookies.map((c) => String(c).split(';')[0]).join('; ');
+  if (!ses.cookie) throw new Error('Pro-Soft: el login no devolvió cookie de sesión.');
 }
 
 // fetch con cookie; si la sesión cae reintenta una vez tras re-login. Pro-Soft
 // la reporta a veces como 401 y otras como HTTP 200 con {"mensaje":"Denied"}.
-async function api(path, opts = {}, _retry = false) {
-  if (!cookie) await login();
+async function api(ses, path, opts = {}, _retry = false) {
+  if (!ses.cookie) await login(ses);
   const to = conTimeout();
   let r;
   try {
     r = await fetch(`${config.prosoft.base}${path}`, {
       ...opts,
-      headers: { 'Content-Type': 'application/json', Cookie: cookie, ...(opts.headers || {}) },
+      headers: { 'Content-Type': 'application/json', Cookie: ses.cookie, ...(opts.headers || {}) },
       signal: to.signal,
     });
   } catch (e) {
     throw new Error(e.name === 'AbortError' ? `Pro-Soft: ${path} superó el tiempo de espera.` : `Pro-Soft: fallo de red en ${path} (${e.message}).`);
   } finally { to.fin(); }
   if (!_retry && (r.status === 401 || await sesionRechazada(r))) {
-    cookie = null;
-    return api(path, opts, true);
+    ses.cookie = null;      // solo afecta a ESTA operación
+    return api(ses, path, opts, true);
   }
   return r;
 }
@@ -76,7 +81,8 @@ async function sesionRechazada(r) {
 
 // Trae el resumen (una fila por empleado/día con marcas y horas) entre dos fechas YYYY-MM-DD.
 export async function getResumen(desde, hasta) {
-  const startRes = await api('/resumen/GetValue', {
+  const ses = nuevaSesion();
+  const startRes = await api(ses, '/resumen/GetValue', {
     method: 'POST',
     body: JSON.stringify({ fechaDesde: desde, fechaHasta: hasta, legajos: [], turnos: [], areas: [], sucursales: [] }),
   });
@@ -92,7 +98,7 @@ export async function getResumen(desde, hasta) {
   // Pollear hasta completar (máx ~3 min).
   for (let i = 0; i < 120; i++) {
     await sleep(1500);
-    const stRes = await api(`/resumen/GetStatus?jobId=${encodeURIComponent(jobId)}`);
+    const stRes = await api(ses, `/resumen/GetStatus?jobId=${encodeURIComponent(jobId)}`);
     if (!stRes.ok) throw new Error(`Pro-Soft: GetStatus falló (HTTP ${stRes.status}).`);
     let st = await stRes.json();
     if (typeof st === 'string') { try { st = JSON.parse(st); } catch { /* */ } }
@@ -104,7 +110,7 @@ export async function getResumen(desde, hasta) {
 // Trae el maestro de filtros (legajos, turnos, áreas, contratantes).
 // Los turnos deberían traer las horas/horario de cada uno (para derivar la jornada).
 export async function getFiltros() {
-  const r = await api('/filtros');
+  const r = await api(nuevaSesion(), '/filtros');
   if (!r.ok) throw new Error(`Pro-Soft: /filtros falló (HTTP ${r.status}).`);
   let data = await r.json();
   if (typeof data === 'string') { try { data = JSON.parse(data); } catch { /* queda string */ } }
@@ -114,7 +120,7 @@ export async function getFiltros() {
 // Trae la definición de TURNOS con sus tramos horarios (hini/hfin/tipo por día).
 // tipo "0" = franja de jornada normal; tipo "1" = franja de hora extra permitida.
 export async function getTurnos() {
-  const r = await api('/turnos');
+  const r = await api(nuevaSesion(), '/turnos');
   if (!r.ok) throw new Error(`Pro-Soft: /turnos falló (HTTP ${r.status}).`);
   let data = await r.json();
   if (typeof data === 'string') { try { data = JSON.parse(data); } catch { /* queda string */ } }
