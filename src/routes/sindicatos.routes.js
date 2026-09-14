@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { logCambios } from '../lib/configHist.js';
+import { migrarAsientoAux } from '../db/migrateAsientoAux.js';
 
 const router = Router();
 // Configuración de liquidación: TODO el módulo es de RR.HH./admin, lecturas incluidas. Antes los
@@ -10,6 +11,84 @@ router.use(requireAuth, requireRole('rrhh', 'admin'));
 
 const HFIELDS = [['nombre','Nombre'],['pctEmpleado','% aporte empleado'],['pctSolidario','% aporte solidario (no afiliado)'],['pctPatronal','% contribución patronal'],['pctAntigPorAnio','% antigüedad por año'],['montoAntigPorAnio','Antigüedad monto fijo por año'],['pctPresentismo','% presentismo'],['pctArt37_1','% Aporte especial Art.37 I'],['pctArt37_2','% Aporte solidario Art.37 II'],['pctPremio','% Premio asistencia (jornal)'],['complementoSinNoRem','Complemento sin No Rem'],['tituloSecundario','Adicional título secundario'],['tituloUniversitario','Adicional título universitario'],['presBase','Base presentismo'],['noRemConAntigPres','Antig./pres. sobre No Rem'],['nota','Nota']];
 const map = (r) => ({ id: r.id, codigo: r.codigo, nombre: r.nombre, pctEmpleado: Number(r.pct_empleado), pctSolidario: Number(r.pct_solidario) || 0, pctPatronal: Number(r.pct_patronal), pctAntigPorAnio: Number(r.pct_antig_por_anio), montoAntigPorAnio: Number(r.monto_antig_por_anio) || 0, complementoSinNoRem: r.complemento_sin_norem === true, noRemConAntigPres: r.no_rem_con_antig_pres === true, pctArt37_1: Number(r.pct_art37_1) || 0, pctArt37_2: Number(r.pct_art37_2) || 0, pctPremio: Number(r.pct_premio) || 0, nota: r.nota, tieneAdicionalTitulo: r.tiene_adicional_titulo, presBase: r.pres_base, tituloSecundario: Number(r.titulo_secundario) || 0, tituloUniversitario: Number(r.titulo_universitario) || 0, pctPresentismo: Number(r.pct_presentismo) || 0 });
+
+// ── Aportes y contribuciones especiales del gremio ──────────────────────────
+// INACAP, La Estrella, aporte extraordinario OSECAC, los conceptos de UOM, etc.
+// Viven en `conceptos_sindicales`, la MISMA tabla que consumen el asiento de
+// sueldos y el motor de liquidación: se administran desde acá para no duplicar
+// el dato en dos pantallas.
+const mapConcepto = (r) => ({
+  id: r.id, columna: r.columna, descripcion: r.descripcion, codSindicato: r.cod_sindicato,
+  tipo: r.tipo, base: r.base, pct: Number(r.pct) || 0, importe: Number(r.importe) || 0,
+  cuenta: r.cuenta, confirmado: r.confirmado === true, nota: r.nota, activo: r.activo !== false,
+});
+
+router.get('/conceptos', async (_req, res, next) => {
+  try {
+    await migrarAsientoAux();
+    const { rows } = await query(
+      `SELECT id, columna, descripcion, cod_sindicato, tipo, base, pct, importe, cuenta, confirmado, nota, activo
+         FROM conceptos_sindicales ORDER BY cod_sindicato NULLS FIRST, columna`);
+    res.json(rows.map(mapConcepto));
+  } catch (e) { next(e); }
+});
+
+router.post('/conceptos', async (req, res, next) => {
+  try {
+    await migrarAsientoAux();
+    const b = req.body || {};
+    if (!b.columna || !b.descripcion) return res.status(400).json({ error: 'Código y descripción son obligatorios' });
+    const r = await query(
+      `INSERT INTO conceptos_sindicales (columna, descripcion, cod_sindicato, tipo, base, pct, importe, cuenta, nota, confirmado, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (columna) DO NOTHING RETURNING *`,
+      [String(b.columna).trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_'), String(b.descripcion).trim(),
+       b.codSindicato ? String(b.codSindicato).trim().toUpperCase() : null,
+       b.tipo === 'aporte' ? 'aporte' : 'contribucion', b.base === 'remunerativo' ? 'remunerativo' : 'fijo',
+       Number(b.pct) || 0, Number(b.importe) || 0, b.cuenta || null, b.nota || null,
+       b.confirmado === true, req.user.dni]);
+    if (!r.rowCount) return res.status(409).json({ error: 'Ya existe un concepto con ese código' });
+    res.status(201).json(mapConcepto(r.rows[0]));
+  } catch (e) { next(e); }
+});
+
+router.put('/conceptos/:id', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const r = await query(
+      `UPDATE conceptos_sindicales SET
+         descripcion   = COALESCE($1, descripcion),
+         cod_sindicato = COALESCE($2, cod_sindicato),
+         tipo          = COALESCE($3, tipo),
+         base          = COALESCE($4, base),
+         pct           = COALESCE($5, pct),
+         importe       = COALESCE($6, importe),
+         cuenta        = COALESCE($7, cuenta),
+         nota          = COALESCE($8, nota),
+         confirmado    = COALESCE($9, confirmado),
+         activo        = COALESCE($10, activo),
+         updated_by = $11, updated_at = now()
+       WHERE id = $12 RETURNING *`,
+      [b.descripcion ?? null,
+       b.codSindicato === '' ? null : (b.codSindicato ? String(b.codSindicato).toUpperCase() : null),
+       b.tipo ?? null, b.base ?? null,
+       b.pct != null ? Number(b.pct) : null, b.importe != null ? Number(b.importe) : null,
+       b.cuenta ?? null, b.nota ?? null,
+       typeof b.confirmado === 'boolean' ? b.confirmado : null,
+       typeof b.activo === 'boolean' ? b.activo : null,
+       req.user.dni, req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Concepto no encontrado' });
+    res.json(mapConcepto(r.rows[0]));
+  } catch (e) { next(e); }
+});
+
+router.delete('/conceptos/:id', async (req, res, next) => {
+  try {
+    const r = await query('DELETE FROM conceptos_sindicales WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Concepto no encontrado' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
 
 router.get('/', async (req, res, next) => {
   try { const { rows } = await query('SELECT * FROM sindicatos ORDER BY codigo'); res.json(rows.map(map)); }

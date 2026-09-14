@@ -34,6 +34,19 @@ async function main() {
   } catch (e) { console.error('[migrate] correlativo:', e.message); }
 
   try {
+    const { migrarAsiento } = await import('./migrateAsiento.js');
+    const r = await migrarAsiento();
+    if (r.creada) console.log(`[migrate] plan de cuentas del asiento sembrado ✓ (${r.sembradas} filas)`);
+  } catch (e) { console.error('[migrate] asiento:', e.message); }
+
+  try {
+    const { migrarAsientoAux } = await import('./migrateAsientoAux.js');
+    const r = await migrarAsientoAux();
+    if (r.os || r.categorias || r.sindicales)
+      console.log(`[migrate] tablas auxiliares del asiento ✓ (${r.os} obras sociales, ${r.categorias} categorías, ${r.sindicales} conceptos del gremio)`);
+  } catch (e) { console.error('[migrate] asiento aux:', e.message); }
+
+  try {
     const { migrarPuestos } = await import('./migratePuestos.js');
     const r = await migrarPuestos();
     if (!r.skip) console.log(`[migrate] puestos sembrados ✓ (${r.creados})`);

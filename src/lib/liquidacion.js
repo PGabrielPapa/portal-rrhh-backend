@@ -843,11 +843,42 @@ export function calcularRecibo(emp, params, opts) {
     _ed.cp ? '(CP ' + _ed.cp + ')' : '',
   ].filter(Boolean);
   const _domicilioEmpleador = _domPartes.join(', ') || null;
+  // ── Bases imponibles del período (SICOSS / asiento contable) ──────────────
+  // Hasta ahora estas bases se recalculaban al generar el F.931 y no quedaban en
+  // el recibo, así que ningún reporte posterior podía reconstruirlas. Se guardan
+  // con los mismos nombres que usa lib/sicoss.js para que ambos coincidan.
+  const _sumaHab = (re) => round2((haberes || []).filter((h) => re.test(String(h.concepto || ''))).reduce((a, h) => a + num(h.monto), 0));
+  const _bases = {
+    remTotal:       round2(totalRemun + totalNoRem),
+    remImp1:        round2(baseAportes),        // aportes SIPA (con tope art. 9 Ley 24.241)
+    remImp2:        round2(baseSegSoc),         // contribuciones SIPA (neto de la detracción art. 22 Ley 27.541)
+    remImp3:        round2(baseSegSoc),
+    remImp4:        round2(baseAportesOs),      // aportes obra social / ANSSAL
+    remImp5:        round2(baseAportesOs),      // contribuciones obra social / FSR
+    remImp8:        round2(totalRemun),         // LRT / ART: sin tope
+    remImp9:        round2(totalRemun + totalNoRem),
+    remImp10:       0,
+    remImp11:       0,
+    baseAportesSs:  round2(baseAportes),
+    baseContribSs:  round2(baseSegSoc),
+    baseAportesOs:  round2(baseAportesOs),
+    baseArt:        round2(totalRemun),
+    detraccion:     round2(detr),
+    topeMin:        Number.isFinite(topeMin) ? round2(topeMin) : null,
+    topeMax:        Number.isFinite(topeMax) ? round2(topeMax) : null,
+    sac:            _sumaHab(/\bsac\b|aguinaldo/i),
+    vacaciones:     _sumaHab(/vacacion/i),
+    horasExtras:    _sumaHab(/hora[s]?\s*extra/i),
+    noRemunerativo: round2(totalNoRem),
+    exento:         round2(totalExento),
+  };
+
   return {
     empleado: { legNum: emp.legNum, nom: emp.nom, empresa: emp.empresa, cuil: emp.cuil, cat: emp.cat, ingreso: emp.ingreso || null, antiguedadReconocida: emp.data?.antiguedadReconocida || null },
     empleador: { razonSocial: emp.empresa, cuit: emp.empresaCuit || null, domicilio: _domicilioEmpleador },
     periodo: { anio, mes, tipo, tipoLabel, fechaPago, ganPeriodo: G.periodo || null },
     haberes, descuentos, detalle, ganancias: ganDetalle,
+    bases: _bases,
     totales: {
       totalRemun: round2(totalRemun), totalNoRem: round2(totalNoRem), totalExento: round2(totalExento),
       totalHaberes: round2(totalHaberes), totalDescuentos: round2(totalDescuentos), neto: round2(neto),

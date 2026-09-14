@@ -450,6 +450,18 @@ async function armarReciboUecara(emp, anio, mes, tipo, extra = {}) {
 
 async function getParams() { const pr = await query('SELECT data FROM parametros_liq WHERE id = 1'); return pr.rows[0]?.data || {}; }
 // Antes de cada cálculo se superponen los VALORES LEGALES vigentes del período (tope SIPA, SMVM, SCVO, FFEP).
+// Conceptos propios de cada gremio (tabla `conceptos_sindicales`, del módulo de
+// asiento de sueldos). Sólo los confirmados entran en la liquidación: los valores
+// sembrados desde el Excel quedan inertes hasta que RR.HH. los valide.
+async function sindicalesConfirmados() {
+  try {
+    const { rows } = await query(
+      `SELECT columna, descripcion, cod_sindicato, tipo, base, pct, importe
+         FROM conceptos_sindicales WHERE activo = true AND confirmado = true ORDER BY columna`);
+    return rows;
+  } catch { return []; }   // la tabla se crea con la migración del asiento
+}
+
 async function getParamsConValores(anio, mes) {
   const params = { ...(await paramsParaFecha(`${anio}-${String(mes).padStart(2, '0')}-15`)) };
   const v = await valoresLegalesVigentes(`${anio}-${String(mes).padStart(2, '0')}-15`);
@@ -460,6 +472,7 @@ async function getParamsConValores(anio, mes) {
     if (v.scvoPercapita > 0) params.scvoPercapita = v.scvoPercapita;
     if (v.ffep > 0) params.ffep = v.ffep;
   }
+  params.sindicales = await sindicalesConfirmados();
   return params;
 }
 

@@ -15,8 +15,9 @@ function mapRow(r) {
 export const VALORES_PUBLICADOS = [
   { vigencia: '2026-03-01', scvoPercapita: 424.62, scvoSumaAsegurada: 2071300, fuente: 'SSN Dto.1567/74 mar-2026' },
   { vigencia: '2026-06-01', topeSipaMax: 4414652.38, topeSipaMin: 135837.40, smvm: 367800, ffep: 1827, fuente: 'ANSES/SRT jun-2026' },
-  { vigencia: '2026-07-01', topeSipaMax: 4509567.41, topeSipaMin: 138757.90, smvm: 372400, fuente: 'ANSES Res.186/2026 (base SIPA) + SMVM jul-2026' },
-  { vigencia: '2026-08-01', topeSipaMax: 4594798.23, topeSipaMin: 141380.42, smvm: 376600, fuente: 'ANSES Res.232/2026 (base SIPA, B.O. 30/07/2026) + SMVM ago-2026' },
+  { vigencia: '2026-07-01', topeSipaMax: 4509567.41, topeSipaMin: 138757.90, smvm: 372400, ffep: 1839, fuente: 'ANSES Res.186/2026 (base SIPA) + SMVM jul-2026 + FFEP Disp.SRT 7/2026 (B.O. 22/07/2026)' },
+  { vigencia: '2026-08-01', topeSipaMax: 4594798.23, topeSipaMin: 141380.42, smvm: 376600, ffep: 1905, fuente: 'ANSES Res.232/2026 (base SIPA, B.O. 30/07/2026) + SMVM ago-2026 + FFEP Disp.SRT 8/2026 (B.O. 26/08/2026)' },
+  { vigencia: '2026-09-01', topeSipaMax: 4691748.47, topeSipaMin: 144363.55, fuente: 'ANSES Res.257/2026 (base SIPA sep-2026, movilidad 2,11%). SMVM sep-2026 sin norma oficial publicada al 01/09/2026 (Consejo del Salario sin acuerdo 28/08/2026): se arrastra $376.600' },
 ];
 const CAMPOS_VL = ['topeSipaMax', 'topeSipaMin', 'smvm', 'scvoPercapita', 'scvoSumaAsegurada', 'ffep'];
 

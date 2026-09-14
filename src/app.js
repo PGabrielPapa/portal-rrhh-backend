@@ -27,6 +27,7 @@ import escalaRoutes from './routes/escala.routes.js';
 import conveniosRoutes from './routes/convenios.routes.js';
 import artRoutes from './routes/art.routes.js';
 import reportesRoutes from './routes/reportes.routes.js';
+import asientoSueldosRoutes from './routes/asientoSueldos.routes.js';
 import sindicatosRoutes from './routes/sindicatos.routes.js';
 import hysRoutes from './routes/hys.routes.js';
 import reglamentoRoutes from './routes/reglamento.routes.js';
@@ -165,6 +166,7 @@ export function createApp() {
   app.use('/api/convenios', conveniosRoutes);
   app.use('/api/art', artRoutes);
   app.use('/api/reportes', limitePesado, reportesRoutes);
+  app.use('/api/asiento-sueldos', limitePesado, asientoSueldosRoutes);
   app.use('/api/sindicatos', sindicatosRoutes);
   app.use('/api/hys', hysRoutes);
   app.use('/api/reglamento', reglamentoRoutes);
