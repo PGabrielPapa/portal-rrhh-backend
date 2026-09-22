@@ -16,36 +16,84 @@ async function recibosPeriodo(anio, mes, empresa) {
   if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
   const { rows } = await query(
     `SELECT r.data, r.tipo, e.nom, e.leg_num, e.cuil, e.data AS edata, em.nombre AS empresa
-       FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
+       FROM recibos r JOIN empleados e ON e.id = r.empleado_id LEFT JOIN periodos perx ON perx.id = r.periodo_id JOIN empresas em ON em.id = COALESCE(perx.empresa_id, e.empresa_id)
       WHERE ${cond.join(' AND ')} ORDER BY em.nombre, e.nom`, pr);
   return rows;
 }
 const aporteDe = (desc, re) => (desc || []).filter((d) => re.test(d.concepto)).reduce((s, d) => s + Number(d.monto || 0), 0);
 
 // GET /api/reportes/simplificacion?anio=&mes=&empresa=  (Simplificación Registral, ex Mi Simplificación)
-// Lista las altas (empleados ingresados en el período) y bajas (ceses del período) para
-// informar a AFIP/ARCA. El diseño posicional exacto de ARCA debe confirmarse; acá se
-// entregan los datos en formato tabla/CSV.
+//
+// Se arma sobre los PERÍODOS, no sobre `empleados.ingreso` y la tabla `bajas`.
+// Con el criterio anterior había altas y bajas que no aparecían nunca:
+//   · una CESIÓN de contrato no genera ni alta ni baja — el ingreso del legajo
+//     sigue siendo el original y la cesión no registra una baja formal;
+//   · un CARGO SIMULTÁNEO en otra empresa del grupo tampoco, porque el legajo
+//     conserva su ingreso y su relación anterior sigue abierta.
+// Las dos cosas sí hay que declararlas ante ARCA, cada una por su empresa.
+//
+// Altas = períodos con fecha_ingreso en el mes. Bajas = períodos con fecha_egreso
+// en el mes. Cada uno con la empresa y el CUIT del período, no los del legajo.
 router.get('/simplificacion', async (req, res, next) => {
   try {
     const anio = Number(req.query.anio), mes = Number(req.query.mes);
     if (!anio || !mes) return res.status(400).json({ error: 'Indicá año y mes' });
+    try { const { migrarPeriodos } = await import('../db/migratePeriodos.js'); await migrarPeriodos(); } catch (e) { /* no bloquea el reporte */ }
+
     const args = [anio, mes]; let empCond = '';
     if (req.query.empresa) { args.push(req.query.empresa); empCond = ` AND em.nombre = $${args.length}`; }
     const part = (nom) => { const s = String(nom || ''); return { apellido: s.split(',')[0]?.trim() || s, nombres: s.split(',')[1]?.trim() || '' }; };
+    const MOTIVO = { ingreso: 'Ingreso', cesion: 'Cesión de contrato', reingreso: 'Reingreso',
+                     simultaneo: 'Cargo simultáneo', migracion: 'Carga inicial' };
+    const CAUSA = { cesion: 'Cesión de contrato' };
+
+    const SEL = `p.id, p.legajo, p.motivo_alta, p.causa_egreso,
+                 to_char(p.fecha_ingreso,        'YYYY-MM-DD') AS f_ingreso,
+                 to_char(p.fecha_egreso,         'YYYY-MM-DD') AS f_egreso,
+                 to_char(p.antiguedad_reconocida,'YYYY-MM-DD') AS f_antiguedad,
+                 e.cuil, e.nom, e.bruto, e.data, e.leg_num,
+                 em.nombre AS empresa, em.cuit AS empresa_cuit, eo.nombre AS empresa_origen`;
+    const FROM = `FROM periodos p
+                  JOIN empleados e ON e.id = p.empleado_id
+                  JOIN empresas em ON em.id = p.empresa_id
+                  LEFT JOIN empresas eo ON eo.id = p.empresa_origen_id`;
+
     const altasRows = (await query(
-      `SELECT e.cuil, e.nom, e.ingreso, e.bruto, e.data, em.nombre AS empresa, em.cuit AS empresa_cuit
-         FROM empleados e JOIN empresas em ON em.id=e.empresa_id
-        WHERE e.ingreso IS NOT NULL AND EXTRACT(YEAR FROM e.ingreso)=$1 AND EXTRACT(MONTH FROM e.ingreso)=$2 ${empCond}
+      `SELECT ${SEL} ${FROM}
+        WHERE p.fecha_ingreso IS NOT NULL
+          AND EXTRACT(YEAR FROM p.fecha_ingreso)=$1 AND EXTRACT(MONTH FROM p.fecha_ingreso)=$2 ${empCond}
         ORDER BY em.nombre, e.nom`, args)).rows;
+
     const bajasRows = (await query(
-      `SELECT e.cuil, e.nom, b.fecha_baja, b.causa, em.nombre AS empresa, em.cuit AS empresa_cuit
-         FROM bajas b JOIN empleados e ON e.id=b.empleado_id JOIN empresas em ON em.id=e.empresa_id
-        WHERE EXTRACT(YEAR FROM b.fecha_baja)=$1 AND EXTRACT(MONTH FROM b.fecha_baja)=$2 ${empCond}
+      `SELECT ${SEL} ${FROM}
+        WHERE p.fecha_egreso IS NOT NULL
+          AND EXTRACT(YEAR FROM p.fecha_egreso)=$1 AND EXTRACT(MONTH FROM p.fecha_egreso)=$2 ${empCond}
         ORDER BY em.nombre, e.nom`, args)).rows;
-    const altas = altasRows.map((r) => ({ tipo: 'ALTA', empresa: r.empresa, empresaCuit: r.empresa_cuit || null, cuil: r.cuil, ...part(r.nom), fecha: r.ingreso, modalidad: r.data?.condicion || '', obraSocial: r.data?.os_codigo || r.data?.codigoObraSocial || '', remuneracion: Number(r.bruto) || 0 }));
-    const bajas = bajasRows.map((r) => ({ tipo: 'BAJA', empresa: r.empresa, empresaCuit: r.empresa_cuit || null, cuil: r.cuil, ...part(r.nom), fecha: r.fecha_baja, causa: r.causa || '' }));
-    res.json({ periodo: { anio, mes }, altas, bajas, nota: 'Altas y bajas del período para Simplificación Registral (AFIP/ARCA). El diseño de importación exacto de ARCA debe confirmarse antes de subirlo.' });
+
+    res.json({
+      periodo: { anio, mes },
+      altas: altasRows.map((r) => ({
+        tipo: 'ALTA', empresa: r.empresa, empresaCuit: r.empresa_cuit || null,
+        legNum: r.legajo || r.leg_num || null, cuil: r.cuil, ...part(r.nom),
+        fecha: r.f_ingreso,
+        motivo: MOTIVO[r.motivo_alta] || r.motivo_alta || null,
+        // La antigüedad reconocida se informa APARTE de la fecha de alta: en una
+        // cesión la fecha a declarar ante ARCA puede no ser la del alta en la
+        // cesionaria, y esa decisión es de RR.HH., no del sistema.
+        antiguedadReconocida: r.f_antiguedad || null,
+        empresaOrigen: r.empresa_origen || null,
+        modalidad: r.data?.condicion || '',
+        obraSocial: r.data?.os_codigo || r.data?.codigoObraSocial || '',
+        remuneracion: Number(r.bruto) || 0,
+      })),
+      bajas: bajasRows.map((r) => ({
+        tipo: 'BAJA', empresa: r.empresa, empresaCuit: r.empresa_cuit || null,
+        legNum: r.legajo || r.leg_num || null, cuil: r.cuil, ...part(r.nom),
+        fecha: r.f_egreso,
+        causa: CAUSA[r.causa_egreso] || r.causa_egreso || '',
+      })),
+      nota: 'Altas y bajas del período para Simplificación Registral (AFIP/ARCA), armadas sobre los períodos laborales: incluye cesiones de contrato y cargos simultáneos. La antigüedad reconocida se informa aparte porque en una cesión puede no coincidir con la fecha de alta. El diseño de importación exacto de ARCA debe confirmarse antes de subirlo.',
+    });
   } catch (e) { next(e); }
 });
 
@@ -268,7 +316,7 @@ router.get('/lsd-archivo', requireRole('rrhh', 'admin'), async (req, res, next) 
     if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
     const { rows } = await query(
       `SELECT r.data, r.tipo, e.nom, e.leg_num, e.cuil, e.data AS edata, em.nombre AS empresa, em.cuit AS empcuit
-         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
+         FROM recibos r JOIN empleados e ON e.id = r.empleado_id LEFT JOIN periodos perx ON perx.id = r.periodo_id JOIN empresas em ON em.id = COALESCE(perx.empresa_id, e.empresa_id)
         WHERE ${cond.join(' AND ')} ORDER BY em.nombre, e.nom`, pr);
     if (!rows.length) return res.status(404).json({ error: 'no hay liquidaciones para el periodo/empresa' });
 

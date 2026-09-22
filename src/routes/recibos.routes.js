@@ -55,8 +55,7 @@ router.get('/gestion', requireRole('rrhh', 'admin'), async (req, res, next) => {
       `SELECT r.id, r.anio, r.mes, r.tipo, r.neto, r.created_at, r.created_by, r.publicado, r.pagado, r.acuse_at,
               EXISTS (SELECT 1 FROM recibo_vistas v WHERE v.recibo_id = r.id) AS visto,
               e.nom, e.leg_num, em.nombre AS empresa
-         FROM recibos r JOIN empleados e ON e.id = r.empleado_id
-         JOIN empresas em ON em.id = e.empresa_id
+         FROM recibos r JOIN empleados e ON e.id = r.empleado_id LEFT JOIN periodos perx ON perx.id = r.periodo_id JOIN empresas em ON em.id = COALESCE(perx.empresa_id, e.empresa_id)
          ${where}
         ORDER BY r.anio DESC, r.mes DESC, e.nom`,
       params
@@ -140,7 +139,7 @@ router.delete('/:id', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
     const row = (await query(
       `SELECT r.corrida_id, r.anio, r.mes, r.tipo, r.neto, e.nom, e.leg_num, em.nombre AS empresa
-         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
+         FROM recibos r JOIN empleados e ON e.id = r.empleado_id LEFT JOIN periodos perx ON perx.id = r.periodo_id JOIN empresas em ON em.id = COALESCE(perx.empresa_id, e.empresa_id)
         WHERE r.id=$1`, [req.params.id])).rows[0];
     if (!row) return res.status(404).json({ error: 'Recibo no encontrado' });
     if (await periodoCerrado(row.empresa, row.anio, row.mes)) return res.status(409).json({ error: `El período ${String(row.mes).padStart(2, '0')}/${row.anio} de ${row.empresa} está cerrado. Reabrilo para borrar.` });
@@ -160,7 +159,7 @@ router.post('/eliminar-lote', requireRole('rrhh', 'admin'), async (req, res, nex
     const cond = ['r.anio=$1', 'r.mes=$2'], params = [Number(anio), Number(mes)];
     if (empresa) { params.push(empresa); cond.push(`em.nombre=$${params.length}`); }
     if (tipo) { params.push(tipo); cond.push(`r.tipo=$${params.length}`); }
-    const recs = (await query(`SELECT r.id, r.corrida_id, em.nombre AS empresa FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')}`, params)).rows;
+    const recs = (await query(`SELECT r.id, r.corrida_id, em.nombre AS empresa FROM recibos r JOIN empleados e ON e.id = r.empleado_id LEFT JOIN periodos perx ON perx.id = r.periodo_id JOIN empresas em ON em.id = COALESCE(perx.empresa_id, e.empresa_id) WHERE ${cond.join(' AND ')}`, params)).rows;
     const ids = recs.map((x) => x.id);
     const corridaIds = [...new Set(recs.map((x) => x.corrida_id).filter(Boolean))];
     const empresasAfectadas = [...new Set(recs.map((x) => x.empresa))];
@@ -221,7 +220,7 @@ router.post('/enviar-mail-lote', requireRole('rrhh', 'admin'), async (req, res, 
     if (tipo) { args.push(tipo); cond.push(`r.tipo=$${args.length}`); }
     const recs = (await query(
       `SELECT r.id, r.anio, r.mes, r.tipo, r.neto, r.data, e.nom, e.email, e.data AS edata, em.nombre AS empresa
-         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
+         FROM recibos r JOIN empleados e ON e.id = r.empleado_id LEFT JOIN periodos perx ON perx.id = r.periodo_id JOIN empresas em ON em.id = COALESCE(perx.empresa_id, e.empresa_id)
         WHERE ${cond.join(' AND ')} ORDER BY em.nombre, e.nom`, args)).rows;
     if (!recs.length) return res.status(400).json({ error: 'No hay recibos publicados para ese período/filtro' });
     if (!mailConfigurado()) return res.status(400).json({ error: 'SMTP no configurado en el servidor' });
@@ -243,7 +242,7 @@ router.post('/:id/enviar-mail', requireRole('rrhh', 'admin'), async (req, res, n
   try {
     const r = (await query(
       `SELECT r.anio, r.mes, r.tipo, r.neto, r.data, e.nom, e.email, e.data AS edata, em.nombre AS empresa
-         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id WHERE r.id=$1`, [req.params.id])).rows[0];
+         FROM recibos r JOIN empleados e ON e.id = r.empleado_id LEFT JOIN periodos perx ON perx.id = r.periodo_id JOIN empresas em ON em.id = COALESCE(perx.empresa_id, e.empresa_id) WHERE r.id=$1`, [req.params.id])).rows[0];
     if (!r) return res.status(404).json({ error: 'Recibo no encontrado' });
     const to = (req.body?.to || _destinoMail(r)).trim();
     if (!to) return res.status(400).json({ error: 'El empleado no tiene mail laboral, personal ni general cargado' });

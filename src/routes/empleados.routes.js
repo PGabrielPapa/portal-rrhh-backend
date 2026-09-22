@@ -207,10 +207,22 @@ router.get('/cumpleanios', async (req, res, next) => {
 });
 
 // Próximo legajo por empresa: máximo numérico existente + 1, con padding a 6 dígitos.
-async function nextLegajo(client, empresaId) {
+// DNI y CUIL viajan con o sin guiones según de dónde vengan. Para buscar a la
+// persona se comparan siempre por sus dígitos: si no, la misma persona entra dos
+// veces en la base (una como familiar y otra como empleado).
+const _dig = (v) => String(v || '').replace(/\D/g, '') || null;
+
+// El legajo identifica a la persona en el GRUPO, no en una empresa: si el contrato
+// se cede a otra empresa del grupo el número se conserva, así que la serie es única
+// para todas. Se mira el máximo entre los legajos vigentes y los de los períodos
+// históricos, para no reutilizar un número que ya tuvo alguien.
+async function nextLegajo(client) {
   const r = await client.query(
-    `SELECT COALESCE(MAX(NULLIF(regexp_replace(leg_num, '\\D', '', 'g'), '')::int), 0) + 1 AS n
-       FROM empleados WHERE empresa_id = $1`, [empresaId]);
+    `SELECT COALESCE(MAX(n), 0) + 1 AS n FROM (
+       SELECT NULLIF(regexp_replace(leg_num, '\\D', '', 'g'), '')::bigint AS n FROM empleados
+       UNION ALL
+       SELECT NULLIF(regexp_replace(legajo,  '\\D', '', 'g'), '')::bigint AS n FROM periodos WHERE legajo IS NOT NULL
+     ) t`);
   return String(r.rows[0].n).padStart(6, '0');
 }
 
@@ -288,12 +300,12 @@ router.post('/', requireRole('rrhh', 'admin'), async (req, res, next) => {
       const apellido = data.apellido || (String(b.nom || '').split(',')[0] || '').trim();
       const nombres = data.nombres || (String(b.nom || '').split(',').slice(1).join(',') || '').trim();
       let pid = null;
-      if (cuilN) { const x = await client.query('SELECT id FROM personas WHERE cuil=$1', [cuilN]); if (x.rows[0]) pid = x.rows[0].id; }
-      if (!pid) { const x = await client.query("SELECT id FROM personas WHERE dni=$1 AND (cuil IS NULL OR cuil='')", [dni]); if (x.rows[0]) pid = x.rows[0].id; }
-      if (!pid) { const x = await client.query("INSERT INTO personas (cuil,dni,apellido,nombres,nom,tipos,data) VALUES ($1,$2,$3,$4,$5,ARRAY['empleado'],$6) RETURNING id", [cuilN, dni, apellido || null, nombres || null, String(b.nom).toUpperCase(), JSON.stringify(data)]); pid = x.rows[0].id; }
+      if (cuilN) { const x = await client.query("SELECT id FROM personas WHERE regexp_replace(COALESCE(cuil,''),'\\D','','g') = $1", [_dig(cuilN)]); if (x.rows[0]) pid = x.rows[0].id; }
+      if (!pid) { const x = await client.query("SELECT id FROM personas WHERE regexp_replace(COALESCE(dni,''),'\\D','','g') = $1", [_dig(dni)]); if (x.rows[0]) pid = x.rows[0].id; }
+      if (!pid) { const x = await client.query("INSERT INTO personas (cuil,dni,apellido,nombres,nom,tipos,data) VALUES ($1,$2,$3,$4,$5,ARRAY['empleado'],$6) RETURNING id", [_dig(cuilN), _dig(dni), apellido || null, nombres || null, String(b.nom).toUpperCase(), JSON.stringify(data)]); pid = x.rows[0].id; }
       else { await client.query("UPDATE personas SET tipos = ARRAY(SELECT DISTINCT unnest(tipos || ARRAY['empleado'])) WHERE id=$1", [pid]); }
       await client.query('UPDATE empleados SET persona_id=$1 WHERE id=$2', [pid, empId]);
-      await client.query('INSERT INTO periodos (persona_id, empleado_id, empresa_id, legajo, fecha_ingreso, funcion, cat_escala, tramo_escala, cat_convenio, cod_convenio, cod_sindicato, vigente) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true)',
+      await client.query("INSERT INTO periodos (persona_id, empleado_id, empresa_id, legajo, fecha_ingreso, funcion, cat_escala, tramo_escala, cat_convenio, cod_convenio, cod_sindicato, vigente, nro, motivo_alta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,1,'ingreso')",
         [pid, empId, empresaId, legAsignado, b.ingreso || null, data.tarea || null, b.cat || null, b.tramo || null, data.categoria_convenio || null, data.cod_convenio || null, data.cod_sindicato || null]);
     } catch (e) { /* el empleado se creó igual */ }
     const out = await client.query(`${SELECT} WHERE e.id = $1`, [rows[0].id]);
@@ -626,12 +638,12 @@ router.post('/import', requireRole('rrhh', 'admin'), async (req, res, next) => {
       try {
         const empId = insE.rows[0].id;
         let pid = null;
-        if (cuil) { const x = await client.query('SELECT id FROM personas WHERE cuil=$1', [cuil]); if (x.rows[0]) pid = x.rows[0].id; }
-        if (!pid) { const x = await client.query("SELECT id FROM personas WHERE dni=$1 AND (cuil IS NULL OR cuil='')", [dni]); if (x.rows[0]) pid = x.rows[0].id; }
-        if (!pid) { const x = await client.query("INSERT INTO personas (cuil,dni,apellido,nombres,nom,tipos,data) VALUES ($1,$2,$3,$4,$5,ARRAY['empleado'],$6) RETURNING id", [cuil || null, dni, apellido || null, nombres || null, nom, JSON.stringify(data)]); pid = x.rows[0].id; }
+        if (cuil) { const x = await client.query("SELECT id FROM personas WHERE regexp_replace(COALESCE(cuil,''),'\\D','','g') = $1", [_dig(cuil)]); if (x.rows[0]) pid = x.rows[0].id; }
+        if (!pid) { const x = await client.query("SELECT id FROM personas WHERE regexp_replace(COALESCE(dni,''),'\\D','','g') = $1", [_dig(dni)]); if (x.rows[0]) pid = x.rows[0].id; }
+        if (!pid) { const x = await client.query("INSERT INTO personas (cuil,dni,apellido,nombres,nom,tipos,data) VALUES ($1,$2,$3,$4,$5,ARRAY['empleado'],$6) RETURNING id", [_dig(cuil), _dig(dni), apellido || null, nombres || null, nom, JSON.stringify(data)]); pid = x.rows[0].id; }
         else { await client.query("UPDATE personas SET tipos = ARRAY(SELECT DISTINCT unnest(tipos || ARRAY['empleado'])) WHERE id=$1", [pid]); }
         await client.query('UPDATE empleados SET persona_id=$1 WHERE id=$2', [pid, empId]);
-        await client.query('INSERT INTO periodos (persona_id, empleado_id, empresa_id, legajo, fecha_ingreso, funcion, cat_escala, tramo_escala, cat_convenio, cod_convenio, cod_sindicato, vigente) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true)', [pid, empId, eid, legNum, ingISO, data.tarea || null, cat, tramo, data.categoria_convenio || null, data.cod_convenio || null, data.cod_sindicato || null]);
+        await client.query("INSERT INTO periodos (persona_id, empleado_id, empresa_id, legajo, fecha_ingreso, funcion, cat_escala, tramo_escala, cat_convenio, cod_convenio, cod_sindicato, vigente, nro, motivo_alta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,1,'ingreso')", [pid, empId, eid, legNum, ingISO, data.tarea || null, cat, tramo, data.categoria_convenio || null, data.cod_convenio || null, data.cod_sindicato || null]);
       } catch (e) { /* el empleado se importó igual */ }
       uidSet.add(uid); dniSet.add(dni); ok++;
     }

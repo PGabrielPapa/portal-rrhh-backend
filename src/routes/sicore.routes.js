@@ -14,7 +14,7 @@ async function items(anio, mes, empresa) {
   if (empresa) { params.push(empresa); filtro = ` AND em.nombre = $${params.length}`; }
   const { rows } = await query(
     `SELECT e.cuil, e.nom, e.leg_num, em.nombre AS empresa, r.tipo, r.data
-       FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
+       FROM recibos r JOIN empleados e ON e.id = r.empleado_id LEFT JOIN periodos perx ON perx.id = r.periodo_id JOIN empresas em ON em.id = COALESCE(perx.empresa_id, e.empresa_id)
       WHERE r.anio=$1 AND r.mes=$2${filtro}`, params);
   const porCuil = {};
   for (const row of rows) {

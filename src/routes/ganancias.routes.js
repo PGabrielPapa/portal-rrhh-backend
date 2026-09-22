@@ -252,7 +252,7 @@ router.get('/anual', async (req, res, next) => {
     if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
     const rows = (await query(
       `SELECT r.empleado_id, r.data, e.nom, e.leg_num, e.cuil, e.data AS edata, em.nombre AS empresa
-         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
+         FROM recibos r JOIN empleados e ON e.id = r.empleado_id LEFT JOIN periodos perx ON perx.id = r.periodo_id JOIN empresas em ON em.id = COALESCE(perx.empresa_id, e.empresa_id)
         WHERE ${cond.join(' AND ')}`, pr)).rows;
     // Agrupar por empleado
     const porEmp = {};

@@ -138,7 +138,11 @@ async function recibosDelPeriodo(anio, mes, empresa) {
             e.ingreso, e.data AS edata, em.nombre AS empresa, em.cuit AS empresa_cuit
        FROM recibos r
        JOIN empleados e  ON e.id = r.empleado_id
-       JOIN empresas em  ON em.id = e.empresa_id
+       -- La empresa sale del PERÍODO al que pertenece el recibo, no del legajo:
+       -- si el contrato se cedió después, los meses anteriores tienen que seguir
+       -- saliendo por la empresa que los liquidó.
+       LEFT JOIN periodos p ON p.id = r.periodo_id
+       JOIN empresas em  ON em.id = COALESCE(p.empresa_id, e.empresa_id)
       WHERE ${cond.join(' AND ')}
       ORDER BY em.nombre, (e.leg_num ~ '^[0-9]+$')::int DESC,
                NULLIF(regexp_replace(e.leg_num,'\\D','','g'),'')::bigint NULLS LAST, e.nom`, pr);

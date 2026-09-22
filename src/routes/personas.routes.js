@@ -4,13 +4,14 @@ import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import bcrypt from 'bcryptjs';
 import { config } from '../config.js';
+import { migrarPersonas } from '../db/migratePersonas.js';
 
 const router = Router();
 router.use(requireAuth);
 router.use(requireRole('rrhh', 'admin'));
 
 const mapPersona = (r) => ({
-  id: r.id, cuil: r.cuil, dni: r.dni, apellido: r.apellido, nombres: r.nombres, nom: r.nom,
+  id: r.id, nro: r.nro, cuil: r.cuil, dni: r.dni, apellido: r.apellido, nombres: r.nombres, nom: r.nom,
   tipos: r.tipos || [], data: r.data || {}, empleadoActivo: !!r.empleado_activo, nPeriodos: r.n_periodos != null ? Number(r.n_periodos) : undefined,
   accesoComite: r.acceso_comite || null, tieneClave: !!r.password_hash,
   createdAt: r.created_at, updatedAt: r.updated_at,
@@ -24,8 +25,30 @@ const mapPeriodo = (r) => ({
 
 const nomDe = (b) => [String(b.apellido || '').trim(), String(b.nombres || '').trim()].filter(Boolean).join(', ').toUpperCase() || (b.nom || null);
 
+// DNI y CUIL se guardan SIEMPRE como sólo dígitos: mientras convivieron
+// "20414724990" y "20-41472499-0" el índice único no los reconocía como el mismo
+// documento y la misma persona entraba dos veces.
+const soloDigitos = (v) => String(v || '').replace(/\D/g, '') || null;
+
+// Devuelve la persona ya cargada con ese DNI o CUIL (excluyendo la que se edita).
+async function personaExistente(dni, cuil, exceptoId) {
+  const cond = [], p = [];
+  if (dni)  { p.push(dni);  cond.push(`dni = $${p.length}`); }
+  if (cuil) { p.push(cuil); cond.push(`cuil = $${p.length}`); }
+  if (!cond.length) return null;
+  let sql = `SELECT id, nro, nom, dni, cuil, tipos FROM personas WHERE (${cond.join(' OR ')})`;
+  if (exceptoId) { p.push(exceptoId); sql += ` AND id <> $${p.length}`; }
+  return (await query(sql + ' LIMIT 1', p)).rows[0] || null;
+}
+const yaExiste = (x) => ({
+  error: `Ya existe una persona con ese documento: ${x.nom || '(sin nombre)'}` +
+    (x.nro ? ` (N° ${x.nro})` : '') + `. Editá esa ficha en vez de crear otra.`,
+  personaId: x.id,
+});
+
 router.get('/', async (req, res, next) => {
   try {
+    await migrarPersonas();
     const { tipo, q } = req.query; const cond = [], p = [];
     if (tipo) { p.push(tipo); cond.push(`$${p.length} = ANY(p.tipos)`); }
     if (q) { p.push(`%${String(q).toLowerCase()}%`); const i = p.length; cond.push(`(lower(p.nom) LIKE $${i} OR p.dni LIKE $${i} OR COALESCE(p.cuil,'') LIKE $${i})`); }
@@ -57,9 +80,11 @@ router.get('/:id', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   try {
     const b = req.body || {};
-    const dni = String(b.dni || '').trim() || null;
-    const cuil = String(b.cuil || '').trim() || null;
+    const dni = soloDigitos(b.dni);
+    const cuil = soloDigitos(b.cuil);
     if (!dni && !cuil && !b.apellido && !b.nombres && !b.nom) return res.status(400).json({ error: 'Cargá al menos un nombre o documento' });
+    const dup = await personaExistente(dni, cuil);
+    if (dup) return res.status(409).json(yaExiste(dup));
     const tipos = Array.isArray(b.tipos) ? b.tipos : (b.tipo ? [b.tipo] : []);
     const core = ['dni', 'cuil', 'apellido', 'nombres', 'nom', 'tipos', 'tipo'];
     const data = {}; for (const k of Object.keys(b)) if (!core.includes(k)) data[k] = b[k];
@@ -69,7 +94,7 @@ router.post('/', async (req, res, next) => {
       [cuil, dni, b.apellido || null, b.nombres || null, nomDe(b), tipos, JSON.stringify(data), req.user.dni]);
     res.status(201).json(mapPersona(rows[0]));
   } catch (e) {
-    if (e && e.code === '23505') return res.status(409).json({ error: 'Ya existe una persona con ese CUIL' });
+    if (e && e.code === '23505') return res.status(409).json({ error: 'Ya existe una persona con ese DNI o CUIL' });
     next(e);
   }
 });
@@ -83,14 +108,17 @@ router.put('/:id', async (req, res, next) => {
     const core = ['dni', 'cuil', 'apellido', 'nombres', 'nom', 'tipos', 'tipo', 'id'];
     const data = {}; for (const k of Object.keys(b)) if (!core.includes(k)) data[k] = b[k];
     const sets = ['dni=$1', 'cuil=$2', 'apellido=$3', 'nombres=$4', 'nom=$5', 'updated_at=now()'];
-    const params = [String(b.dni || '').trim() || null, String(b.cuil || '').trim() || null, b.apellido || null, b.nombres || null, nomDe(b)];
+    const dniN = soloDigitos(b.dni), cuilN = soloDigitos(b.cuil);
+    const dup = await personaExistente(dniN, cuilN, req.params.id);
+    if (dup) return res.status(409).json(yaExiste(dup));
+    const params = [dniN, cuilN, b.apellido || null, b.nombres || null, nomDe(b)];
     if (tipos) { params.push(tipos); sets.push(`tipos=$${params.length}`); }
     if (Object.keys(data).length) { params.push(JSON.stringify(data)); sets.push(`data = data || $${params.length}::jsonb`); }
     params.push(req.params.id);
     const r = await query(`UPDATE personas SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING *`, params);
     res.json(mapPersona(r.rows[0]));
   } catch (e) {
-    if (e && e.code === '23505') return res.status(409).json({ error: 'Ya existe una persona con ese CUIL' });
+    if (e && e.code === '23505') return res.status(409).json({ error: 'Ya existe una persona con ese DNI o CUIL' });
     next(e);
   }
 });

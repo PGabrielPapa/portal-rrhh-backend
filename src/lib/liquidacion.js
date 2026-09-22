@@ -299,6 +299,18 @@ export function calcularRecibo(emp, params, opts) {
   const esComplementaria = tipo === 'complementaria';
   const esAnticipoAjuste = tipo === 'anticipo_ajuste';
   const esExtraNoRem = tipo === 'extra_norem';
+  // ── Mes parcial: días trabajados / 30 ────────────────────────────────────
+  // Criterio único para el mes en que un período arranca o termina (alta, baja o
+  // cesión de contrato a mitad de mes): el mes se toma de 30 días y se liquidan
+  // los días efectivamente trabajados. Además de los haberes, alcanza a los
+  // importes PER CÁPITA MENSUALES —detracción art. 22 Ley 27.541 y los conceptos
+  // sindicales de importe fijo—, que si no se prorratearan se cobrarían enteros
+  // en cada una de las dos empresas del mes de la cesión.
+  // El SCVO y el FFEP quedan fuera a propósito: cada empleador los declara por
+  // entero en su propio F.931 por el trabajador que tuvo de alta en el mes.
+  const _diasMes = num(opts?.diasTrabajados) > 0 ? Math.min(num(opts.diasTrabajados), 30) : 30;
+  const _mesParcial = tipo === 'mensual' && _diasMes < 30;
+  const factorMes = _mesParcial ? _diasMes / 30 : 1;
   const detalle = {};
 
   if (esSAConly) {
@@ -779,6 +791,27 @@ export function calcularRecibo(emp, params, opts) {
     descuentos.push({ concepto: 'Cuotas de anticipos de sueldo', monto: round2(num(opts.anticipoCuotaDesc)) });
   }
 
+  // ── Aportes y contribuciones propios del gremio ─────────────────────────────
+  // INACAP, La Estrella, aporte extraordinario OSECAC y los conceptos de UOM.
+  // Salen de la tabla `conceptos_sindicales` (params.sindicales) y SÓLO se aplican
+  // los marcados como confirmados: mientras no se validen contra el convenio no
+  // tocan la liquidación. Los importes fijos son per cápita mensuales, así que en
+  // quincena se prorratean al 50% igual que el SCVO.
+  const _gremio = String(sind?.codigo || d.cod_sindicato || '').trim().toUpperCase();
+  const _contribSind = [];
+  if (tipo === 'mensual' || esQuincenal) {
+    for (const c of (Array.isArray(p.sindicales) ? p.sindicales : [])) {
+      const cod = String(c?.cod_sindicato || '').trim().toUpperCase();
+      if (cod && cod !== _gremio && !_gremio.includes(cod)) continue;
+      const monto = c.base === 'remunerativo'
+        ? round2(totalRemun * num(c.pct) / 100)
+        : round2(num(c.importe) * (esQuincenal ? 0.5 : factorMes));
+      if (monto <= 0) continue;
+      if (c.tipo === 'aporte') descuentos.push({ concepto: c.descripcion, monto });
+      else _contribSind.push({ concepto: c.descripcion, monto });
+    }
+  }
+
   const totalDescuentos = descuentos.reduce((s, x) => s + x.monto, 0);
   let neto = totalHaberes - totalDescuentos;
   // El neto NUNCA puede ser negativo: se agrega un ajuste no remunerativo que lo lleva a cero,
@@ -793,6 +826,9 @@ export function calcularRecibo(emp, params, opts) {
   }
   detalle.ajusteNetoNegativo = ajusteNetoNegativo;
   detalle.ajusteNetoRecuperado = round2(ajRecuperar);
+  // Queda asentado en el recibo para que el libro de sueldos, el F.931 y el
+  // asiento puedan explicar por qué ese mes salió por menos de un mes entero.
+  detalle.mesParcial = _mesParcial ? { dias: _diasMes, base: 30, factor: round2(factorMes) } : null;
 
   // Costo del empleador (contribuciones patronales + SCVO) — sobre remunerativos
   const contribuciones = [];
@@ -800,7 +836,7 @@ export function calcularRecibo(emp, params, opts) {
   // Detracción de la base de contribuciones de seguridad social (Ley 27.541, art. 22):
   // suma fija mensual por trabajador que reduce la base de SIPA/INSSJP/FNE (NO obra social,
   // NO ART, NO sindical). Se prorratea por quincena; no aplica a SAC/vacaciones/final.
-  const detr = (tipo === 'mensual') ? num(p.detraccionContrib) : (esQuincenal ? num(p.detraccionContrib) * 0.5 : 0);
+  const detr = (tipo === 'mensual') ? round2(num(p.detraccionContrib) * factorMes) : (esQuincenal ? num(p.detraccionContrib) * 0.5 : 0);
   const baseSegSoc = Math.max(0, totalRemun - detr);
   const coSeg = (pct) => round2(baseSegSoc * num(pct) / 100);
   const cJub = coSeg(p.pctJubPatronal), cOS = round2(baseAportesOs * num(p.pctOsPatronal) / 100), cPami = coSeg(p.pctPamiPatronal), cFne = coSeg(p.pctDesempleo), cArt = co(p.pctArt), cSind = esFC ? 0 : co((sind && Number(sind.pctPatronal) > 0) ? Number(sind.pctPatronal) : num(p.pctSindicatoPatronal));
@@ -810,7 +846,13 @@ export function calcularRecibo(emp, params, opts) {
   const perCapitaAplica = (tipo === 'mensual' || esQuincenal || esSAConly || esVacaciones || esFinal);
   // Per cápita mensual: en quincena se prorratea 0,5 para que 1ª + 2ª sumen un solo cargo por mes.
   const perCapitaFactor = esQuincenal ? 0.5 : 1;
-  const scvo = perCapitaAplica ? round2(num(p.scvoPercapita) * perCapitaFactor) : 0;  // Seguro de Vida Obligatorio (Dto. 1567/74)
+  // SCVO: con relaciones laborales simultáneas en dos empresas, el trabajador tiene
+  // derecho a UNA SOLA prestación y la contrata el empleador ante el que cumple la
+  // MAYOR JORNADA mensual (Reglamento del Dto. 1567/74, art. 3). La empresa que no
+  // fue designada no lo paga. El FFEP queda aparte: va con el contrato de ART de
+  // cada empleador, así que cada uno paga el suyo.
+  const _scvoAqui = opts?.scvoAplica !== false;
+  const scvo = (perCapitaAplica && _scvoAqui) ? round2(num(p.scvoPercapita) * perCapitaFactor) : 0;  // Seguro de Vida Obligatorio (Dto. 1567/74)
   const ffep = perCapitaAplica ? round2(num(p.ffep) * perCapitaFactor) : 0;           // Fondo Fiduc. Enfermedades Profesionales (SRT)
   // Fondo de Asistencia Laboral (Ley 27.802 / Dto. 408/2026), desde 11/2026. NO es costo
   // adicional: se DETRAE de las contribuciones patronales de seguridad social (se redirige un
@@ -831,6 +873,7 @@ export function calcularRecibo(emp, params, opts) {
   if (ffep > 0) contribuciones.push({ concepto: 'FFEP — Fondo Fiduc. Enfermedades Profesionales (SRT)', monto: ffep });
   const fcese = (tipo === 'mensual' || esQuincenal) ? round2(totalRemun * num(p.fondoCesePct) / 100) : 0;
   if (fcese > 0) contribuciones.push({ concepto: 'Fondo de cese laboral (Ley Bases 27.742)', monto: fcese });
+  for (const c of _contribSind) contribuciones.push(c);
   const totalContrib = contribuciones.reduce((s, x) => s + x.monto, 0);
 
   // Domicilio del empleador (art. 140 LCT inc. a, Dto. 407/2026): se arma desde empresas.data

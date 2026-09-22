@@ -40,6 +40,21 @@ async function main() {
   } catch (e) { console.error('[migrate] asiento:', e.message); }
 
   try {
+    const { migrarPersonas } = await import('./migratePersonas.js');
+    const r = await migrarPersonas({ forzar: true });
+    if (r.normalizados || r.fusionados || r.numerados)
+      console.log(`[migrate] base de personas ✓ (${r.normalizados} documentos normalizados, ${r.fusionados} duplicados unificados, ${r.numerados} numeradas)`);
+    for (const d of r.duplicadosDni) console.log(`[migrate]   DNI ${d.dni}: se conservó la persona ${d.conservado} y se unificó ${d.eliminados.join(', ')}`);
+  } catch (e) { console.error('[migrate] personas:', e.message); }
+
+  try {
+    const { migrarPeriodos } = await import('./migratePeriodos.js');
+    const r = await migrarPeriodos();
+    if (r.periodosCreados || r.recibosVinculados)
+      console.log(`[migrate] períodos laborales ✓ (${r.periodosCreados} períodos creados, ${r.recibosVinculados} recibos vinculados)`);
+  } catch (e) { console.error('[migrate] periodos:', e.message); }
+
+  try {
     const { migrarAsientoAux } = await import('./migrateAsientoAux.js');
     const r = await migrarAsientoAux();
     if (r.os || r.categorias || r.sindicales)

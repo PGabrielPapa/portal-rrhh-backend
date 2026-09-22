@@ -479,6 +479,68 @@ async function getParamsConValores(anio, mes) {
 // ── Ajuste por neto negativo: helpers de persistencia (se recupera el mes siguiente) ──
 const _esMensual = (t) => t === 'mensual' || t === 'quincenal_1' || t === 'quincenal_2';
 const _esSAC = (t) => t === 'sac1' || t === 'sac2';
+
+// ── Prorrateo del mes por período laboral — criterio: DÍAS TRABAJADOS / 30 ──
+// El mes se toma siempre de 30 días, cualquiera sea su duración real. En el mes
+// en que un período arranca o termina —alta, baja o CESIÓN de contrato a mitad
+// de mes (arts. 225/229 LCT)— se liquidan los días efectivamente trabajados
+// dentro de ese mes, contando tanto el día de alta como el de egreso.
+//
+// Ejemplo de una cesión con egreso el 15: la cedente liquida 15 días (1→15) y la
+// cesionaria 15 (16→30). El trabajador cobra el mes completo, sin doble pago ni
+// bache, y cada empresa soporta la parte que le corresponde.
+//
+// Si el período cubre el mes entero, son 30 días y no se prorratea nada: el
+// recibo sale exactamente igual que antes de esta función.
+function _ymd(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const s = (v instanceof Date)
+    ? `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`
+    : String(v).slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  return m ? { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) } : null;
+}
+// Días del mes (sobre 30) que cubre el período. 0 = el período no toca el mes.
+function diasTrabajadosPeriodo(per, anio, mes) {
+  if (!per) return 30;
+  const ing = _ymd(per.fecha_ingreso), eg = _ymd(per.fecha_egreso);
+  const antes = (f) => f.y < anio || (f.y === anio && f.m < mes);
+  const despues = (f) => f.y > anio || (f.y === anio && f.m > mes);
+  if (ing && despues(ing)) return 0;   // todavía no había ingresado
+  if (eg && antes(eg)) return 0;       // ya se había ido
+  const ultimoDia = new Date(anio, mes, 0).getDate();  // 28, 29, 30 o 31 según el mes
+  const desde = (ing && ing.y === anio && ing.m === mes) ? Math.min(ing.d, 30) : 1;
+  // Egresar el último día del mes es haber trabajado el mes entero, aunque ese mes
+  // tenga 28 o 29 días: son 30 y no se prorratea (es el caso normal de una cesión
+  // pactada a fin de mes).
+  const hasta = (eg && eg.y === anio && eg.m === mes) ? (eg.d >= ultimoDia ? 30 : Math.min(eg.d, 30)) : 30;
+  return Math.max(0, hasta - desde + 1);
+}
+// TODOS los períodos de cada legajo que se superponen con el mes liquidado, en
+// orden cronológico. A propósito NO filtra por empresa: el orden dentro del mes
+// —y con él el correlativo del recibo— tiene que ser el mismo se corra la
+// liquidación por una empresa o por todo el grupo, o la corrida de la cesionaria
+// pisaría el recibo que dejó la de la cedente. El filtro por empresa va después.
+async function periodosDelMes(ids, anio, mes) {
+  const fin = `${anio}-${String(mes).padStart(2, '0')}-${new Date(anio, mes, 0).getDate()}`;
+  const ini = `${anio}-${String(mes).padStart(2, '0')}-01`;
+  const rs = (await query(
+    `SELECT p.id, p.empleado_id, p.nro, p.motivo_alta, p.causa_egreso, p.empresa_id,
+            p.scvo, p.asig_fam, p.os_unificada, p.retiene_ganancias,
+            em.nombre AS empresa,
+            to_char(p.fecha_ingreso,'YYYY-MM-DD') AS fecha_ingreso,
+            to_char(p.fecha_egreso, 'YYYY-MM-DD') AS fecha_egreso
+       FROM periodos p
+       JOIN empresas em ON em.id = p.empresa_id
+      WHERE p.empleado_id = ANY($1::int[])
+        AND (p.fecha_ingreso IS NULL OR p.fecha_ingreso <= $2::date)
+        AND (p.fecha_egreso  IS NULL OR p.fecha_egreso  >= $3::date)
+      ORDER BY p.empleado_id, p.fecha_ingreso NULLS FIRST, p.nro`, [ids, fin, ini])).rows;
+  const m = new Map();
+  for (const p of rs) { if (!m.has(p.empleado_id)) m.set(p.empleado_id, []); m.get(p.empleado_id).push(p); }
+  return m;
+}
+
 // Mejor remuneración mensual del semestre (para el SAC), tomada de los recibos guardados.
 async function mejorRemSemestre(empleadoId, anio, tipoSAC) {
   const desde = tipoSAC === 'sac2' ? 7 : 1, hasta = tipoSAC === 'sac2' ? 12 : 6;
@@ -703,7 +765,15 @@ router.post('/calcular', requireRole('rrhh', 'admin'), async (req, res, next) =>
     const auxF = cForm.length ? await cargarAux() : { matrices: {}, tablas: {}, macros: {} };
     const _afil = await afiliadoEnFecha(empleadoId, anio, mes);
     const _czC = t === 'final' ? await causalDe(extra.motivoBaja) : null;
-    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, afiliadoSindical: _afil, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, causal: _czC, convBasico, noRemConvenio: _nrConvC, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ausenciasInjustificadas: _ausInjC, ...plusLct, ...nov, ...varProm, ...emb, ...extra }));
+    let _diasC = {};
+    if (t === 'mensual' && extra.diasTrabajados === undefined) {
+      const _pmTodos = (await periodosDelMes([Number(empleadoId)], Number(anio), Number(mes))).get(Number(empleadoId)) || [];
+      const _pm = extra.empresaPeriodo ? _pmTodos.filter((x) => x.empresa === extra.empresaPeriodo) : _pmTodos;
+      const _per = _pm.length ? _pm[_pm.length - 1] : null;
+      const _d = diasTrabajadosPeriodo(_per, Number(anio), Number(mes));
+      if (_per && _d > 0 && _d < 30) _diasC = { diasTrabajados: _d };
+    }
+    res.json(calcularRecibo(emp, await getParamsConValores(anio, mes), { anio: Number(anio), mes: Number(mes), tipo: t, ..._diasC, afiliadoSindical: _afil, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase, sind, causal: _czC, convBasico, noRemConvenio: _nrConvC, escalaObjetivo, basicoPorAntiguedad: basicoAnt, ajusteNetoRecuperar: ajPend, mejorRemSAC: sacBase, conceptosFormula: cForm, auxFormulas: auxF, macrosFormulas: auxF.macros, ausenciasInjustificadas: _ausInjC, ...plusLct, ...nov, ...varProm, ...emb, ...extra }));
   } catch (e) { next(e); }
 });
 
@@ -866,7 +936,7 @@ router.get('/controles', requireRole('rrhh', 'admin'), async (req, res, next) =>
     if (empresa) { args.push(empresa); cond.push(`em.nombre = $${args.length}`); }
     const recs = (await query(
       `SELECT r.empleado_id, r.tipo, r.neto, r.data, e.nom, e.leg_num, em.nombre AS empresa
-         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
+         FROM recibos r JOIN empleados e ON e.id = r.empleado_id LEFT JOIN periodos perx ON perx.id = r.periodo_id JOIN empresas em ON em.id = COALESCE(perx.empresa_id, e.empresa_id)
         WHERE ${cond.join(' AND ')}`, args)).rows;
 
     // Neto del mes anterior por empleado (para variación)
@@ -924,8 +994,20 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     if (esExtra && !(Number(montoExtra) > 0)) return res.status(400).json({ error: 'Indicá el monto (o % del bruto) de la liquidación extraordinaria' });
     let correlativo = 1;
     if (esExtra) { const _mc = await query('SELECT COALESCE(MAX(correlativo),0) AS n FROM corridas WHERE anio=$1 AND mes=$2 AND tipo=$3', [Number(anio), Number(mes), tipo]); correlativo = Number(_mc.rows[0].n) + 1; }
+    // La empresa que liquida sale del PERÍODO vigente en el mes, no del legajo:
+    // si hubo una cesión, la cedente tiene que poder liquidar su parte del mes
+    // aunque el legajo ya figure en la cesionaria. El OR final cubre los legajos
+    // que todavía no tienen ningún período (sólo antes de correr la migración).
     const cond = ['e.activo = true'], pr = [];
-    if (empresa) { pr.push(empresa); cond.push(`em.nombre = $${pr.length}`); }
+    if (empresa) {
+      pr.push(empresa, `${Number(anio)}-${String(Number(mes)).padStart(2, '0')}-${new Date(Number(anio), Number(mes), 0).getDate()}`,
+             `${Number(anio)}-${String(Number(mes)).padStart(2, '0')}-01`);
+      cond.push(`(EXISTS (SELECT 1 FROM periodos p JOIN empresas pe ON pe.id = p.empresa_id
+                           WHERE p.empleado_id = e.id AND pe.nombre = $1
+                             AND (p.fecha_ingreso IS NULL OR p.fecha_ingreso <= $2::date)
+                             AND (p.fecha_egreso  IS NULL OR p.fecha_egreso  >= $3::date))
+                 OR (NOT EXISTS (SELECT 1 FROM periodos p2 WHERE p2.empleado_id = e.id) AND em.nombre = $1))`);
+    }
     const emps = (await query(
       `SELECT e.id FROM empleados e JOIN empresas em ON em.id=e.empresa_id WHERE ${cond.join(' AND ')}`, pr)).rows;
     if (!emps.length) return res.status(400).json({ error: 'No hay empleados activos para ese filtro' });
@@ -947,26 +1029,77 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
     const _afilSet = await afiliadosEnFecha(emps.map((e) => e.id), anio, mes);
     const num = (v) => (v === undefined || v === null || v === '' ? undefined : Number(v));
 
+    // Períodos que tocan el mes liquidado (uno por empresa si hubo cesión) y una
+    // tarea de liquidación por cada uno: el mismo legajo puede generar dos recibos
+    // en el mes de la cesión, uno por empresa, prorrateados por días/30.
+    const perMap = await periodosDelMes(emps.map((e) => e.id), Number(anio), Number(mes));
+    const tareas = [];
+    for (const { id } of emps) {
+      const pers = perMap.get(id) || [];
+      if (!pers.length) { tareas.push({ id, per: null, dias: 30, corr: correlativo }); continue; }
+      pers.forEach((per, i) => {
+        const dias = diasTrabajadosPeriodo(per, Number(anio), Number(mes));
+        if (dias <= 0) return;
+        if (empresa && per.empresa !== empresa) return;   // no lo liquida esta empresa
+        // El correlativo sale de la posición del período dentro del mes COMPLETO,
+        // no de los que entran en esta corrida: así la corrida de la cedente y la
+        // de la cesionaria escriben dos recibos distintos en vez de pisarse.
+        // Con un solo período en el mes queda el correlativo de siempre.
+        tareas.push({ id, per, dias, corr: pers.length > 1 ? correlativo + i : correlativo });
+      });
+    }
+    if (!tareas.length) return res.status(400).json({ error: 'No hay períodos laborales vigentes en ese mes para el filtro elegido' });
+    // Simultaneidad = dos períodos del mismo legajo abiertos todo el mes en
+    // empresas distintas. Se distingue de la cesión (donde uno cierra y otro abre)
+    // porque los dos dan 30 días.
+    for (const t of tareas) {
+      const hermanas = tareas.filter((x) => x.id === t.id);
+      t.ultimo = t === hermanas.at(-1);
+      t.simultaneo = hermanas.length > 1 && hermanas.every((x) => x.dias === 30);
+    }
+
     // Arma el recibo de un empleado (homogéneo por tipo) aplicando overrides de horas.
-    async function armarUno(id, permitirEfectos) {
+    async function armarUno(id, permitirEfectos, tarea) {
       const emp = empMap.get(id);
       if (!emp) return null;
       const _esJornal = esJornalUocra(emp);
       // Corrida HOMOGÉNEA: quincena = solo jornaleros UOCRA; mensual = solo mensualizados.
       if ((tipo === 'quincenal_1' || tipo === 'quincenal_2') && !_esJornal) return null;
       if (tipo === 'mensual' && _esJornal) return null;
-      const ov = overrides[id] || {};
-      const cuotas = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await cuotasAnticiposDe(id, anio, mes) : [];
+      // Los overrides de horas vienen por legajo, o por legajo-período cuando el mes
+      // tiene dos liquidaciones (cesión): cada empresa carga las horas que le tocan.
+      const ov = (tarea && tarea.per && overrides[`${id}-${tarea.per.id}`]) || overrides[id] || {};
+      // Descuentos que son del MES y no de la empresa: en el mes de una cesión van
+      // una sola vez, en el recibo del período con el que el trabajador cierra el mes.
+      const _unaVez = !tarea || tarea.ultimo !== false;
+      const cuotas = (_unaVez && (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2')) ? await cuotasAnticiposDe(id, anio, mes) : [];
       const acumGan = await acumGananciasDe(id, anio, mes);
       const _sd = sindDe(sMap, emp); const _cb = convBasicoDe(cMap, emp); const _escUnif = escalaObjetivoDe(cMap, emp); const _nrConv = noRemConvenioDe(cMap, emp, anio, mes);
       const _plusLct = ((_escUnif > 0 || esUecaraMensual(emp)) && _esMensual(tipo)) ? await plusLCTOpts(id, anio, mes) : {};
       const _ausInj = tipo === 'mensual' ? await ausenciasInjustMensualDe(id, anio, mes) : 0;
-      const _emb = (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2') ? await embargosOpts(id, fechaPago) : {};
+      const _emb = (_unaVez && (tipo === 'mensual' || tipo === 'quincenal_1' || tipo === 'quincenal_2')) ? await embargosOpts(id, fechaPago) : {};
       const _nov = _esMensual(tipo) ? { ...await novedadesOpts(id, anio, mes), ...await licenciasSinGoceOpts(id, anio, mes) } : {};
       const _varProm = (tipo === 'vacaciones' || _esMensual(tipo)) ? await promedioVariablesMes(id, anio, mes) : {};
       const _sacBase = _esSAC(tipo) ? await mejorRemSemestre(id, anio, tipo) : 0;
       let _ajPend = 0;
-      if (_esMensual(tipo)) { if (permitirEfectos) await resetAjusteNeto(id, anio, mes); _ajPend = await ajustePendiente(id, anio, mes); }
+      if (_unaVez && _esMensual(tipo)) { if (permitirEfectos) await resetAjusteNeto(id, anio, mes); _ajPend = await ajustePendiente(id, anio, mes); }
+      // Prorrateo del mes parcial (alta, baja o cesión a mitad de mes): días/30.
+      // Con el mes completo no se manda nada y el recibo sale idéntico a antes.
+      //
+      // Las relaciones SIMULTÁNEAS no entran acá: están abiertas todo el mes, así
+      // que dan 30 días cada una y cada empresa liquida su mes completo. El
+      // prorrateo es de la cesión, donde una relación termina y otra empieza.
+      const _diasPer = tarea && tarea.dias > 0 && tarea.dias < 30 && tipo === 'mensual' ? { diasTrabajados: tarea.dias } : {};
+      // Designaciones del período: obligaciones que con cargos simultáneos se
+      // cumplen una sola vez y pueden recaer en la otra empresa.
+      // Ganancias: con dos empleadores retiene UNO SOLO, el que pagó la mayor
+      // remuneración el año fiscal anterior (RG 4003 art. 3), y calcula sobre la
+      // suma de los dos sueldos con el dato que el trabajador declara por SiRADIG.
+      // La empresa no designada no retiene: se le apaga el cálculo.
+      const _desig = tarea && tarea.per
+        ? { scvoAplica: tarea.per.scvo !== false,
+            ...(tarea.per.retiene_ganancias === false ? { calcularGanancias: false } : {}) }
+        : {};
       let _extra = {};
       if (esExtra) {
         const montoEmp = modoExtra === 'pctBruto' ? r2(Number(emp.bruto || 0) * Number(montoExtra) / 100) : r2(Number(montoExtra));
@@ -980,21 +1113,28 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
         ? await armarReciboJornalUocra(emp, Number(anio), Number(mes), tipo, { fechaPago, ...ovJ })
         : (esUecaraMensual(emp) && tipo === 'mensual' && emp.data?.motorViejo === true)
         ? await armarReciboUecara(emp, Number(anio), Number(mes), tipo, { fechaPago })
-        : calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilSet.has(id), fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, noRemConvenio: _nrConv, escalaObjetivo: _escUnif, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ausenciasInjustificadas: (num(ov.ausenciasInjustificadas) ?? _ausInj), ..._plusLct, ..._nov, ..._varProm, ..._emb, ..._extra, ...ovM });
+        : calcularRecibo(emp, params, { anio: Number(anio), mes: Number(mes), tipo, afiliadoSindical: _afilSet.has(id), fechaPago, cuotasAnticipos: cuotas, acumGanancias: acumGan, ganTabla, presBase: _sd?.presBase || 'basico', sind: _sd, convBasico: _cb, noRemConvenio: _nrConv, escalaObjetivo: _escUnif, basicoPorAntiguedad: basicoAntiguedadDe(mAntTodos, emp, anio, mes), ajusteNetoRecuperar: _ajPend, mejorRemSAC: _sacBase, conceptosFormula: filtrarConceptosFormula(cFormTodos, emp, anio, mes).filter((c) => aplicaEnTipo(c, tipo)), auxFormulas: auxCorrida, macrosFormulas: auxCorrida.macros, ausenciasInjustificadas: (num(ov.ausenciasInjustificadas) ?? _ausInj), ..._plusLct, ..._nov, ..._varProm, ..._emb, ..._diasPer, ..._desig, ..._extra, ...ovM });
       const h = recibo.detalle?.horas || {};
       const item = {
-        empleadoId: id, nom: emp.nom, legNum: emp.legNum, empresa: emp.empresa, esJornal: _esJornal, neto: recibo.totales.neto,
+        empleadoId: id, nom: emp.nom, legNum: emp.legNum,
+        empresa: (tarea && tarea.per && tarea.per.empresa) || emp.empresa,
+        periodoId: (tarea && tarea.per && tarea.per.id) || null,
+        diasLiquidados: (tarea && tarea.dias) || 30,
+        motivoPeriodo: (tarea && tarea.per && tarea.dias < 30)
+          ? (tarea.per.causa_egreso === 'cesion' ? 'cesión' : (tarea.per.motivo_alta || null)) : null,
+        simultaneo: !!(tarea && tarea.simultaneo),
+        esJornal: _esJornal, neto: recibo.totales.neto,
         horasNormales: _esJornal ? (num(ov.horasNormales) ?? (h.normal || 0)) : null,
         extra50: _esJornal ? (num(ov.horasExtra50) ?? (h.extra50 || 0)) : (num(ov.horasExtra50) ?? (Number(_nov.horasExtra50) || 0)),
         extra100: _esJornal ? (num(ov.horasExtra100) ?? (h.extra100 || 0)) : (num(ov.horasExtra100) ?? (Number(_nov.horasExtra100) || 0)),
       };
-      return { emp, recibo, cuotas, item };
+      return { emp, recibo, cuotas, item, tarea };
     }
 
     // ── PREVIA: solo calcula y devuelve la grilla editable (no guarda) ──
     if (previa) {
       const items = []; let total = 0;
-      for (const { id } of emps) { const r = await armarUno(id, false); if (!r) continue; items.push(r.item); total += r.recibo.totales.neto; }
+      for (const t of tareas) { const r = await armarUno(t.id, false, t); if (!r) continue; items.push(r.item); total += r.recibo.totales.neto; }
       if (!items.length) return res.status(400).json({ error: `No hay empleados de ese tipo para liquidar (${(tipo === 'mensual') ? 'mensualizados' : (tipo.startsWith('quincenal') ? 'jornaleros' : tipo)}${empresa ? ' en ' + empresa : ''}).` });
       return res.json({ periodo: { anio, mes, tipo }, cantidad: items.length, totalNeto: r2(total), items, avisoValores: verVal.desactualizado ? verVal.mensaje : null });
     }
@@ -1010,21 +1150,27 @@ router.post('/corrida', requireRole('rrhh', 'admin'), async (req, res, next) => 
         [Number(anio), Number(mes), tipo, empresa || null, req.user.dni, correlativo]
       );
       corridaId = cr.rows[0].id;
-      for (const { id } of emps) {
-        const r = await armarUno(id, true);
+      for (const t of tareas) {
+        const id = t.id;
+        const r = await armarUno(id, true, t);
         if (!r) continue;
         const { recibo, cuotas } = r;
         totalNeto += recibo.totales.neto; cant++;
+        // El período se graba explícitamente (el trigger sólo lo completa si viene
+        // en NULL): en el mes de una cesión hay dos recibos y cada uno tiene que
+        // quedar anclado a SU empresa, no al período que el trigger elija.
         const rr = await db(
-          `INSERT INTO recibos (empleado_id, anio, mes, tipo, correlativo, neto, data, created_by, corrida_id, publicado)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false)
+          `INSERT INTO recibos (empleado_id, anio, mes, tipo, correlativo, neto, data, created_by, corrida_id, publicado, periodo_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false,$10)
            ON CONFLICT (empleado_id, anio, mes, tipo, correlativo)
-           DO UPDATE SET neto=EXCLUDED.neto, data=EXCLUDED.data, created_by=EXCLUDED.created_by, corrida_id=EXCLUDED.corrida_id, publicado=false, created_at=now()
+           DO UPDATE SET neto=EXCLUDED.neto, data=EXCLUDED.data, created_by=EXCLUDED.created_by, corrida_id=EXCLUDED.corrida_id, publicado=false, created_at=now(), periodo_id=COALESCE(EXCLUDED.periodo_id, recibos.periodo_id)
            RETURNING id`,
-          [id, Number(anio), Number(mes), tipo, correlativo, recibo.totales.neto, JSON.stringify(recibo), req.user.dni, corridaId]
+          [id, Number(anio), Number(mes), tipo, t.corr, recibo.totales.neto, JSON.stringify(recibo), req.user.dni, corridaId, t.per ? t.per.id : null]
         );
         await registrarCuotas(cuotas, anio, mes, rr.rows[0].id, corridaId, db);
-        if (_esMensual(tipo)) await commitAjusteNeto(id, anio, mes, recibo, db);
+        // Los efectos por empleado (cuotas de anticipos, ajuste de neto) se aplican
+        // una sola vez por mes: en el mes de una cesión van con el último período.
+        if (_esMensual(tipo) && t.ultimo) await commitAjusteNeto(id, anio, mes, recibo, db);
       }
       if (cant === 0) { const e = new Error(`No hay empleados de ese tipo para liquidar (${(tipo === 'mensual') ? 'mensualizados' : (tipo.startsWith('quincenal') ? 'jornaleros' : tipo)}${empresa ? ' en ' + empresa : ''}).`); e.status = 400; throw e; }
       await db('UPDATE corridas SET total_neto=$1, cant=$2 WHERE id=$3', [totalNeto, cant, corridaId]);
@@ -1050,7 +1196,7 @@ router.get('/corrida/:id', requireRole('rrhh', 'admin'), async (req, res, next) 
     if (!c) return res.status(404).json({ error: 'Corrida no encontrada' });
     const items = (await query(
       `SELECT r.id, r.neto, r.data, e.nom, e.leg_num, em.nombre AS empresa
-         FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id
+         FROM recibos r JOIN empleados e ON e.id = r.empleado_id LEFT JOIN periodos perx ON perx.id = r.periodo_id JOIN empresas em ON em.id = COALESCE(perx.empresa_id, e.empresa_id)
         WHERE r.corrida_id=$1 ORDER BY em.nombre ASC, e.leg_num ASC`, [req.params.id])).rows;
     res.json({
       corrida: c,
@@ -1136,7 +1282,7 @@ router.delete('/corrida/:id', requireRole('rrhh', 'admin'), async (req, res, nex
 // GET /api/liquidacion/corrida/:id/reporte — totales por empresa y concepto
 router.get('/corrida/:id/reporte', requireRole('rrhh', 'admin'), async (req, res, next) => {
   try {
-    const rows = (await query('SELECT r.data, em.nombre AS empresa FROM recibos r JOIN empleados e ON e.id=r.empleado_id JOIN empresas em ON em.id=e.empresa_id WHERE r.corrida_id=$1', [req.params.id])).rows;
+    const rows = (await query('SELECT r.data, em.nombre AS empresa FROM recibos r JOIN empleados e ON e.id = r.empleado_id LEFT JOIN periodos perx ON perx.id = r.periodo_id JOIN empresas em ON em.id = COALESCE(perx.empresa_id, e.empresa_id) WHERE r.corrida_id=$1', [req.params.id])).rows;
     const porEmpresa = {}; const conceptos = {}; let neto = 0, remun = 0, noRem = 0, desc = 0, costo = 0;
     for (const { data, empresa } of rows) {
       const t = data?.totales || {}, ce = data?.costoEmpleador || {};
@@ -1378,8 +1524,8 @@ router.post('/simular-final', requireRole('rrhh', 'admin'), async (req, res, nex
     const params = await getParams();
     const fe = new Date(fechaEgreso + 'T12:00:00');
     const indAplica = await indemnizaAplicaDe(emp);
-    const _czMap = {};
-    for (const sup of SUPUESTOS_BAJA) _czMap[sup.v] = await causalDe(sup.v);
+    const _czMap = {};
+    for (const sup of SUPUESTOS_BAJA) _czMap[sup.v] = await causalDe(sup.v);
     const escenarios = SUPUESTOS_BAJA.map((sup) => {
       const rec = calcularRecibo(emp, params, { anio: fe.getFullYear(), mes: fe.getMonth() + 1, tipo: 'final', fechaEgreso, motivoBaja: sup.v, causal: _czMap[sup.v], diasVacNoGozadas: Number(diasVacNoGozadas) || 0, indemnizaAplica: indAplica });
       return { supuesto: sup.v, label: sup.lbl, neto: rec.totales.neto, totalHaberes: rec.totales.totalHaberes, haberes: rec.haberes, detalle: rec.detalle };
@@ -1405,8 +1551,8 @@ router.post('/simular-final-masivo', requireRole('rrhh', 'admin'), async (req, r
     const dvac = Number(diasVacNoGozadas) || 0;
     const r2n = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
     const tot = {}; lista.forEach((sp) => { tot[sp.v] = 0; });
-    const _czMapM = {};
-    for (const sp of lista) _czMapM[sp.v] = await causalDe(sp.v);
+    const _czMapM = {};
+    for (const sp of lista) _czMapM[sp.v] = await causalDe(sp.v);
     const items = emps.map((r) => {
       const base = { legNum: r.leg_num, nom: r.nom, empresa: r.empresa_nombre, cuil: r.cuil, cat: r.cat, ingreso: r.ingreso, bruto: Number(r.bruto), data: r.data || {} };
       const netos = {};
