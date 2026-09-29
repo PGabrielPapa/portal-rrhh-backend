@@ -54,6 +54,18 @@ try {
   console.error('[boot] migración correlativo:', e.message);
 }
 
+// Períodos laborales: agrega columnas (nro, periodo_id en recibos, etc.), el
+// trigger que ancla cada recibo a su período y un período inicial por legajo.
+// Sin esto la corrida falla con "column p.nro / r.periodo_id does not exist".
+try {
+  const { migrarPeriodos } = await import('./db/migratePeriodos.js');
+  const r = await migrarPeriodos();
+  if (r.periodosCreados || r.recibosVinculados)
+    console.log(`[boot] períodos laborales ✓ (${r.periodosCreados} períodos, ${r.recibosVinculados} recibos vinculados)`);
+} catch (e) {
+  console.error('[boot] migración de períodos:', e.message);
+}
+
 // Organigrama por puesto: siembra inicial de la tabla `puestos` desde el
 // organigrama vigente (idempotente; no hace nada si ya hay puestos cargados).
 try {

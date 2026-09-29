@@ -35,13 +35,15 @@ function getValidador(emp) {
   if (nom.includes("BASSO"))
     return { validador: "GARRIDO, JUAN MANUEL", area: "Gerencia Regional (C\xF3rdoba/Neuqu\xE9n/Mendoza)", goToHR: false };
   if (nom.includes("NICOLOSI"))
-    return { validador: "GARRIDO, JUAN MANUEL", area: "Gerencia Regional (Santa Fe/Corrientes/Rosario/Salta)", goToHR: false };
+    return { validador: "GARRIDO, JUAN MANUEL", area: "Gerencia Regional (Santa Fe/Corrientes/Rosario)", goToHR: false };
   if (emp.cat === "GER")
     return { validador: "RR.HH.", area: "Gerencia", goToHR: true };
   {
     const empCo = (emp.emp || "").toUpperCase();
-    if (empCo.includes("LEITEN SALTA") || lugar.includes("SUCURSAL SALTA"))
-      return { validador: "RODRIGUEZ, ADRIAN ROBERTO", area: "LEITEN SALTA", goToHR: false };
+    // SALTA va SOLA: cualquier empleado de LEITEN SALTA o cuyo lugar sea Salta reporta a Rodriguez
+    // (no entra en la gerencia regional de Nicolosi ni en ninguna otra).
+    if (empCo.includes("LEITEN SALTA") || lugar.includes("SALTA"))
+      return { validador: "RODRIGUEZ, ADRIAN ROBERTO", area: "Gerencia Salta (LEITEN SALTA)", goToHR: false };
   }
   const legalesRRHH = [
     "BOZZUTO",
@@ -197,11 +199,11 @@ function getValidador(emp) {
     "MALGIOGLIO"
   ];
   if (regionNicolosi.some((s) => nom.includes(s.toUpperCase())))
-    return { validador: "NICOLOSI, ADRIAN PABLO", area: "Gerencia Regional (Santa Fe/Corrientes/Rosario/Salta)", goToHR: false };
+    return { validador: "NICOLOSI, ADRIAN PABLO", area: "Gerencia Regional (Santa Fe/Corrientes/Rosario)", goToHR: false };
   if (nom.includes("BASSO"))
     return { validador: "GARRIDO, JUAN MANUEL", area: "Gerencia Regional (C\xF3rdoba/Neuqu\xE9n/Mendoza)", goToHR: false };
   if (nom.includes("NICOLOSI"))
-    return { validador: "GARRIDO, JUAN MANUEL", area: "Gerencia Regional (Santa Fe/Corrientes/Rosario/Salta)", goToHR: false };
+    return { validador: "GARRIDO, JUAN MANUEL", area: "Gerencia Regional (Santa Fe/Corrientes/Rosario)", goToHR: false };
   if (["CORDOBA", "NEUQUEN", "MENDOZA"].some((l) => lugar.includes(l)))
     return { validador: "BASSO, ARIEL MARIANO", area: "Gerencia Regional", goToHR: false };
   if (["SANTA FE", "CORRIENTES", "ROSARIO"].some((l) => lugar.includes(l)))
