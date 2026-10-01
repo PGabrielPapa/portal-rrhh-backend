@@ -414,6 +414,9 @@ CREATE TABLE IF NOT EXISTS chs_siniestros (
   created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_chs_sin_fecha ON chs_siniestros(fecha DESC);
+-- Fecha de alta médica del siniestro: con ella se calculan los días de baja y es
+-- obligatoria para poder cerrar el siniestro.
+ALTER TABLE chs_siniestros ADD COLUMN IF NOT EXISTS fecha_alta DATE;
 
 -- Mediciones de HyS (obligatorias): tipo, responsable, realización, vencimiento, resultado, informe.
 CREATE TABLE IF NOT EXISTS chs_mediciones (

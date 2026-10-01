@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { mimeSeguro } from '../lib/adjuntos.js';
+import { generarFormulario299 } from '../lib/epp299.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -178,7 +179,18 @@ router.delete('/difusion/:id', async (req, res, next) => {
 router.get('/difusion/:id/archivo', archivoHandler('chs_difusion'));
 
 // ───────────────────────── Siniestros (ART / Medicina Laboral) ─────────────────────────
-const mapSin = (r) => ({ id: r.id, tipo: r.tipo, empleadoId: r.empleado_id, empleadoNom: r.empleado_nom, empleadoLeg: r.leg_num, empresa: r.empresa, fecha: r.fecha, lugar: r.lugar, descripcion: r.descripcion, causas: r.causas, acciones: r.acciones, estado: r.estado, artNro: r.art_nro, diasBaja: r.dias_baja, seguimientos: r.seguimientos || [], archivoNombre: r.archivo_nombre, tieneArchivo: !!r.archivo_nombre, createdBy: r.created_by, createdAt: r.created_at });
+const mapSin = (r) => ({ id: r.id, tipo: r.tipo, empleadoId: r.empleado_id, empleadoNom: r.empleado_nom, empleadoLeg: r.leg_num, empresa: r.empresa, fecha: r.fecha, fechaAlta: r.fecha_alta, lugar: r.lugar, descripcion: r.descripcion, causas: r.causas, acciones: r.acciones, estado: r.estado, artNro: r.art_nro, diasBaja: r.dias_baja, seguimientos: r.seguimientos || [], archivoNombre: r.archivo_nombre, tieneArchivo: !!r.archivo_nombre, createdBy: r.created_by, createdAt: r.created_at });
+
+// Días de baja = días entre la fecha del evento y la fecha de alta médica.
+function diasBajaDe(fecha, fechaAlta) {
+  if (!fecha || !fechaAlta) return null;
+  const d = Math.round((new Date(fechaAlta + 'T00:00:00') - new Date(String(fecha).slice(0, 10) + 'T00:00:00')) / 86400000);
+  return d >= 0 ? d : null;
+}
+// El cierre de un siniestro exige fecha de alta. Devuelve un mensaje si falta.
+function faltaAltaParaCerrar(b) {
+  return (b.estado === 'Cerrado' && !b.fechaAlta) ? 'Para cerrar el siniestro es obligatoria la fecha de alta.' : null;
+}
 
 router.get('/siniestros', async (req, res, next) => {
   try {
@@ -197,10 +209,13 @@ router.get('/siniestros', async (req, res, next) => {
 router.post('/siniestros', async (req, res, next) => {
   try {
     const b = req.body || {}; const [an, am, ad] = archivoCols(b.archivo);
+    const falta = faltaAltaParaCerrar(b); if (falta) return res.status(400).json({ error: falta });
+    // Días de baja: se calculan de las fechas; si no hay alta, se respeta lo cargado a mano.
+    const dias = diasBajaDe(b.fecha, b.fechaAlta); const diasBaja = dias != null ? dias : (b.diasBaja || null);
     const { rows } = await query(
-      `INSERT INTO chs_siniestros (tipo,empleado_id,fecha,lugar,descripcion,causas,acciones,estado,art_nro,dias_baja,seguimientos,archivo_nombre,archivo_mime,archivo_data,created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
-      [b.tipo || null, b.empleadoId || null, b.fecha || null, b.lugar || null, b.descripcion || null, b.causas || null, b.acciones || null, b.estado || 'Abierto', b.artNro || null, b.diasBaja || null, JSON.stringify(b.seguimientos || []), an, am, ad, req.user.dni]);
+      `INSERT INTO chs_siniestros (tipo,empleado_id,fecha,fecha_alta,lugar,descripcion,causas,acciones,estado,art_nro,dias_baja,seguimientos,archivo_nombre,archivo_mime,archivo_data,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+      [b.tipo || null, b.empleadoId || null, b.fecha || null, b.fechaAlta || null, b.lugar || null, b.descripcion || null, b.causas || null, b.acciones || null, b.estado || 'Abierto', b.artNro || null, diasBaja, JSON.stringify(b.seguimientos || []), an, am, ad, req.user.dni]);
     res.status(201).json({ ok: true, id: rows[0].id });
   } catch (e) { next(e); }
 });
@@ -208,8 +223,10 @@ router.post('/siniestros', async (req, res, next) => {
 router.put('/siniestros/:id', async (req, res, next) => {
   try {
     const b = req.body || {};
-    const sets = ['tipo=$1', 'empleado_id=$2', 'fecha=$3', 'lugar=$4', 'descripcion=$5', 'causas=$6', 'acciones=$7', 'estado=$8', 'art_nro=$9', 'dias_baja=$10', 'seguimientos=$11', 'updated_at=now()'];
-    const params = [b.tipo || null, b.empleadoId || null, b.fecha || null, b.lugar || null, b.descripcion || null, b.causas || null, b.acciones || null, b.estado || 'Abierto', b.artNro || null, b.diasBaja || null, JSON.stringify(b.seguimientos || [])];
+    const falta = faltaAltaParaCerrar(b); if (falta) return res.status(400).json({ error: falta });
+    const dias = diasBajaDe(b.fecha, b.fechaAlta); const diasBaja = dias != null ? dias : (b.diasBaja || null);
+    const sets = ['tipo=$1', 'empleado_id=$2', 'fecha=$3', 'lugar=$4', 'descripcion=$5', 'causas=$6', 'acciones=$7', 'estado=$8', 'art_nro=$9', 'dias_baja=$10', 'seguimientos=$11', 'fecha_alta=$12', 'updated_at=now()'];
+    const params = [b.tipo || null, b.empleadoId || null, b.fecha || null, b.lugar || null, b.descripcion || null, b.causas || null, b.acciones || null, b.estado || 'Abierto', b.artNro || null, diasBaja, JSON.stringify(b.seguimientos || []), b.fechaAlta || null];
     if (b.archivo && b.archivo.data) {
       params.push(b.archivo.nombre || 'archivo', b.archivo.mime || 'application/octet-stream', b.archivo.data);
       sets.push(`archivo_nombre=$${params.length - 2}`, `archivo_mime=$${params.length - 1}`, `archivo_data=$${params.length}`);
@@ -680,6 +697,48 @@ router.delete('/epp-entregas/:id', async (req, res, next) => {
 });
 
 router.get('/epp-entregas/:id/archivo', archivoHandler('chs_epp_entregas'));
+
+// Genera el formulario reglamentario 299/11 ya completo con los datos de la
+// entrega, lo GUARDA como constancia de la entrega (así no hay que subirlo a
+// mano) y lo devuelve para descargar.
+router.get('/epp-entregas/:id/formulario', async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT s.*, e.nom AS empleado_nom, e.dni, em.nombre AS razon_social, em.cuit
+         FROM chs_epp_entregas s
+         LEFT JOIN empleados e ON e.id = s.empleado_id
+         LEFT JOIN empresas  em ON em.id = e.empresa_id
+        WHERE s.id = $1`, [req.params.id]);
+    const r = rows[0];
+    if (!r) return res.status(404).json({ error: 'Entrega no encontrada' });
+
+    // Cada elemento entregado (separado por coma) es un renglón de la tabla.
+    const elementos = String(r.elementos || '').split(',').map((x) => x.trim()).filter(Boolean);
+    const fecha = r.fecha_entrega ? String(r.fecha_entrega).slice(0, 10) : '';
+    const filas = elementos.map((prod) => ({ producto: prod, fecha }));
+
+    const pdf = await generarFormulario299({
+      razonSocial: r.razon_social || '',
+      cuit: r.cuit || '',
+      direccion: '', localidad: '', cp: '', provincia: '',   // no están cargados hoy
+      trabajador: r.empleado_nom || '',
+      dni: r.dni || '',
+      puesto: r.puesto || '',
+      elementosTexto: r.elementos || '',
+      filas,
+      infoAdicional: r.observaciones || '',
+    });
+
+    // Guardar el PDF como constancia de la entrega (auto-adjunto).
+    const nombre = `Constancia_EPP_299-11_${String(r.empleado_nom || 'empleado').replace(/[^\w]+/g, '_')}_${fecha || ''}.pdf`;
+    await query('UPDATE chs_epp_entregas SET archivo_nombre=$1, archivo_mime=$2, archivo_data=$3 WHERE id=$4',
+      [nombre, 'application/pdf', pdf.toString('base64'), r.id]);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
+    res.send(pdf);
+  } catch (e) { next(e); }
+});
 
 // ───────────────────────── Habilitaciones por establecimiento ─────────────────────────
 // El estado efectivo se calcula en la consulta (no se persiste): así una habilitación

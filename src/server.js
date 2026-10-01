@@ -66,6 +66,16 @@ try {
   console.error('[boot] migración de períodos:', e.message);
 }
 
+// Saldo inicial de vacaciones (arrastre histórico por empleado): tabla que el
+// endpoint de saldos suma al cálculo del año. Idempotente.
+try {
+  const { migrarVacacionesSaldoInicial } = await import('./db/migrateVacacionesSaldoInicial.js');
+  const r = await migrarVacacionesSaldoInicial();
+  if (r.creada) console.log('[boot] tabla de saldo inicial de vacaciones verificada ✓');
+} catch (e) {
+  console.error('[boot] migración saldo inicial vacaciones:', e.message);
+}
+
 // Organigrama por puesto: siembra inicial de la tabla `puestos` desde el
 // organigrama vigente (idempotente; no hace nada si ya hay puestos cargados).
 try {
