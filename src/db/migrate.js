@@ -36,7 +36,7 @@ async function main() {
   try {
     const { migrarAsiento } = await import('./migrateAsiento.js');
     const r = await migrarAsiento();
-    if (r.creada) console.log(`[migrate] plan de cuentas del asiento sembrado ✓ (${r.sembradas} filas)`);
+    if (r.agregadas) console.log(`[migrate] plan de cuentas del asiento ✓ (${r.agregadas} cuenta(s) ${r.creada ? 'sembradas' : 'agregadas'})`);
   } catch (e) { console.error('[migrate] asiento:', e.message); }
 
   try {

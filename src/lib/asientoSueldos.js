@@ -14,6 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { query } from '../db.js';
 import { migrarAsiento } from '../db/migrateAsiento.js';
+import { CONTRIBUCIONES } from './asientoConceptos.js';
 import { migrarAsientoAux } from '../db/migrateAsientoAux.js';
 
 const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -50,19 +51,6 @@ const DESCUENTOS = [
   ['IMP_GCIAS',  /ganancias/i],
   ['ANT_SDO_PR', /anticipo|adelanto|pr[ée]stamo/i],
   ['EMBARGO',    /embargo|cuota\s+alimentar/i],
-];
-const CONTRIBUCIONES = [
-  ['CONT_SIJP',      /jubilaci[óo]n\s+patronal|sipa|asistencia\s+laboral/i],
-  ['CONT_19032',     /inssjp|pami/i],
-  ['CONT_FNE',       /fondo\s+nacional\s+de\s+empleo/i],
-  ['CONT_AFAM',      /asignaciones\s+familiares/i],
-  ['CONT_ANSSAL',    /anssal/i],
-  ['CONT_OS',        /obra\s+social/i],
-  ['CONT_ART',       /\bart\b|riesgos\s+del\s+trabajo|ffep/i],
-  ['CONT_SIND',      /sindical|sindicato/i],
-  ['CONT_SCVO',      /scvo|seguro\s+de\s+vida\s+oblig/i],
-  ['CONT_ESTRELLA',  /estrella/i],
-  ['CONT_FCESE',     /fondo\s+de\s+cese/i],
 ];
 
 const primerMatch = (defs, texto) => (defs.find(([, re]) => re.test(texto)) || [])[0];
@@ -103,9 +91,9 @@ export const COLS_CONTRIB = [
   'Acuerdos no Remunerativos Sueldo', 'Acuerdos no Remunerativos SIN AP OS',
   'Acuerdos no Remunerativos VAC', 'Base Minima OS SUELDO', 'Base Minima OS SAC',
   'Base Minima OS VAC', 'Base Minima NOREM',
-  '% jornada', '% sijp', '% 19032', '% fne', '% afam', 'OS Direc', '% anssal',
+  '% jornada', '% sijp', '% 19032', '% fne', '% afam', '% fal', 'OS Direc', '% anssal',
   '% art', 'fijo art $', '% La Estrella',
-  'CONT SIJP', 'CONT 19032', 'CONT FNE', 'CONT AFAM', 'CONT ANSSAL', 'CONT OS',
+  'CONT SIJP', 'CONT 19032', 'CONT FNE', 'CONT AFAM', 'CONT FAL', 'CONT ANSSAL', 'CONT OS',
   'CONT ART', 'TOTAL CONT SS', 'CONT LA ESTRELLA', 'APORTES SS', 'APORTES OS',
   'CONTRIBUCION INACAP', 'CONTRIBUCION SEGURO VIDA OBLIG',
   'CONT EXTRAORDINARIA UOM', 'CONT SEG VIDA UOM', 'CONT Norem UOM',
@@ -238,12 +226,18 @@ function hojaContribuciones(recibos, alicuotas, sindicales) {
     set('BI SAC SIJP',    b.sac ?? '');
     set('BI VACAC REM 5', b.vacaciones ?? '');
     set('Detracción art. 23 Ley 27.541', b.detraccion ?? '');
-    // Alícuotas vigentes (paramétricas, iguales para todos salvo ART por empresa).
+    // Alícuotas de seguridad social. Desde 11/2026 las fija el Anexo de la RG ARCA
+    // 5907/2026 según el régimen (art. 19 Ley 27.541) y la condición MiPyME de cada
+    // empresa, y la liquidación las deja guardadas en el recibo: se usan ésas, para
+    // que la hoja muestre exactamente lo que se liquidó. Antes de esa fecha —y si el
+    // recibo no las trae— se cae a las paramétricas de Parámetros de liquidación.
+    const sa = b.ssAlicuotas || null;
     set('% jornada', num(ed.pctJornada) || 1);
-    set('% sijp',    alicuotas.sijp);
-    set('% 19032',   alicuotas.ley19032);
-    set('% fne',     alicuotas.fne);
-    set('% afam',    alicuotas.afam);
+    set('% sijp',    sa ? sa.sipa   : alicuotas.sijp);
+    set('% 19032',   sa ? sa.inssjp : alicuotas.ley19032);
+    set('% fne',     sa ? sa.fne    : alicuotas.fne);
+    set('% afam',    sa ? sa.aaff   : alicuotas.afam);
+    set('% fal',     sa ? sa.fal    : 0);
     set('% anssal',  alicuotas.anssal);
     set('% art',     alicuotas.artVariable);
     set('fijo art $', alicuotas.artFijo);
@@ -253,6 +247,7 @@ function hojaContribuciones(recibos, alicuotas, sindicales) {
     set('CONT 19032',  ct.CONT_19032 || 0);
     set('CONT FNE',    ct.CONT_FNE || 0);
     set('CONT AFAM',   ct.CONT_AFAM || 0);
+    set('CONT FAL',    ct.CONT_FAL || 0);
     set('CONT ANSSAL', ct.CONT_ANSSAL || 0);
     set('CONT OS',     ct.CONT_OS || 0);
     set('CONT ART',    ct.CONT_ART || 0);
@@ -316,7 +311,12 @@ function hojaAsiento(recibos, mapeo, fecha, sindicales) {
     // el asiento es un crédito (173 Remuneraciones a pagar): se invierte acá.
     for (const [col, val] of Object.entries(c)) push(col, cc, co, col === 'NETO' ? -val : val);
     push('CONTRIBUCIONES', cc, co, ct.TOTAL);
-    push('CONT_SS', cc, co, -ct.TOTAL);
+    // El FAL (Ley 27.802) sale por su propia clave para que Contabilidad pueda
+    // asignarle una cuenta distinta. Si comparte cuenta con CONT_SS —como viene
+    // de fábrica— los dos renglones se acumulan en la misma y el asiento no cambia.
+    const _fal = num(ct.CONT_FAL);
+    push('CONT_FAL', cc, co, -_fal);
+    push('CONT_SS', cc, co, -r2(ct.TOTAL - _fal));
     // Conceptos del gremio: gasto en la cuenta de cargas sociales del centro de
     // costos y crédito en la cuenta propia de cada entidad.
     for (const [col, monto] of Object.entries(sindicalesDe(rec, sindicales))) {
@@ -356,16 +356,29 @@ function hojaPlanCtas(asiento, mapeo) {
     nota: 'Mapeo concepto de nómina → cuenta contable (editable desde esta pantalla).' };
 }
 
-function hojaAlicuotas(a) {
+function hojaAlicuotas(a, recibos) {
+  // Si los recibos del período traen las alícuotas del Anexo (RG 5907/2026), la
+  // tabla muestra ésas: son las que se aplicaron. El ANSSAL, la obra social y la
+  // ART siguen siendo paramétricas, no las toca la RG.
+  const sa = (recibos || []).map((r) => r.data?.bases?.ssAlicuotas).find(Boolean) || null;
+  const filas = [
+    ['JUBILAC', sa ? sa.sipa : a.sijp],
+    ['LEY 19032', sa ? sa.inssjp : a.ley19032],
+    ['ASIG FAM', sa ? sa.aaff : a.afam],
+    ['FDO NAC EMPLEO', sa ? sa.fne : a.fne],
+  ];
+  if (sa) filas.push(['FDO ASIST LABORAL (Ley 27.802)', sa.fal]);
+  filas.push(
+    ['ANSSAL', a.anssal], ['O.SOCIAL', a.osPatronal],
+    ['LRT FIJO', a.artFijo], ['LRT VARIABLE', a.artVariable]);
+  if (sa) filas.push(['TOTAL SEG. SOCIAL', sa.total]);
   return {
     key: 'TABLA ALICUOTAS', titulo: 'TABLA ALICUOTAS',
     columnas: ['DESCRIPCION', 'ALICUOTA CONTRIBUCION'],
-    filas: [
-      ['JUBILAC', a.sijp], ['LEY 19032', a.ley19032], ['ASIG FAM', a.afam],
-      ['FDO NAC EMPLEO', a.fne], ['ANSSAL', a.anssal], ['O.SOCIAL', a.osPatronal],
-      ['LRT FIJO', a.artFijo], ['LRT VARIABLE', a.artVariable],
-    ],
-    nota: 'Alícuotas vigentes tomadas de Parámetros de liquidación y del contrato de ART de cada empresa.',
+    filas,
+    nota: sa
+      ? 'Contribuciones de seguridad social segun el Anexo de la RG ARCA 5907/2026 (las que se aplicaron en este periodo). ANSSAL, obra social y ART salen de Parametros de liquidacion y del contrato de ART de cada empresa.'
+      : 'Alicuotas vigentes tomadas de Parametros de liquidacion y del contrato de ART de cada empresa.',
   };
 }
 
@@ -515,7 +528,8 @@ function detectarFaltantes(recibos, mapeo, alicuotas, sindicales, asiento) {
   if (!mapeo.size) f.push({ nivel: 'bloqueante', dato: 'Plan de cuentas del asiento', detalle: 'No hay cuentas mapeadas.' });
   if (asiento?.sinCuenta?.length) f.push({ nivel: 'bloqueante', dato: 'Columnas sin cuenta contable',
     detalle: `Estas columnas tienen importe pero ninguna cuenta asignada, así que quedaron fuera del asiento: ${asiento.sinCuenta.join(', ')}.` });
-  if (!alicuotas.sijp || !alicuotas.artVariable) f.push({ nivel: 'medio', dato: 'Alícuotas de contribuciones / ART',
+  const _traenSS = recibos.some((r) => r.data?.bases?.ssAlicuotas);
+  if ((!alicuotas.sijp && !_traenSS) || !alicuotas.artVariable) f.push({ nivel: 'medio', dato: 'Alícuotas de contribuciones / ART',
     detalle: 'Falta completar alícuotas patronales en Parámetros de liquidación o el contrato de ART vigente de la empresa.' });
   const sinCuil = recibos.filter((r) => !r.cuil);
   if (sinCuil.length) f.push({ nivel: 'medio', dato: 'CUIT/CUIL del legajo',
@@ -548,7 +562,7 @@ export async function construirLibro({ anio, mes, empresa }) {
     await hojaCategorias(),
     hojaContribuciones(recibos, alicuotas, sindicales),
     hojaPlanCtas(asiento, mapeo),
-    hojaAlicuotas(alicuotas),
+    hojaAlicuotas(alicuotas, recibos),
     hojaRetSuss(),
     await hojaTablaOS(),
     await hojaDetalleGanancias(recibos),

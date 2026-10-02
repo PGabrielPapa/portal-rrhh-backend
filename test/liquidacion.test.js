@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { calcularRecibo, calcularGananciasAcum, factorNoHabitual } from '../src/lib/liquidacion.js';
+import { calcularRecibo, calcularGananciasAcum, factorNoHabitual, ALICUOTAS_SS, alicuotasSS } from '../src/lib/liquidacion.js';
+import { CONTRIBUCIONES } from '../src/lib/asientoConceptos.js';
 import { calcularDeduccionesSiradig } from '../src/lib/siradigTopes.js';
 import { sumarAcumulador, recibosDeVentana, DEFAULTS as ACUM_DEFAULTS } from '../src/lib/acumuladores.js';
 
@@ -99,19 +100,144 @@ test('jornada parcial: OS sobre jornada completa (art. 92 ter LCT); SIPA sobre l
   assert.equal(aporte(parc, /Jubilación/), aporte(full, /Jubilación/), 'Jubilación (SIPA) se calcula sobre la remuneración real');
 });
 
-test('FAL (Ley 27.802) desde 11/2026: se detrae de seg. social sin cambiar el total de contribuciones', () => {
-  const base = calcularRecibo(empBase, { ...P, pctFal: 0 }, { anio: 2026, mes: 11, tipo: 'mensual', calcularGanancias: false });
-  const fal = calcularRecibo(empBase, { ...P, pctFal: 2.5 }, { anio: 2026, mes: 11, tipo: 'mensual', calcularGanancias: false });
-  const tot = (r) => r.costoEmpleador.totalContrib;
-  const linea = (r, re) => (r.costoEmpleador.contribuciones.find((c) => re.test(c.concepto)) || {}).monto || 0;
-  assert.ok(linea(fal, /Asistencia Laboral/) > 0, 'aparece la línea FAL');
-  assert.ok(linea(fal, /Jubilación patronal/) < linea(base, /Jubilación patronal/), 'la jubilación patronal se reduce');
-  assert.ok(Math.abs(tot(fal) - tot(base)) < 0.02, 'el total de contribuciones no cambia (redirección)');
+// ── RG ARCA 5907/2026 — Fondo de Asistencia Laboral ────────────────────────────
+// El Anexo publica las alícuotas YA NETAS del FAL. Lo que se verifica acá es que el
+// motor use exactamente esas, que las cuatro filas sumen el total de su régimen, y que
+// el FAL no agregue costo: redistribuye, no encarece.
+const _emp = (empresaData) => ({ ...empBase, empresaData });
+const _linea = (r, re) => (r.costoEmpleador.contribuciones.find((c) => re.test(c.concepto)) || {}).monto || 0;
+const _nov = (empresaData) => calcularRecibo(_emp(empresaData), P, { anio: 2026, mes: 11, tipo: 'mensual', calcularGanancias: false });
+
+test('RG 5907/2026: las cuatro filas del Anexo dan el total de su régimen', () => {
+  const esperado = {
+    'a|mipyme': { sipa: 10.83, aaff: 4.74, fne: 0.95, inssjp: 1.38, fal: 2.50, total: 20.40 },
+    'a|resto':  { sipa: 11.74, aaff: 5.14, fne: 1.03, inssjp: 1.49, fal: 1.00, total: 20.40 },
+    'b|mipyme': { sipa:  9.27, aaff: 4.05, fne: 0.81, inssjp: 1.37, fal: 2.50, total: 18.00 },
+    'b|resto':  { sipa: 10.17, aaff: 4.44, fne: 0.89, inssjp: 1.50, fal: 1.00, total: 18.00 },
+  };
+  for (const [k, e] of Object.entries(esperado)) {
+    assert.deepEqual(ALICUOTAS_SS[k], e, `fila ${k} del Anexo`);
+    const suma = e.sipa + e.aaff + e.fne + e.inssjp + e.fal;
+    assert.ok(Math.abs(suma - e.total) < 0.005, `la fila ${k} suma ${suma}, debería dar ${e.total}`);
+  }
+});
+
+test('RG 5907/2026: MiPyME tributa 2,5% de FAL y el resto del sector privado 1%', () => {
+  assert.equal(alicuotasSS({ falRegimen: 'b', falClasificacion: 'mipyme' }).fal, 2.5);
+  assert.equal(alicuotasSS({ falRegimen: 'b', falClasificacion: 'resto' }).fal, 1);
+  assert.equal(alicuotasSS({ falRegimen: 'a', falClasificacion: 'mipyme' }).fal, 2.5);
+  // Por defecto: régimen del inciso b) y MiPyME.
+  assert.equal(alicuotasSS({}).regimen, 'b');
+  assert.equal(alicuotasSS({}).clasificacion, 'mipyme');
+});
+
+test('RG 5907/2026: el recibo aplica las alícuotas del Anexo desde 11/2026', () => {
+  const r = _nov({ falRegimen: 'b', falClasificacion: 'mipyme' });
+  const b = r.bases.baseContribSs;
+  const cerca = (a, x, q) => assert.ok(Math.abs(a - x) < 0.02, `${q}: ${a} vs ${x}`);
+  cerca(_linea(r, /Jubilación patronal/), Math.round(b * 9.27) / 100, 'SIPA 9,27%');
+  cerca(_linea(r, /Asignaciones Familiares/), Math.round(b * 4.05) / 100, 'AAFF 4,05%');
+  cerca(_linea(r, /Fondo Nacional de Empleo/), Math.round(b * 0.81) / 100, 'FNE 0,81%');
+  cerca(_linea(r, /INSSJP/), Math.round(b * 1.37) / 100, 'INSSJP 1,37%');
+  cerca(_linea(r, /Asistencia Laboral/), Math.round(b * 2.50) / 100, 'FAL 2,50%');
+});
+
+test('RG 5907/2026: el FAL redistribuye, no encarece — los cuatro subsistemas + FAL dan el total del régimen', () => {
+  for (const [reg, cla, total] of [['a','mipyme',20.40], ['a','resto',20.40], ['b','mipyme',18.00], ['b','resto',18.00]]) {
+    const r = _nov({ falRegimen: reg, falClasificacion: cla });
+    const b = r.bases.baseContribSs;
+    const suma = _linea(r, /Jubilación patronal/) + _linea(r, /Asignaciones Familiares/)
+               + _linea(r, /Fondo Nacional de Empleo/) + _linea(r, /INSSJP/) + _linea(r, /Asistencia Laboral/);
+    assert.ok(Math.abs(suma - b * total / 100) < 0.05, `${reg}|${cla}: suma ${suma}, esperado ${b * total / 100}`);
+  }
+});
+
+test('RG 5907/2026: la baja voluntaria devuelve el FAL a los cuatro subsistemas', () => {
+  const baja = alicuotasSS({ falRegimen: 'b', falClasificacion: 'mipyme', falBaja: true });
+  assert.equal(baja.fal, 0, 'sin FAL');
+  const suma = baja.sipa + baja.aaff + baja.fne + baja.inssjp;
+  assert.ok(Math.abs(suma - 18.00) < 0.02, `el total sigue siendo 18%, dio ${suma}`);
+  const r = _nov({ falRegimen: 'b', falClasificacion: 'mipyme', falBaja: true });
+  assert.equal(_linea(r, /Asistencia Laboral/), 0, 'no hay línea de FAL en el recibo');
+});
+
+// ── El recibo tiene que mostrar el FAL, no esconderlo ────────────────────────
+// El Decreto 407/2026 obliga a exhibir la composición del costo laboral. El FAL se
+// paga a otro destino y con otro código, así que va como renglón propio de la torta
+// y no sumado dentro de "Seguridad Social".
+test('recibo: el FAL es un renglón propio de la composición del costo laboral', () => {
+  const r = _nov({ falRegimen: 'b', falClasificacion: 'mipyme' });
+  const cg = r.composicion.cargas;
+  assert.ok(cg.fal, 'existe la carga fal');
+  assert.equal(cg.fal.empleador, _linea(r, /Asistencia Laboral/), 'la torta muestra el FAL liquidado');
+  assert.equal(cg.fal.trabajador, 0, 'el FAL no lo aporta el trabajador');
+  const ss = _linea(r, /Jubilación patronal/) + _linea(r, /Asignaciones Familiares/)
+           + _linea(r, /Fondo Nacional de Empleo/);
+  assert.ok(Math.abs(cg.seguridadSocial.empleador - ss) < 0.02,
+    'Seguridad Social = SIPA + AA.FF. + FNE, sin el FAL adentro');
+});
+
+test('recibo: separar el FAL no cambia el costo laboral total', () => {
+  const r = _nov({ falRegimen: 'b', falClasificacion: 'mipyme' });
+  const cg = r.composicion.cargas;
+  const empleador = Object.values(cg).reduce((a, x) => a + x.empleador, 0);
+  // Las cargas de la torta son las patronales salvo FFEP y fondo de cese, que no
+  // tienen renglón propio: el total de contribuciones nunca puede ser menor.
+  assert.ok(empleador <= r.costoEmpleador.totalContrib + 0.02,
+    `cargas ${empleador} > totalContrib ${r.costoEmpleador.totalContrib}`);
+  assert.ok(Math.abs(r.composicion.costoTotal - r.costoEmpleador.costoTotal) < 0.02);
+});
+
+// ── El asiento de sueldos debe reconocer lo que la liquidación emite ──────────
+// El asiento no recalcula contribuciones: las lee del recibo y las clasifica con
+// la tabla de asientoConceptos.js. Si la liquidación agrega un concepto que esa
+// tabla no matchea, el importe cae en CONT_OTRAS y queda sin cuenta contable.
+test('asiento: toda contribución que emite la liquidación tiene clave en el asiento', () => {
+  const casos = [
+    _nov({ falRegimen: 'b', falClasificacion: 'mipyme' }),
+    _nov({ falRegimen: 'a', falClasificacion: 'resto' }),
+    calcularRecibo(_emp({}), P, { anio: 2026, mes: 10, tipo: 'mensual', calcularGanancias: false }),
+  ];
+  for (const r of casos) {
+    for (const c of r.costoEmpleador.contribuciones) {
+      const k = (CONTRIBUCIONES.find(([, re]) => re.test(String(c.concepto))) || [])[0];
+      assert.ok(k, `sin clave en el asiento: "${c.concepto}"`);
+    }
+  }
+});
+
+test('asiento: el FAL se clasifica como CONT_FAL y no como jubilación patronal', () => {
+  const r = _nov({ falRegimen: 'b', falClasificacion: 'mipyme' });
+  const clave = (txt) => (CONTRIBUCIONES.find(([, re]) => re.test(txt)) || [])[0];
+  const fal = r.costoEmpleador.contribuciones.find((c) => /Asistencia Laboral/.test(c.concepto));
+  assert.ok(fal, 'hay línea de FAL');
+  assert.equal(clave(fal.concepto), 'CONT_FAL');
+  assert.equal(clave('Jubilación patronal (SIPA)'), 'CONT_SIJP');
+  assert.equal(clave('Asignaciones Familiares (Ley 24.714)'), 'CONT_AFAM');
+});
+
+test('asiento: el total de contribuciones del recibo incluye el FAL', () => {
+  const r = _nov({ falRegimen: 'b', falClasificacion: 'mipyme' });
+  const suma = r.costoEmpleador.contribuciones.reduce((a, c) => a + c.monto, 0);
+  assert.ok(Math.abs(suma - r.costoEmpleador.totalContrib) < 0.02,
+    `totalContrib ${r.costoEmpleador.totalContrib} vs suma ${suma}`);
+  assert.ok(_linea(r, /Asistencia Laboral/) > 0, 'el FAL no es cero');
+});
+
+test('asiento: el recibo guarda las alícuotas del Anexo para la hoja Contribuciones', () => {
+  const r = _nov({ falRegimen: 'b', falClasificacion: 'mipyme' });
+  assert.deepEqual(r.bases.ssAlicuotas,
+    { sipa: 9.27, aaff: 4.05, fne: 0.81, inssjp: 1.37, fal: 2.5, total: 18 });
+  const oct = calcularRecibo(_emp({}), P, { anio: 2026, mes: 10, tipo: 'mensual', calcularGanancias: false });
+  assert.equal(oct.bases.ssAlicuotas, null, 'octubre no trae tabla del Anexo');
 });
 
 test('FAL no aplica antes de 11/2026', () => {
-  const oct = calcularRecibo(empBase, { ...P, pctFal: 2.5 }, { anio: 2026, mes: 10, tipo: 'mensual', calcularGanancias: false });
+  const oct = calcularRecibo(_emp({ falClasificacion: 'mipyme' }), P, { anio: 2026, mes: 10, tipo: 'mensual', calcularGanancias: false });
   assert.ok(!oct.costoEmpleador.contribuciones.some((c) => /Asistencia Laboral/.test(c.concepto)), 'sin FAL en octubre');
+  // Octubre sigue liquidando con los parámetros cargados, no con la tabla del Anexo.
+  assert.ok(Math.abs(_linea(oct, /Jubilación patronal/) - oct.bases.baseContribSs * P.pctJubPatronal / 100) < 0.02,
+    'octubre usa pctJubPatronal');
 });
 
 test('SAC = 50% de la mejor remuneración del semestre', () => {

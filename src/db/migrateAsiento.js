@@ -64,6 +64,9 @@ const COLS_UNICAS = [
   ['NETO',         '173',    'REMUNERACIONES A PAGAR',                 'haber'],
   // Contribuciones patronales con cuenta de pasivo propia
   ['CONT_SS',      '174',    'SUSS A PAGAR',                           'haber'],
+  // Fondo de Asistencia Laboral (RG ARCA 5907/2026). Se ingresa a ARCA con el código
+  // 266-019-019; arranca en SUSS a pagar y se puede separar desde Plan de cuentas.
+  ['CONT_FAL',     '174',    'SUSS A PAGAR',                           'haber'],
   ['CONT_ART',     '174',    'SUSS A PAGAR',                           'haber'],
   ['CONT_SIND',    '192',    'SINDICATO A PAGAR',                      'haber'],
   ['CONT_ESTRELLA','191',    'LA ESTRELLA A PAGAR',                    'haber'],
@@ -96,16 +99,20 @@ export async function migrarAsiento() {
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_asiento_cuentas
                  ON asiento_cuentas (columna, COALESCE(centro_costo, ''))`);
 
+  // La siembra es incremental: antes cortaba apenas la tabla tenía una fila, así que
+  // una cuenta agregada después al plan (por ejemplo el FAL de la RG 5907/2026) no
+  // entraba nunca, ni con migrate ni con restart. Ahora inserta sólo las que faltan y
+  // no toca las existentes, que pueden haber sido editadas desde Plan de cuentas.
   const { rows } = await query('SELECT COUNT(*)::int AS n FROM asiento_cuentas');
-  if (rows[0].n) return { creada: false, sembradas: 0 };
+  const vacia = !rows[0].n;
 
   let orden = 0, n = 0;
   const ins = async (columna, cc, cuenta, desc, nat) => {
-    await query(
+    const r = await query(
       `INSERT INTO asiento_cuentas (columna, centro_costo, cuenta, descripcion, naturaleza, orden)
-       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
+       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING RETURNING id`,
       [columna, cc, cuenta, desc, nat, ++orden]);
-    n++;
+    if (r.rowCount) n++;
   };
 
   for (const col of COLS_SUELDOS)
@@ -117,7 +124,7 @@ export async function migrarAsiento() {
 
   for (const [col, cta, desc, nat] of COLS_UNICAS) await ins(col, null, cta, desc, nat);
 
-  return { creada: true, sembradas: n };
+  return { creada: vacia, agregadas: n, sembradas: n };
 }
 
 export default migrarAsiento;

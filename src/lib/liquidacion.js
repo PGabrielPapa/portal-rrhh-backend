@@ -65,6 +65,51 @@ export function factorNoHabitual(mesPago, mesActual) {
 }
 
 // Clasificación de tipos de liquidación para Ganancias 4ª (RG 4003 Anexo II):
+// ── Contribuciones de seguridad social — Anexo RG ARCA 5907/2026 ────────────
+// (IF-2026-03120430-ARCA-SGDADVCOAD#SDGINS, BO 01/10/2026). Reglamenta el Fondo de
+// Asistencia Laboral del Título II de la Ley 27.802.
+//
+// El FAL NO es un costo adicional: el Anexo publica las alícuotas YA NETAS de su
+// detracción. Cada una es la anterior multiplicada por el mismo factor, y el total
+// del régimen no cambia (20,40% o 18,00%) — por eso se usan tal cual, sin prorratear.
+//
+// La fila se elige por el régimen del art. 19 de la Ley 27.541 y por la clasificación
+// del empleador: MiPyMEs y entidades sin fines de lucro tributan 2,5% de FAL; el resto
+// del sector privado, 1%.
+export const ALICUOTAS_SS = {
+  'a|mipyme': { sipa: 10.83, aaff: 4.74, fne: 0.95, inssjp: 1.38, fal: 2.50, total: 20.40 },
+  'a|resto':  { sipa: 11.74, aaff: 5.14, fne: 1.03, inssjp: 1.49, fal: 1.00, total: 20.40 },
+  'b|mipyme': { sipa:  9.27, aaff: 4.05, fne: 0.81, inssjp: 1.37, fal: 2.50, total: 18.00 },
+  'b|resto':  { sipa: 10.17, aaff: 4.44, fne: 0.89, inssjp: 1.50, fal: 1.00, total: 18.00 },
+};
+// Art. 19 de la RG: rige desde el 1/11/2026, para el devengado 11/2026 y siguientes.
+export const SS_DESDE = 2026 * 12 + 11;
+
+// Alícuotas efectivas de una empresa. `empresaData` acepta:
+//   falRegimen        'a' | 'b'            — inciso del art. 19 Ley 27.541 (default 'b')
+//   falClasificacion  'mipyme' | 'resto'   — default 'mipyme'
+//   falBaja           true                 — baja voluntaria, cód. 658
+//   falExcluido       true                 — empleador excluido, cód. 659
+export function alicuotasSS(empresaData) {
+  const d = empresaData || {};
+  const regimen = String(d.falRegimen || 'b').toLowerCase() === 'a' ? 'a' : 'b';
+  const clasificacion = String(d.falClasificacion || 'mipyme').toLowerCase() === 'resto' ? 'resto' : 'mipyme';
+  const base = ALICUOTAS_SS[`${regimen}|${clasificacion}`];
+  // La pantalla guarda 'si'/'no'; la API puede mandar booleano. Se aceptan los dos.
+  const _si = (x) => x === true || x === 'si' || x === '1' || x === 1;
+  const sinFal = _si(d.falBaja) || _si(d.falExcluido);
+  if (!sinFal) return { ...base, sinFal: false, regimen, clasificacion };
+  // Suspendido o excluido del FAL: su porción vuelve a los cuatro subsistemas en la
+  // misma proporción. Es la inversa exacta del reparto del Anexo, así que reconstituye
+  // las alícuotas previas a la reforma sin que cambie el total.
+  const k = base.total / (base.total - base.fal);
+  return {
+    sipa: round2(base.sipa * k), aaff: round2(base.aaff * k),
+    fne: round2(base.fne * k), inssjp: round2(base.inssjp * k),
+    fal: 0, total: base.total, sinFal: true, regimen, clasificacion,
+  };
+}
+
 export const TIPOS_SAC = ['sac1', 'sac2'];                  // Apartado C - Sueldo Anual Complementario
 export const TIPOS_NO_HABITUAL_B = ['complementaria'];      // Apartado B - no habituales (ajustes/gratificaciones)
 // (mensual/quincenal/vacaciones = remuneración habitual, Apartado A)
@@ -839,7 +884,18 @@ export function calcularRecibo(emp, params, opts) {
   const detr = (tipo === 'mensual') ? round2(num(p.detraccionContrib) * factorMes) : (esQuincenal ? num(p.detraccionContrib) * 0.5 : 0);
   const baseSegSoc = Math.max(0, totalRemun - detr);
   const coSeg = (pct) => round2(baseSegSoc * num(pct) / 100);
-  const cJub = coSeg(p.pctJubPatronal), cOS = round2(baseAportesOs * num(p.pctOsPatronal) / 100), cPami = coSeg(p.pctPamiPatronal), cFne = coSeg(p.pctDesempleo), cArt = co(p.pctArt), cSind = esFC ? 0 : co((sind && Number(sind.pctPatronal) > 0) ? Number(sind.pctPatronal) : num(p.pctSindicatoPatronal));
+  // Desde el devengado 11/2026 las cuatro contribuciones de seguridad social salen del
+  // Anexo de la RG 5907/2026 según el régimen y la clasificación de la empresa; antes de
+  // esa fecha siguen saliendo de los parámetros cargados, para que reliquidar un mes
+  // anterior dé exactamente lo mismo que dio en su momento.
+  const _ssRige = (Number(anio) * 12 + Number(mes)) >= SS_DESDE;
+  const _ss = alicuotasSS(emp.empresaData);
+  const _pctSipa   = _ssRige ? _ss.sipa   : num(p.pctJubPatronal);
+  const _pctAaff   = _ssRige ? _ss.aaff   : num(p.pctAsigFam);
+  const _pctFne    = _ssRige ? _ss.fne    : num(p.pctDesempleo);
+  const _pctInssjp = _ssRige ? _ss.inssjp : num(p.pctPamiPatronal);
+  const _pctFal    = _ssRige ? _ss.fal    : 0;
+  const cJub = coSeg(_pctSipa), cAaff = coSeg(_pctAaff), cOS = round2(baseAportesOs * num(p.pctOsPatronal) / 100), cPami = coSeg(_pctInssjp), cFne = coSeg(_pctFne), cArt = co(p.pctArt), cSind = esFC ? 0 : co((sind && Number(sind.pctPatronal) > 0) ? Number(sind.pctPatronal) : num(p.pctSindicatoPatronal));
   // El SCVO y el FFEP son per cápita mensuales: se cobran una sola vez con la liquidación
   // principal (mensual/quincena/SAC/vacaciones/final). No se re-cobran en extraordinarias,
   // anticipos ni ajustes complementarios del mismo período.
@@ -854,15 +910,12 @@ export function calcularRecibo(emp, params, opts) {
   const _scvoAqui = opts?.scvoAplica !== false;
   const scvo = (perCapitaAplica && _scvoAqui) ? round2(num(p.scvoPercapita) * perCapitaFactor) : 0;  // Seguro de Vida Obligatorio (Dto. 1567/74)
   const ffep = perCapitaAplica ? round2(num(p.ffep) * perCapitaFactor) : 0;           // Fondo Fiduc. Enfermedades Profesionales (SRT)
-  // Fondo de Asistencia Laboral (Ley 27.802 / Dto. 408/2026), desde 11/2026. NO es costo
-  // adicional: se DETRAE de las contribuciones patronales de seguridad social (se redirige un
-  // % de la base SIPA desde la jubilación patronal hacia el FAL). Alícuota: MiPyME 2,5% /
-  // grandes 1% (override por empresa en empresaData.pctFal; si no, el parámetro pctFal).
-  const _falVigente = (Number(anio) * 12 + Number(mes)) >= (2026 * 12 + 11);
-  const _pctFal = _falVigente ? (num(emp.empresaData?.pctFal) || num(p.pctFal)) : 0;
-  const cFal = _pctFal > 0 ? round2(baseSegSoc * _pctFal / 100) : 0;
-  const cJubFal = cFal > 0 ? Math.max(0, round2(cJub - cFal)) : cJub;
-  if (cJubFal > 0) contribuciones.push({ concepto: 'Jubilación patronal (SIPA)', monto: cJubFal });
+  // Fondo de Asistencia Laboral (Ley 27.802 Título II, RG ARCA 5907/2026). Quien lo
+  // determina en forma definitiva es el sistema "Declaración en línea" de ARCA (art. 9);
+  // este cálculo alimenta el recibo, el costo laboral y el asiento, y sirve para conciliar.
+  const cFal = _pctFal > 0 ? coSeg(_pctFal) : 0;
+  if (cJub > 0) contribuciones.push({ concepto: 'Jubilación patronal (SIPA)', monto: cJub });
+  if (cAaff > 0) contribuciones.push({ concepto: 'Asignaciones Familiares (Ley 24.714)', monto: cAaff });
   if (cFal > 0) contribuciones.push({ concepto: `Fondo de Asistencia Laboral (Ley 27.802 — ${_pctFal}%)`, monto: cFal });
   if (cOS > 0) contribuciones.push({ concepto: 'Obra Social patronal', monto: cOS });
   if (cPami > 0) contribuciones.push({ concepto: 'INSSJP patronal (PAMI)', monto: cPami });
@@ -907,6 +960,12 @@ export function calcularRecibo(emp, params, opts) {
     baseAportesOs:  round2(baseAportesOs),
     baseArt:        round2(totalRemun),
     detraccion:     round2(detr),
+    // Alícuotas de seguridad social efectivamente aplicadas (Anexo RG 5907/2026).
+    ssRegimen:      _ssRige ? _ss.regimen : null,
+    ssClasificacion: _ssRige ? _ss.clasificacion : null,
+    ssAlicuotas:    _ssRige ? { sipa: _pctSipa, aaff: _pctAaff, fne: _pctFne, inssjp: _pctInssjp, fal: _pctFal, total: _ss.total } : null,
+    contribFal:     round2(cFal),
+    contribAaff:    round2(cAaff),
     topeMin:        Number.isFinite(topeMin) ? round2(topeMin) : null,
     topeMax:        Number.isFinite(topeMax) ? round2(topeMax) : null,
     sac:            _sumaHab(/\bsac\b|aguinaldo/i),
@@ -931,7 +990,11 @@ export function calcularRecibo(emp, params, opts) {
       remun: round2(totalRemun), noRem: round2(totalNoRem), exento: round2(totalExento), descuentos: round2(totalDescuentos), neto: round2(neto),
       // Detalle por concepto (empleador + trabajador) — Decreto 407/2026
       cargas: {
-        seguridadSocial: { empleador: round2(cJub + cFne), trabajador: round2(aJub) },
+        seguridadSocial: { empleador: round2(cJub + cAaff + cFne), trabajador: round2(aJub) },
+        // El FAL va como renglón propio del Decreto 407/2026: es una contribución con
+        // destino y código de pago distintos, y el trabajador tiene derecho a ver
+        // cuánto de su costo laboral se va ahí (RG ARCA 5907/2026).
+        fal:             { empleador: round2(cFal),        trabajador: 0 },
         obraSocial:      { empleador: round2(cOS),          trabajador: round2(aOS + aAnssal) },
         inssjp:          { empleador: round2(cPami),        trabajador: round2(aPami) },
         sindical:        { empleador: round2(cSind),        trabajador: round2(aSind) },
